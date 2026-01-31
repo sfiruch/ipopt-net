@@ -1,5 +1,8 @@
 namespace IpoptNet.Modelling;
 
+/// <summary>
+/// Documents the IPOPT string value for an enum. For documentation only - actual mappings are in IpoptOptions dictionaries.
+/// </summary>
 [AttributeUsage(AttributeTargets.Field)]
 internal sealed class IpoptValueAttribute : Attribute
 {
@@ -150,6 +153,64 @@ public sealed class IpoptOptions
 {
     internal readonly Dictionary<string, object> Options = new();
 
+    // AOT-friendly mappings (single source of truth)
+    private static readonly Dictionary<LinearSolver, string> LinearSolverMap = new()
+    {
+        [LinearSolver.Mumps] = "mumps",
+        [LinearSolver.Ma27] = "ma27",
+        [LinearSolver.Ma57] = "ma57",
+        [LinearSolver.Ma77] = "ma77",
+        [LinearSolver.Ma86] = "ma86",
+        [LinearSolver.Ma97] = "ma97",
+        [LinearSolver.PardisoMkl] = "pardisomkl",
+        [LinearSolver.PardisoProject] = "pardiso",
+        [LinearSolver.Wsmp] = "wsmp",
+        [LinearSolver.Spral] = "spral",
+        [LinearSolver.Custom] = "custom"
+    };
+
+    private static readonly Dictionary<HessianApproximation, string> HessianApproximationMap = new()
+    {
+        [HessianApproximation.Exact] = "exact",
+        [HessianApproximation.LimitedMemory] = "limited-memory"
+    };
+
+    private static readonly Dictionary<MuStrategy, string> MuStrategyMap = new()
+    {
+        [MuStrategy.Monotone] = "monotone",
+        [MuStrategy.Adaptive] = "adaptive"
+    };
+
+    private static readonly Dictionary<NlpScalingMethod, string> NlpScalingMethodMap = new()
+    {
+        [NlpScalingMethod.None] = "none",
+        [NlpScalingMethod.UserScaling] = "user-scaling",
+        [NlpScalingMethod.GradientBased] = "gradient-based",
+        [NlpScalingMethod.EquilibrationBased] = "equilibration-based"
+    };
+
+    private static readonly Dictionary<LinearSystemScaling, string> LinearSystemScalingMap = new()
+    {
+        [LinearSystemScaling.None] = "none",
+        [LinearSystemScaling.Mc19] = "mc19",
+        [LinearSystemScaling.SlackBased] = "slack-based"
+    };
+
+    private static readonly Dictionary<FixedVariableTreatment, string> FixedVariableTreatmentMap = new()
+    {
+        [FixedVariableTreatment.MakeParameter] = "make_parameter",
+        [FixedVariableTreatment.MakeConstraint] = "make_constraint",
+        [FixedVariableTreatment.RelaxBounds] = "relax_bounds"
+    };
+
+    private static readonly Dictionary<DerivativeTest, string> DerivativeTestMap = new()
+    {
+        [DerivativeTest.None] = "none",
+        [DerivativeTest.FirstOrder] = "first-order",
+        [DerivativeTest.SecondOrder] = "second-order",
+        [DerivativeTest.OnlySecondOrder] = "only-second-order"
+    };
+
     // Termination options
     public double? Tolerance { get => GetDouble("tol"); set => SetDouble("tol", value); }
     public int? MaxIterations { get => GetInt("max_iter"); set => SetInt("max_iter", value); }
@@ -297,23 +358,55 @@ public sealed class IpoptOptions
 
     private static string EnumToString<T>(T value) where T : Enum
     {
-        var field = typeof(T).GetField(value.ToString());
-        var attribute = field?.GetCustomAttributes(typeof(IpoptValueAttribute), false)
-            .FirstOrDefault() as IpoptValueAttribute;
-
-        return attribute?.Value ?? throw new ArgumentException($"Enum value {value} missing IpoptValue attribute");
+        return value switch
+        {
+            LinearSolver e => LinearSolverMap[e],
+            HessianApproximation e => HessianApproximationMap[e],
+            MuStrategy e => MuStrategyMap[e],
+            NlpScalingMethod e => NlpScalingMethodMap[e],
+            LinearSystemScaling e => LinearSystemScalingMap[e],
+            FixedVariableTreatment e => FixedVariableTreatmentMap[e],
+            DerivativeTest e => DerivativeTestMap[e],
+            _ => throw new ArgumentException($"Unknown enum type: {typeof(T)}")
+        };
     }
 
     private static T? StringToEnum<T>(string value) where T : struct, Enum
     {
-        foreach (var field in typeof(T).GetFields())
+        if (typeof(T) == typeof(LinearSolver))
         {
-            if (field.GetCustomAttributes(typeof(IpoptValueAttribute), false)
-                .FirstOrDefault() is IpoptValueAttribute attribute)
-            {
-                if (attribute.Value.Equals(value, StringComparison.OrdinalIgnoreCase))
-                    return (T)field.GetValue(null)!;
-            }
+            var pair = LinearSolverMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
+            return pair.Key != default ? (T)(object)pair.Key : null;
+        }
+        if (typeof(T) == typeof(HessianApproximation))
+        {
+            var pair = HessianApproximationMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
+            return pair.Key != default ? (T)(object)pair.Key : null;
+        }
+        if (typeof(T) == typeof(MuStrategy))
+        {
+            var pair = MuStrategyMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
+            return pair.Key != default ? (T)(object)pair.Key : null;
+        }
+        if (typeof(T) == typeof(NlpScalingMethod))
+        {
+            var pair = NlpScalingMethodMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
+            return pair.Key != default ? (T)(object)pair.Key : null;
+        }
+        if (typeof(T) == typeof(LinearSystemScaling))
+        {
+            var pair = LinearSystemScalingMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
+            return pair.Key != default ? (T)(object)pair.Key : null;
+        }
+        if (typeof(T) == typeof(FixedVariableTreatment))
+        {
+            var pair = FixedVariableTreatmentMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
+            return pair.Key != default ? (T)(object)pair.Key : null;
+        }
+        if (typeof(T) == typeof(DerivativeTest))
+        {
+            var pair = DerivativeTestMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
+            return pair.Key != default ? (T)(object)pair.Key : null;
         }
         return null;
     }
