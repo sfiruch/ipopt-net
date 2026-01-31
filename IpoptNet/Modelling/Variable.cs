@@ -14,17 +14,19 @@ public sealed class Variable : Expr
         UpperBound = upperBound;
     }
 
-    public override double Evaluate(ReadOnlySpan<double> x) => x[Index];
+    protected override double EvaluateCore(ReadOnlySpan<double> x) => x[Index];
 
-    public override void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
     {
         grad[Index] += multiplier;
     }
 
-    public override void AccumulateHessian(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
     {
         // Variable has no second derivative contribution
     }
 
-    public override void CollectVariables(HashSet<Variable> variables) => variables.Add(this);
+    protected override void CollectVariablesCore(HashSet<Variable> variables) => variables.Add(this);
+
+    protected override Expr CloneCore() => this; // Variables are singletons - return self
 }

@@ -275,4 +275,166 @@ public class ExpressionTests
 
         return hess;
     }
+
+    [TestMethod]
+    public void IncrementalBuild_AdditionWithZero_ProducesCorrectResult()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+        var z = model.AddVariable();
+
+        // Build expression incrementally: sum = x + y + z
+        Expr sum = 0;
+        sum += x;
+        sum += y;
+        sum += z;
+
+        double[] point = [1, 2, 3];
+        var result = sum.Evaluate(point);
+        Assert.AreEqual(6.0, result, 1e-10);
+
+        AssertGradientMatchesFiniteDifference(sum, point);
+    }
+
+    [TestMethod]
+    public void IncrementalBuild_SubtractionFromZero_ProducesCorrectResult()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Build expression incrementally: expr = -x - y
+        Expr expr = 0;
+        expr -= x;
+        expr -= y;
+
+        double[] point = [2, 3];
+        var result = expr.Evaluate(point);
+        Assert.AreEqual(-5.0, result, 1e-10);
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void IncrementalBuild_MultiplicationWithOne_ProducesCorrectResult()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+        var z = model.AddVariable();
+
+        // Build expression incrementally: product = x * y * z
+        Expr product = 1;
+        product *= x;
+        product *= y;
+        product *= z;
+
+        double[] point = [2, 3, 4];
+        var result = product.Evaluate(point);
+        Assert.AreEqual(24.0, result, 1e-10);
+
+        AssertGradientMatchesFiniteDifference(product, point);
+    }
+
+    [TestMethod]
+    public void IncrementalBuild_DivisionFromOne_ProducesCorrectResult()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Build expression incrementally: expr = 1 / (x * y)
+        Expr expr = 1;
+        expr /= x;
+        expr /= y;
+
+        double[] point = [2, 5];
+        var result = expr.Evaluate(point);
+        Assert.AreEqual(0.1, result, 1e-10);
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void IncrementalBuild_MixedOperations_ProducesCorrectResult()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+        var z = model.AddVariable();
+
+        // Build complex expression incrementally
+        Expr expr = 0;
+        expr += x * x;      // x^2
+        expr += 2 * x * y;  // + 2xy
+        expr -= z;          // - z
+        expr *= 2;          // * 2
+
+        double[] point = [1, 2, 3];
+        // (1^2 + 2*1*2 - 3) * 2 = (1 + 4 - 3) * 2 = 4
+        var result = expr.Evaluate(point);
+        Assert.AreEqual(4.0, result, 1e-10);
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void IncrementalBuild_WithDoubles_ProducesCorrectResult()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // Build expression incrementally with constants
+        Expr expr = 0;
+        expr += x;
+        expr += 5.0;
+        expr *= 2.0;
+
+        double[] point = [3];
+        // (3 + 5) * 2 = 16
+        var result = expr.Evaluate(point);
+        Assert.AreEqual(16.0, result, 1e-10);
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void IncrementalBuild_LargeSum_ProducesCorrectResult()
+    {
+        var model = new Model();
+        var variables = new Variable[10];
+        for (int i = 0; i < 10; i++)
+            variables[i] = model.AddVariable();
+
+        // Build a large sum incrementally using compound assignment
+        Expr sum = 0;
+        for (int i = 0; i < 10; i++)
+            sum += variables[i];
+
+        var point = new double[10];
+        for (int i = 0; i < 10; i++)
+            point[i] = i + 1; // 1, 2, 3, ..., 10
+
+        var result = sum.Evaluate(point);
+        Assert.AreEqual(55.0, result, 1e-10); // Sum of 1 to 10
+
+        AssertGradientMatchesFiniteDifference(sum, point);
+    }
+
+    [TestMethod]
+    public void ImplicitConversion_IntToExpr_CreatesConstant()
+    {
+        Expr zero = 0;
+        Expr one = 1;
+        Expr five = 5;
+
+        Assert.IsInstanceOfType(zero, typeof(Constant));
+        Assert.IsInstanceOfType(one, typeof(Constant));
+        Assert.IsInstanceOfType(five, typeof(Constant));
+
+        Assert.AreEqual(0.0, ((Constant)zero).Value);
+        Assert.AreEqual(1.0, ((Constant)one).Value);
+        Assert.AreEqual(5.0, ((Constant)five).Value);
+    }
 }
