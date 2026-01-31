@@ -126,6 +126,59 @@ var result = model.Solve([0]);
 // Converges to x=π/2
 ```
 
+## Configuring IPOPT Options
+
+The modeling API exposes all IPOPT configuration options through a strongly-typed API with enums:
+
+```csharp
+var model = new Model();
+
+// Configure solver options using enums (type-safe with IntelliSense)
+model.Options.LinearSolverOption = LinearSolver.PardisoMkl;  // Use Intel MKL Pardiso
+model.Options.HessianApproximationOption = HessianApproximation.Exact;
+model.Options.MuStrategyOption = MuStrategy.Adaptive;
+
+// Configure termination criteria
+model.Options.Tolerance = 1e-7;
+model.Options.MaxIterations = 100;
+model.Options.MaxWallTime = 60.0;  // seconds
+
+// Configure output verbosity
+model.Options.PrintLevel = 5;  // 0=no output, 5=detailed
+model.Options.OutputFile = "ipopt.log";
+
+// Configure NLP scaling
+model.Options.NlpScalingMethodOption = NlpScalingMethod.GradientBased;
+
+// Use custom options for advanced features
+model.Options.SetCustomOption("bound_push", 0.01);
+model.Options.SetCustomOption("acceptable_tol", 1e-5);
+
+// Define and solve your problem...
+var x = model.AddVariable(1, 5);
+// ... rest of model setup ...
+var result = model.Solve([1]);
+```
+
+### Available Linear Solvers
+
+- `LinearSolver.Mumps` - Default, included with IPOPT
+- `LinearSolver.PardisoMkl` - Intel MKL Pardiso (requires MKL)
+- `LinearSolver.PardisoProject` - Pardiso from pardiso-project.org (often faster than MKL version)
+- `LinearSolver.Ma27`, `Ma57`, `Ma77`, `Ma86`, `Ma97` - HSL solvers
+- `LinearSolver.Wsmp` - Watson Sparse Matrix Package
+- `LinearSolver.Spral` - Sparse Parallel Robust Algorithms Library
+
+**Note:** Some solvers require IPOPT to be compiled with specific dependencies.
+
+### Common Options
+
+- **Termination:** `Tolerance`, `MaxIterations`, `MaxWallTime`, `MaxCpuTime`
+- **Output:** `PrintLevel`, `OutputFile`, `PrintUserOptions`
+- **Algorithm:** `LinearSolverOption`, `HessianApproximationOption`, `MuStrategyOption`
+- **Scaling:** `NlpScalingMethodOption`, `LinearSystemScalingOption`
+- **Tolerances:** `ConstraintViolationTolerance`, `DualInfeasibilityTolerance`
+
 ## Low-level API
 
 For advanced users who want direct control over the IPOPT solver:

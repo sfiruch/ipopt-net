@@ -9,6 +9,11 @@ public sealed class Model : IDisposable
     private Expr? _objective;
     private bool _disposed;
 
+    /// <summary>
+    /// IPOPT solver options. Configure before calling Solve().
+    /// </summary>
+    public IpoptOptions Options { get; } = new();
+
     public Variable AddVariable(double lowerBound = double.NegativeInfinity, double upperBound = double.PositiveInfinity)
     {
         var variable = new Variable(lowerBound, upperBound) { Index = _variables.Count };
@@ -69,7 +74,25 @@ public sealed class Model : IDisposable
             evalF, evalGradF, evalG, evalJacG, evalH);
 
         // Suppress IPOPT output by default
-        solver.SetOption("print_level", 0);
+        if (!Options.Options.ContainsKey("print_level"))
+            solver.SetOption("print_level", 0);
+
+        // Apply user-specified options
+        foreach (var (name, value) in Options.Options)
+        {
+            switch (value)
+            {
+                case string strValue:
+                    solver.SetOption(name, strValue);
+                    break;
+                case int intValue:
+                    solver.SetOption(name, intValue);
+                    break;
+                case double dblValue:
+                    solver.SetOption(name, dblValue);
+                    break;
+            }
+        }
 
         // Initialize x
         var x = new double[n];
