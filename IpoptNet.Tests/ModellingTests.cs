@@ -187,6 +187,32 @@ public class ModellingTests
     }
 
     [TestMethod]
+    public void SolveWithMumps()
+    {
+        var model = new Model();
+        var x1 = model.AddVariable(1, 5);
+        var x2 = model.AddVariable(1, 5);
+        var x3 = model.AddVariable(1, 5);
+        var x4 = model.AddVariable(1, 5);
+
+        model.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
+        model.AddConstraint(x1 * x2 * x3 * x4 >= 25);
+        model.AddConstraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4 == 40);
+
+        // Explicitly use Mumps linear solver (default)
+        model.Options.LinearSolverOption = LinearSolver.Mumps;
+
+        var result = model.Solve([1, 5, 5, 1]);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
+        Assert.AreEqual(1.0, result.Solution[x1], 0.01);
+        Assert.AreEqual(4.743, result.Solution[x2], 0.01);
+        Assert.AreEqual(3.821, result.Solution[x3], 0.01);
+        Assert.AreEqual(1.379, result.Solution[x4], 0.01);
+    }
+
+    [TestMethod]
     public void SolveWithPardisoMkl()
     {
         var model = new Model();
