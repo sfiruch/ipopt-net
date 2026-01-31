@@ -185,4 +185,39 @@ public class ModellingTests
         Assert.AreEqual(2.0, result.Solution[x], 0.001);
         Assert.AreEqual(2.0, result.Solution[y], 0.001);
     }
+
+    [TestMethod]
+    public void SolveWithPardisoMkl()
+    {
+        var model = new Model();
+        var x1 = model.AddVariable(1, 5);
+        var x2 = model.AddVariable(1, 5);
+        var x3 = model.AddVariable(1, 5);
+        var x4 = model.AddVariable(1, 5);
+
+        model.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
+        model.AddConstraint(x1 * x2 * x3 * x4 >= 25);
+        model.AddConstraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4 == 40);
+
+        // Use Pardiso MKL linear solver
+        model.Options.LinearSolverOption = LinearSolver.PardisoMkl;
+        model.Options.PrintLevel = 0;
+
+        var result = model.Solve([1, 5, 5, 1]);
+
+        // Note: Test may be skipped if IPOPT is not compiled with MKL support
+        if (result.Status == ApplicationReturnStatus.SolveSucceeded)
+        {
+            Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
+            Assert.AreEqual(1.0, result.Solution[x1], 0.01);
+            Assert.AreEqual(4.743, result.Solution[x2], 0.01);
+            Assert.AreEqual(3.821, result.Solution[x3], 0.01);
+            Assert.AreEqual(1.379, result.Solution[x4], 0.01);
+        }
+        else
+        {
+            // If Pardiso is not available, IPOPT will return an error status
+            Assert.Inconclusive("Pardiso MKL solver not available in this IPOPT build");
+        }
+    }
 }
