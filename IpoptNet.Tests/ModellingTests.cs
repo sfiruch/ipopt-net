@@ -19,8 +19,8 @@ public class ModellingTests
         model.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
 
         // Constraints
-        model.AddConstraint((x1 * x2 * x3 * x4).GreaterThanOrEqual(25));
-        model.AddConstraint((x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4).EqualTo(40));
+        model.AddConstraint(x1 * x2 * x3 * x4 >= 25);
+        model.AddConstraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4 == 40);
 
         var result = model.Solve([1, 5, 5, 1]);
 
@@ -78,7 +78,7 @@ public class ModellingTests
         // minimize x^2 + y^2
         // subject to x + y = 4
         model.SetObjective(x * x + y * y);
-        model.AddConstraint((x + y).EqualTo(4));
+        model.AddConstraint(x + y == 4);
 
         var result = model.Solve([0, 0]);
 
