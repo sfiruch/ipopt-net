@@ -30,11 +30,18 @@
 
   <ItemGroup>
     <None Include="..\README.md" Pack="true" Link="README.md" PackagePath="\" />
-    <None Include="runtimes\win-x64\native\*.dll">
-      <Pack>true</Pack>
-      <PackagePath>runtimes\win-x64\native</PackagePath>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <!-- Pack DLLs in standard NuGet runtime location -->
+    <None Include="runtimes\win-x64\native\*.dll" Pack="true" PackagePath="runtimes\win-x64\native" />
+  </ItemGroup>
+
+  <!-- Copy native DLLs directly to output directory (not in subdirectory) -->
+  <ItemGroup>
+    <None Include="runtimes\win-x64\native\coinmumps-3.dll" Link="coinmumps-3.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="runtimes\win-x64\native\ipopt-3.dll" Link="ipopt-3.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="runtimes\win-x64\native\libifcoremd.dll" Link="libifcoremd.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="runtimes\win-x64\native\libiomp5md.dll" Link="libiomp5md.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="runtimes\win-x64\native\libmmd.dll" Link="libmmd.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="runtimes\win-x64\native\svml_dispmd.dll" Link="svml_dispmd.dll" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
