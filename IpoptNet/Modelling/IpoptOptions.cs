@@ -115,76 +115,42 @@ public sealed class IpoptOptions
     internal readonly Dictionary<string, object> Options = new();
 
     // Termination options
-    public double? Tolerance { get => GetDouble("tol"); set => SetDouble("tol", value); }
-    public int? MaxIterations { get => GetInt("max_iter"); set => SetInt("max_iter", value); }
-    public double? MaxWallTime { get => GetDouble("max_wall_time"); set => SetDouble("max_wall_time", value); }
-    public double? MaxCpuTime { get => GetDouble("max_cpu_time"); set => SetDouble("max_cpu_time", value); }
-    public double? AcceptableTolerance { get => GetDouble("acceptable_tol"); set => SetDouble("acceptable_tol", value); }
-    public int? AcceptableIterations { get => GetInt("acceptable_iter"); set => SetInt("acceptable_iter", value); }
+    public double? Tolerance { set => SetDouble("tol", value); }
+    public int? MaxIterations { set => SetInt("max_iter", value); }
+    public double? MaxWallTime { set => SetDouble("max_wall_time", value); }
+    public double? MaxCpuTime { set => SetDouble("max_cpu_time", value); }
+    public double? AcceptableTolerance { set => SetDouble("acceptable_tol", value); }
+    public int? AcceptableIterations { set => SetInt("acceptable_iter", value); }
 
     // Output options
-    public int? PrintLevel { get => GetInt("print_level"); set => SetInt("print_level", value); }
-    public string? OutputFile { get => GetString("output_file"); set => SetString("output_file", value); }
-    public int? FilePrintLevel { get => GetInt("file_print_level"); set => SetInt("file_print_level", value); }
-    public bool? PrintUserOptions { get => GetBool("print_user_options"); set => SetBool("print_user_options", value); }
-    public bool? PrintOptionsDocumentation { get => GetBool("print_options_documentation"); set => SetBool("print_options_documentation", value); }
+    public int? PrintLevel { set => SetInt("print_level", value); }
+    public string? OutputFile { set => SetString("output_file", value); }
+    public int? FilePrintLevel { set => SetInt("file_print_level", value); }
+    public bool? PrintUserOptions { set => SetBool("print_user_options", value); }
+    public bool? PrintOptionsDocumentation { set => SetBool("print_options_documentation", value); }
 
     // Algorithm options
-    public LinearSolver? LinearSolverOption
-    {
-        get => GetEnum<LinearSolver>("linear_solver");
-        set => SetEnum("linear_solver", value);
-    }
-
-    public HessianApproximation? HessianApproximationOption
-    {
-        get => GetEnum<HessianApproximation>("hessian_approximation");
-        set => SetEnum("hessian_approximation", value);
-    }
-
-    public MuStrategy? MuStrategyOption
-    {
-        get => GetEnum<MuStrategy>("mu_strategy");
-        set => SetEnum("mu_strategy", value);
-    }
-
-    public NlpScalingMethod? NlpScalingMethodOption
-    {
-        get => GetEnum<NlpScalingMethod>("nlp_scaling_method");
-        set => SetEnum("nlp_scaling_method", value);
-    }
-
-    public LinearSystemScaling? LinearSystemScalingOption
-    {
-        get => GetEnum<LinearSystemScaling>("linear_system_scaling");
-        set => SetEnum("linear_system_scaling", value);
-    }
-
-    public FixedVariableTreatment? FixedVariableTreatmentOption
-    {
-        get => GetEnum<FixedVariableTreatment>("fixed_variable_treatment");
-        set => SetEnum("fixed_variable_treatment", value);
-    }
-
-    public DerivativeTest? DerivativeTestOption
-    {
-        get => GetEnum<DerivativeTest>("derivative_test");
-        set => SetEnum("derivative_test", value);
-    }
+    public LinearSolver? LinearSolverOption { set => SetEnum("linear_solver", value); }
+    public HessianApproximation? HessianApproximationOption { set => SetEnum("hessian_approximation", value); }
+    public MuStrategy? MuStrategyOption { set => SetEnum("mu_strategy", value); }
+    public NlpScalingMethod? NlpScalingMethodOption { set => SetEnum("nlp_scaling_method", value); }
+    public LinearSystemScaling? LinearSystemScalingOption { set => SetEnum("linear_system_scaling", value); }
+    public FixedVariableTreatment? FixedVariableTreatmentOption { set => SetEnum("fixed_variable_treatment", value); }
+    public DerivativeTest? DerivativeTestOption { set => SetEnum("derivative_test", value); }
 
     // Constraint/NLP options
-    public double? ConstraintViolationTolerance { get => GetDouble("constr_viol_tol"); set => SetDouble("constr_viol_tol", value); }
-    public double? DualInfeasibilityTolerance { get => GetDouble("dual_inf_tol"); set => SetDouble("dual_inf_tol", value); }
-    public double? ComplementarityTolerance { get => GetDouble("compl_inf_tol"); set => SetDouble("compl_inf_tol", value); }
+    public double? ConstraintViolationTolerance { set => SetDouble("constr_viol_tol", value); }
+    public double? DualInfeasibilityTolerance { set => SetDouble("dual_inf_tol", value); }
+    public double? ComplementarityTolerance { set => SetDouble("compl_inf_tol", value); }
 
     // Initialization options
-    public double? BoundPush { get => GetDouble("bound_push"); set => SetDouble("bound_push", value); }
-    public double? BoundFraction { get => GetDouble("bound_frac"); set => SetDouble("bound_frac", value); }
-    public bool? WarmStartInitPoint { get => GetBool("warm_start_init_point"); set => SetBool("warm_start_init_point", value); }
+    public double? BoundPush { set => SetDouble("bound_push", value); }
+    public double? BoundFraction { set => SetDouble("bound_frac", value); }
+    public bool? WarmStartInitPoint { set => SetBool("warm_start_init_point", value); }
 
     // Linear solver specific options
-    public double? Ma27PivotTolerance { get => GetDouble("ma27_pivtol"); set => SetDouble("ma27_pivtol", value); }
-    public bool? Ma57AutomaticScaling { get => GetBool("ma57_automatic_scaling"); set => SetBool("ma57_automatic_scaling", value); }
+    public double? Ma27PivotTolerance { set => SetDouble("ma27_pivtol", value); }
+    public bool? Ma57AutomaticScaling { set => SetBool("ma57_automatic_scaling", value); }
 
     /// <summary>
     /// Set a custom string option not covered by the typed properties.
@@ -241,24 +207,6 @@ public sealed class IpoptOptions
             Options.Remove(name);
     }
 
-    private string? GetString(string name) => Options.TryGetValue(name, out var val) ? val as string : null;
-    private int? GetInt(string name) => Options.TryGetValue(name, out var val) && val is int i ? i : null;
-    private double? GetDouble(string name) => Options.TryGetValue(name, out var val) && val is double d ? d : null;
-
-    private bool? GetBool(string name)
-    {
-        if (Options.TryGetValue(name, out var val) && val is string s)
-            return s.Equals("yes", StringComparison.OrdinalIgnoreCase);
-        return null;
-    }
-
-    private T? GetEnum<T>(string name) where T : struct, Enum
-    {
-        if (Options.TryGetValue(name, out var val) && val is string s)
-            return StringToEnum<T>(s);
-        return null;
-    }
-
     private static string EnumToString<T>(T value) where T : Enum
     {
         return value switch
@@ -301,29 +249,5 @@ public sealed class IpoptOptions
 
             _ => throw new ArgumentException($"Unknown enum value: {value}")
         };
-    }
-
-    private static T? StringToEnum<T>(string value) where T : struct, Enum
-    {
-        if (typeof(T) == typeof(LinearSolver))
-        {
-            return value.ToLowerInvariant() switch
-            {
-                "mumps" => (T)(object)LinearSolver.Mumps,
-                "ma27" => (T)(object)LinearSolver.Ma27,
-                "ma57" => (T)(object)LinearSolver.Ma57,
-                "ma77" => (T)(object)LinearSolver.Ma77,
-                "ma86" => (T)(object)LinearSolver.Ma86,
-                "ma97" => (T)(object)LinearSolver.Ma97,
-                "pardisomkl" => (T)(object)LinearSolver.PardisoMkl,
-                "pardiso" => (T)(object)LinearSolver.PardisoProject,
-                "wsmp" => (T)(object)LinearSolver.Wsmp,
-                "spral" => (T)(object)LinearSolver.Spral,
-                "custom" => (T)(object)LinearSolver.Custom,
-                _ => null
-            };
-        }
-        // Add other enum types as needed
-        return null;
     }
 }
