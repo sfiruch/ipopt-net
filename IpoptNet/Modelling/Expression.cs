@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace IpoptNet.Modelling;
 
 public abstract class Expr
@@ -6,6 +8,9 @@ public abstract class Expr
     public abstract void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad, double multiplier);
     public abstract void AccumulateHessian(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier);
     public abstract void CollectVariables(HashSet<Variable> variables);
+
+    public override bool Equals(object? obj) => ReferenceEquals(this, obj);
+    public override int GetHashCode() => RuntimeHelpers.GetHashCode(this);
 
     public static Expr operator +(Expr a, Expr b) => new BinaryOp(a, b, BinaryOpKind.Add);
     public static Expr operator -(Expr a, Expr b) => new BinaryOp(a, b, BinaryOpKind.Subtract);
@@ -21,6 +26,20 @@ public abstract class Expr
     public static Expr operator *(double a, Expr b) => new BinaryOp(new Constant(a), b, BinaryOpKind.Multiply);
     public static Expr operator /(Expr a, double b) => new BinaryOp(a, new Constant(b), BinaryOpKind.Divide);
     public static Expr operator /(double a, Expr b) => new BinaryOp(new Constant(a), b, BinaryOpKind.Divide);
+
+    public static Constraint operator >=(Expr expr, double value) => new(expr, value, double.PositiveInfinity);
+    public static Constraint operator <=(Expr expr, double value) => new(expr, double.NegativeInfinity, value);
+    public static Constraint operator ==(Expr expr, double value) => new(expr, value, value);
+    public static Constraint operator !=(Expr expr, double value) => throw new NotSupportedException("Inequality constraints (!=) are not supported in optimization models.");
+    public static Constraint operator >(Expr expr, double value) => new(expr, value, double.PositiveInfinity);
+    public static Constraint operator <(Expr expr, double value) => new(expr, double.NegativeInfinity, value);
+
+    public static Constraint operator >=(double value, Expr expr) => new(expr, double.NegativeInfinity, value);
+    public static Constraint operator <=(double value, Expr expr) => new(expr, value, double.PositiveInfinity);
+    public static Constraint operator ==(double value, Expr expr) => new(expr, value, value);
+    public static Constraint operator !=(double value, Expr expr) => throw new NotSupportedException("Inequality constraints (!=) are not supported in optimization models.");
+    public static Constraint operator >(double value, Expr expr) => new(expr, double.NegativeInfinity, value);
+    public static Constraint operator <(double value, Expr expr) => new(expr, value, double.PositiveInfinity);
 
     public static Expr Pow(Expr @base, double exponent) => new PowerOp(@base, exponent);
     public static Expr Pow(Expr @base, Expr exponent) => Exp(exponent * Log(@base));

@@ -45,8 +45,8 @@ var w = model.AddVariable(1, 5);
 model.SetObjective(x * w * (x + y + z) + z);
 
 // Add constraints
-model.AddConstraint((x * y * z * w).GreaterThanOrEqual(25));
-model.AddConstraint((x*x + y*y + z*z + w*w).EqualTo(40));
+model.AddConstraint(x * y * z * w >= 25);
+model.AddConstraint(x*x + y*y + z*z + w*w == 40);
 
 // Solve with initial point
 var result = model.Solve(initialPoint: [1, 5, 5, 1]);
@@ -78,7 +78,7 @@ The expression system supports:
 - **Power**: `Expr.Pow(x, n)`, `Expr.Sqrt(x)`
 - **Trigonometric**: `Expr.Sin(x)`, `Expr.Cos(x)`, `Expr.Tan(x)`
 - **Exponential/Log**: `Expr.Exp(x)`, `Expr.Log(x)`
-- **Constraints**: `.LessThanOrEqual(ub)`, `.GreaterThanOrEqual(lb)`, `.EqualTo(val)`
+- **Constraints**: `>=`, `<=`, `==`, `>`, `<`
 
 ## More Examples
 
@@ -107,7 +107,7 @@ var y = model.AddVariable();
 model.SetObjective(x*x + y*y);
 
 // Subject to x + y = 4
-model.AddConstraint((x + y).EqualTo(4));
+model.AddConstraint(x + y == 4);
 
 var result = model.Solve([0, 0]);
 // Solution: x=2, y=2, objective=8
