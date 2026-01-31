@@ -6,9 +6,30 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>CS1591</NoWarn>
+    <PackageId>ipopt-net</PackageId>
+    <Authors>Simon Felix</Authors>
+    <DebugSymbols>true</DebugSymbols>
+    <EmbedAllSources>true</EmbedAllSources>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <IncludeSource>true</IncludeSource>
+    <Description>A .NET interface for the IPOPT nonlinear optimization solver with automatic differentiation.</Description>
+    <RepositoryUrl>https://github.com/sfiruch/ipopt-net</RepositoryUrl>
+    <PackageTags>optimization solver ipopt nonlinear-programming nlp automatic-differentiation</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="IpoptNet.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" Link="README.md" PackagePath="\" />
     <None Include="runtimes\win-x64\native\*.dll">
       <Pack>true</Pack>
       <PackagePath>runtimes\win-x64\native</PackagePath>
