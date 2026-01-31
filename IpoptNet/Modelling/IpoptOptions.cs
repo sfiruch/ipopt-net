@@ -1,31 +1,49 @@
 namespace IpoptNet.Modelling;
 
+[AttributeUsage(AttributeTargets.Field)]
+internal sealed class IpoptValueAttribute : Attribute
+{
+    public string Value { get; }
+    public IpoptValueAttribute(string value) => Value = value;
+}
+
 /// <summary>
 /// Available linear solvers for IPOPT.
 /// </summary>
 public enum LinearSolver
 {
     /// <summary>MUltifrontal Massively Parallel Sparse direct solver (default).</summary>
+    [IpoptValue("mumps")]
     Mumps,
     /// <summary>MA27 from Harwell Subroutines Library.</summary>
+    [IpoptValue("ma27")]
     Ma27,
     /// <summary>MA57 from Harwell Subroutines Library.</summary>
+    [IpoptValue("ma57")]
     Ma57,
     /// <summary>MA77 from Harwell Subroutines Library.</summary>
+    [IpoptValue("ma77")]
     Ma77,
     /// <summary>MA86 from Harwell Subroutines Library.</summary>
+    [IpoptValue("ma86")]
     Ma86,
     /// <summary>MA97 from Harwell Subroutines Library.</summary>
+    [IpoptValue("ma97")]
     Ma97,
     /// <summary>Pardiso from Intel Math Kernel Library (MKL).</summary>
+    [IpoptValue("pardisomkl")]
     PardisoMkl,
     /// <summary>Pardiso from pardiso-project.org.</summary>
+    [IpoptValue("pardiso")]
     PardisoProject,
     /// <summary>Watson Sparse Matrix Package.</summary>
+    [IpoptValue("wsmp")]
     Wsmp,
     /// <summary>Sparse Parallel Robust Algorithms Library.</summary>
+    [IpoptValue("spral")]
     Spral,
     /// <summary>Custom linear solver.</summary>
+    [IpoptValue("custom")]
     Custom
 }
 
@@ -35,8 +53,10 @@ public enum LinearSolver
 public enum HessianApproximation
 {
     /// <summary>Use exact Hessian (default).</summary>
+    [IpoptValue("exact")]
     Exact,
     /// <summary>Use limited-memory quasi-Newton approximation.</summary>
+    [IpoptValue("limited-memory")]
     LimitedMemory
 }
 
@@ -46,8 +66,10 @@ public enum HessianApproximation
 public enum MuStrategy
 {
     /// <summary>Monotone decrease of barrier parameter.</summary>
+    [IpoptValue("monotone")]
     Monotone,
     /// <summary>Adaptive update of barrier parameter.</summary>
+    [IpoptValue("adaptive")]
     Adaptive
 }
 
@@ -57,12 +79,16 @@ public enum MuStrategy
 public enum NlpScalingMethod
 {
     /// <summary>No scaling.</summary>
+    [IpoptValue("none")]
     None,
     /// <summary>User-provided scaling.</summary>
+    [IpoptValue("user-scaling")]
     UserScaling,
     /// <summary>Gradient-based scaling.</summary>
+    [IpoptValue("gradient-based")]
     GradientBased,
     /// <summary>Equilibration-based scaling.</summary>
+    [IpoptValue("equilibration-based")]
     EquilibrationBased
 }
 
@@ -72,10 +98,13 @@ public enum NlpScalingMethod
 public enum LinearSystemScaling
 {
     /// <summary>No scaling.</summary>
+    [IpoptValue("none")]
     None,
     /// <summary>MC19 scaling from HSL.</summary>
+    [IpoptValue("mc19")]
     Mc19,
     /// <summary>Slack-based scaling.</summary>
+    [IpoptValue("slack-based")]
     SlackBased
 }
 
@@ -85,10 +114,13 @@ public enum LinearSystemScaling
 public enum FixedVariableTreatment
 {
     /// <summary>Make fixed variables parameters.</summary>
+    [IpoptValue("make_parameter")]
     MakeParameter,
     /// <summary>Add equality constraints for fixed variables.</summary>
+    [IpoptValue("make_constraint")]
     MakeConstraint,
     /// <summary>Relax bounds slightly.</summary>
+    [IpoptValue("relax_bounds")]
     RelaxBounds
 }
 
@@ -98,12 +130,16 @@ public enum FixedVariableTreatment
 public enum DerivativeTest
 {
     /// <summary>No derivative test.</summary>
+    [IpoptValue("none")]
     None,
     /// <summary>Test first derivatives only.</summary>
+    [IpoptValue("first-order")]
     FirstOrder,
     /// <summary>Test second derivatives only.</summary>
+    [IpoptValue("second-order")]
     SecondOrder,
     /// <summary>Test only at starting point.</summary>
+    [IpoptValue("only-second-order")]
     OnlySecondOrder
 }
 
@@ -261,69 +297,24 @@ public sealed class IpoptOptions
 
     private static string EnumToString<T>(T value) where T : Enum
     {
-        return value switch
-        {
-            LinearSolver.Mumps => "mumps",
-            LinearSolver.Ma27 => "ma27",
-            LinearSolver.Ma57 => "ma57",
-            LinearSolver.Ma77 => "ma77",
-            LinearSolver.Ma86 => "ma86",
-            LinearSolver.Ma97 => "ma97",
-            LinearSolver.PardisoMkl => "pardisomkl",
-            LinearSolver.PardisoProject => "pardiso",
-            LinearSolver.Wsmp => "wsmp",
-            LinearSolver.Spral => "spral",
-            LinearSolver.Custom => "custom",
+        var field = typeof(T).GetField(value.ToString());
+        var attribute = field?.GetCustomAttributes(typeof(IpoptValueAttribute), false)
+            .FirstOrDefault() as IpoptValueAttribute;
 
-            HessianApproximation.Exact => "exact",
-            HessianApproximation.LimitedMemory => "limited-memory",
-
-            MuStrategy.Monotone => "monotone",
-            MuStrategy.Adaptive => "adaptive",
-
-            NlpScalingMethod.None => "none",
-            NlpScalingMethod.UserScaling => "user-scaling",
-            NlpScalingMethod.GradientBased => "gradient-based",
-            NlpScalingMethod.EquilibrationBased => "equilibration-based",
-
-            LinearSystemScaling.None => "none",
-            LinearSystemScaling.Mc19 => "mc19",
-            LinearSystemScaling.SlackBased => "slack-based",
-
-            FixedVariableTreatment.MakeParameter => "make_parameter",
-            FixedVariableTreatment.MakeConstraint => "make_constraint",
-            FixedVariableTreatment.RelaxBounds => "relax_bounds",
-
-            DerivativeTest.None => "none",
-            DerivativeTest.FirstOrder => "first-order",
-            DerivativeTest.SecondOrder => "second-order",
-            DerivativeTest.OnlySecondOrder => "only-second-order",
-
-            _ => throw new ArgumentException($"Unknown enum value: {value}")
-        };
+        return attribute?.Value ?? throw new ArgumentException($"Enum value {value} missing IpoptValue attribute");
     }
 
     private static T? StringToEnum<T>(string value) where T : struct, Enum
     {
-        if (typeof(T) == typeof(LinearSolver))
+        foreach (var field in typeof(T).GetFields())
         {
-            return value.ToLowerInvariant() switch
+            if (field.GetCustomAttributes(typeof(IpoptValueAttribute), false)
+                .FirstOrDefault() is IpoptValueAttribute attribute)
             {
-                "mumps" => (T)(object)LinearSolver.Mumps,
-                "ma27" => (T)(object)LinearSolver.Ma27,
-                "ma57" => (T)(object)LinearSolver.Ma57,
-                "ma77" => (T)(object)LinearSolver.Ma77,
-                "ma86" => (T)(object)LinearSolver.Ma86,
-                "ma97" => (T)(object)LinearSolver.Ma97,
-                "pardisomkl" => (T)(object)LinearSolver.PardisoMkl,
-                "pardiso" => (T)(object)LinearSolver.PardisoProject,
-                "wsmp" => (T)(object)LinearSolver.Wsmp,
-                "spral" => (T)(object)LinearSolver.Spral,
-                "custom" => (T)(object)LinearSolver.Custom,
-                _ => null
-            };
+                if (attribute.Value.Equals(value, StringComparison.OrdinalIgnoreCase))
+                    return (T)field.GetValue(null)!;
+            }
         }
-        // Add other enum types as needed
         return null;
     }
 }

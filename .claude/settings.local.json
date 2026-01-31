@@ -10,7 +10,8 @@
       "Bash(gh pr create:*)",
       "Bash(git pull:*)",
       "Bash(git branch:*)",
-      "Bash(./ipopt.exe:*)"
+      "Bash(./ipopt.exe:*)",
+      "Bash(git revert:*)"
     ]
   }
 }
