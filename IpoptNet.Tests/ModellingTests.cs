@@ -137,4 +137,104 @@ public class ModellingTests
         Assert.AreEqual(1.0, result.Solution[x], 0.001);
         Assert.AreEqual(2.0, result.ObjectiveValue, 0.001);
     }
+
+    [TestMethod]
+    public void ConfigureOptionsWithEnums()
+    {
+        var model = new Model();
+        var x = model.AddVariable(1, 5);
+        var y = model.AddVariable(1, 5);
+        var z = model.AddVariable(1, 5);
+        var w = model.AddVariable(1, 5);
+
+        model.SetObjective(x * w * (x + y + z) + z);
+        model.AddConstraint(x * y * z * w >= 25);
+        model.AddConstraint(x * x + y * y + z * z + w * w == 40);
+
+        // Configure solver options using enums
+        model.Options.LinearSolverOption = LinearSolver.Mumps;
+        model.Options.HessianApproximationOption = HessianApproximation.Exact;
+        model.Options.MuStrategyOption = MuStrategy.Adaptive;
+        model.Options.Tolerance = 1e-7;
+        model.Options.MaxIterations = 100;
+        model.Options.PrintLevel = 0;
+
+        var result = model.Solve([1, 5, 5, 1]);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
+    }
+
+    [TestMethod]
+    public void ConfigureCustomOptions()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        model.SetObjective(x * x + y * y);
+        model.AddConstraint(x + y == 4);
+
+        // Use custom option method for less common options
+        model.Options.SetCustomOption("bound_push", 0.01);
+        model.Options.SetCustomOption("bound_frac", 0.01);
+
+        var result = model.Solve([0, 0]);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(2.0, result.Solution[x], 0.001);
+        Assert.AreEqual(2.0, result.Solution[y], 0.001);
+    }
+
+    [TestMethod]
+    public void SolveWithMumps()
+    {
+        var model = new Model();
+        var x1 = model.AddVariable(1, 5);
+        var x2 = model.AddVariable(1, 5);
+        var x3 = model.AddVariable(1, 5);
+        var x4 = model.AddVariable(1, 5);
+
+        model.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
+        model.AddConstraint(x1 * x2 * x3 * x4 >= 25);
+        model.AddConstraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4 == 40);
+
+        // Explicitly use Mumps linear solver (default)
+        model.Options.LinearSolverOption = LinearSolver.Mumps;
+
+        var result = model.Solve([1, 5, 5, 1]);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
+        Assert.AreEqual(1.0, result.Solution[x1], 0.01);
+        Assert.AreEqual(4.743, result.Solution[x2], 0.01);
+        Assert.AreEqual(3.821, result.Solution[x3], 0.01);
+        Assert.AreEqual(1.379, result.Solution[x4], 0.01);
+    }
+
+    [TestMethod]
+    public void SolveWithPardisoMkl()
+    {
+        var model = new Model();
+        var x1 = model.AddVariable(1, 5);
+        var x2 = model.AddVariable(1, 5);
+        var x3 = model.AddVariable(1, 5);
+        var x4 = model.AddVariable(1, 5);
+
+        model.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
+        model.AddConstraint(x1 * x2 * x3 * x4 >= 25);
+        model.AddConstraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4 == 40);
+
+        // Use Pardiso MKL linear solver
+        model.Options.LinearSolverOption = LinearSolver.PardisoMkl;
+
+        var result = model.Solve([1, 5, 5, 1]);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
+        Assert.AreEqual(1.0, result.Solution[x1], 0.01);
+        Assert.AreEqual(4.743, result.Solution[x2], 0.01);
+        Assert.AreEqual(3.821, result.Solution[x3], 0.01);
+        Assert.AreEqual(1.379, result.Solution[x4], 0.01);
+    }
 }
