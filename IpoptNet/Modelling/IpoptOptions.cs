@@ -1,52 +1,31 @@
 namespace IpoptNet.Modelling;
 
 /// <summary>
-/// Documents the IPOPT string value for an enum. For documentation only - actual mappings are in IpoptOptions dictionaries.
-/// </summary>
-[AttributeUsage(AttributeTargets.Field)]
-internal sealed class IpoptValueAttribute : Attribute
-{
-    public string Value { get; }
-    public IpoptValueAttribute(string value) => Value = value;
-}
-
-/// <summary>
 /// Available linear solvers for IPOPT.
 /// </summary>
 public enum LinearSolver
 {
     /// <summary>MUltifrontal Massively Parallel Sparse direct solver (default).</summary>
-    [IpoptValue("mumps")]
     Mumps,
     /// <summary>MA27 from Harwell Subroutines Library.</summary>
-    [IpoptValue("ma27")]
     Ma27,
     /// <summary>MA57 from Harwell Subroutines Library.</summary>
-    [IpoptValue("ma57")]
     Ma57,
     /// <summary>MA77 from Harwell Subroutines Library.</summary>
-    [IpoptValue("ma77")]
     Ma77,
     /// <summary>MA86 from Harwell Subroutines Library.</summary>
-    [IpoptValue("ma86")]
     Ma86,
     /// <summary>MA97 from Harwell Subroutines Library.</summary>
-    [IpoptValue("ma97")]
     Ma97,
     /// <summary>Pardiso from Intel Math Kernel Library (MKL).</summary>
-    [IpoptValue("pardisomkl")]
     PardisoMkl,
     /// <summary>Pardiso from pardiso-project.org.</summary>
-    [IpoptValue("pardiso")]
     PardisoProject,
     /// <summary>Watson Sparse Matrix Package.</summary>
-    [IpoptValue("wsmp")]
     Wsmp,
     /// <summary>Sparse Parallel Robust Algorithms Library.</summary>
-    [IpoptValue("spral")]
     Spral,
     /// <summary>Custom linear solver.</summary>
-    [IpoptValue("custom")]
     Custom
 }
 
@@ -56,10 +35,8 @@ public enum LinearSolver
 public enum HessianApproximation
 {
     /// <summary>Use exact Hessian (default).</summary>
-    [IpoptValue("exact")]
     Exact,
     /// <summary>Use limited-memory quasi-Newton approximation.</summary>
-    [IpoptValue("limited-memory")]
     LimitedMemory
 }
 
@@ -69,10 +46,8 @@ public enum HessianApproximation
 public enum MuStrategy
 {
     /// <summary>Monotone decrease of barrier parameter.</summary>
-    [IpoptValue("monotone")]
     Monotone,
     /// <summary>Adaptive update of barrier parameter.</summary>
-    [IpoptValue("adaptive")]
     Adaptive
 }
 
@@ -82,16 +57,12 @@ public enum MuStrategy
 public enum NlpScalingMethod
 {
     /// <summary>No scaling.</summary>
-    [IpoptValue("none")]
     None,
     /// <summary>User-provided scaling.</summary>
-    [IpoptValue("user-scaling")]
     UserScaling,
     /// <summary>Gradient-based scaling.</summary>
-    [IpoptValue("gradient-based")]
     GradientBased,
     /// <summary>Equilibration-based scaling.</summary>
-    [IpoptValue("equilibration-based")]
     EquilibrationBased
 }
 
@@ -101,13 +72,10 @@ public enum NlpScalingMethod
 public enum LinearSystemScaling
 {
     /// <summary>No scaling.</summary>
-    [IpoptValue("none")]
     None,
     /// <summary>MC19 scaling from HSL.</summary>
-    [IpoptValue("mc19")]
     Mc19,
     /// <summary>Slack-based scaling.</summary>
-    [IpoptValue("slack-based")]
     SlackBased
 }
 
@@ -117,13 +85,10 @@ public enum LinearSystemScaling
 public enum FixedVariableTreatment
 {
     /// <summary>Make fixed variables parameters.</summary>
-    [IpoptValue("make_parameter")]
     MakeParameter,
     /// <summary>Add equality constraints for fixed variables.</summary>
-    [IpoptValue("make_constraint")]
     MakeConstraint,
     /// <summary>Relax bounds slightly.</summary>
-    [IpoptValue("relax_bounds")]
     RelaxBounds
 }
 
@@ -133,16 +98,12 @@ public enum FixedVariableTreatment
 public enum DerivativeTest
 {
     /// <summary>No derivative test.</summary>
-    [IpoptValue("none")]
     None,
     /// <summary>Test first derivatives only.</summary>
-    [IpoptValue("first-order")]
     FirstOrder,
     /// <summary>Test second derivatives only.</summary>
-    [IpoptValue("second-order")]
     SecondOrder,
     /// <summary>Test only at starting point.</summary>
-    [IpoptValue("only-second-order")]
     OnlySecondOrder
 }
 

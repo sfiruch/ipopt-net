@@ -163,13 +163,11 @@ var result = model.Solve([1]);
 ### Available Linear Solvers
 
 - `LinearSolver.Mumps` - Default, included with IPOPT
-- `LinearSolver.PardisoMkl` - Intel MKL Pardiso (requires MKL)
-- `LinearSolver.PardisoProject` - Pardiso from pardiso-project.org (often faster than MKL version)
-- `LinearSolver.Ma27`, `Ma57`, `Ma77`, `Ma86`, `Ma97` - HSL solvers
-- `LinearSolver.Wsmp` - Watson Sparse Matrix Package
-- `LinearSolver.Spral` - Sparse Parallel Robust Algorithms Library
-
-**Note:** Some solvers require IPOPT to be compiled with specific dependencies.
+- `LinearSolver.PardisoMkl` - Intel MKL Pardiso (bundled)
+- `LinearSolver.PardisoProject` - Pardiso from pardiso-project.org (often faster, requires external library)
+- `LinearSolver.Ma27`, `Ma57`, `Ma77`, `Ma86`, `Ma97` - HSL solvers (require external library)
+- `LinearSolver.Wsmp` - Watson Sparse Matrix Package (requires external library)
+- `LinearSolver.Spral` - Sparse Parallel Robust Algorithms Library (requires external library)
 
 ### Common Options
 
