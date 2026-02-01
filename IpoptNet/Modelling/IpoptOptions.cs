@@ -230,6 +230,9 @@ public sealed class IpoptOptions
         set => SetEnum("derivative_test", value);
     }
 
+    public double? DerivativeTestPerturbation { get => GetDouble("derivative_test_perturbation"); set => SetDouble("derivative_test_perturbation", value); }
+    public double? DerivativeTestTolerance { get => GetDouble("derivative_test_tol"); set => SetDouble("derivative_test_tol", value); }
+
     // Constraint/NLP options
     public double? ConstraintViolationTolerance { get => GetDouble("constr_viol_tol"); set => SetDouble("constr_viol_tol", value); }
     public double? DualInfeasibilityTolerance { get => GetDouble("dual_inf_tol"); set => SetDouble("dual_inf_tol", value); }
