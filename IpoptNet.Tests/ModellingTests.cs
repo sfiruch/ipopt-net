@@ -456,4 +456,136 @@ public class ModellingTests
         // Verify IPOPT successfully validates all derivatives
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
     }
+
+    [TestMethod]
+    public void UpdateStartValues_DefaultBehavior_UpdatesStartValues()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        x.Start = 0;
+        var y = model.AddVariable();
+        y.Start = 0;
+
+        // minimize x^2 + y^2
+        // subject to x + y = 4
+        model.SetObjective(x * x + y * y);
+        model.AddConstraint(x + y == 4);
+
+        // Solve with default behavior (updateStartValues = true)
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(2.0, result.Solution[x], 0.001);
+        Assert.AreEqual(2.0, result.Solution[y], 0.001);
+
+        // Verify Start values were updated to solution
+        Assert.AreEqual(2.0, x.Start, 0.001);
+        Assert.AreEqual(2.0, y.Start, 0.001);
+    }
+
+    [TestMethod]
+    public void UpdateStartValues_ExplicitTrue_UpdatesStartValues()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        x.Start = 10;
+        var y = model.AddVariable();
+        y.Start = -5;
+
+        // minimize (x-3)^2 + (y-4)^2
+        model.SetObjective(Expr.Pow(x - 3, 2) + Expr.Pow(y - 4, 2));
+
+        // Solve with explicit updateStartValues = true
+        var result = model.Solve(updateStartValues: true);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+
+        // Verify Start values were updated to solution
+        Assert.AreEqual(3.0, x.Start, 0.001);
+        Assert.AreEqual(4.0, y.Start, 0.001);
+    }
+
+    [TestMethod]
+    public void UpdateStartValues_False_DoesNotUpdateStartValues()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        x.Start = 100;
+        var y = model.AddVariable();
+        y.Start = -50;
+
+        const double originalXStart = 100;
+        const double originalYStart = -50;
+
+        // minimize (x-3)^2 + (y-4)^2
+        model.SetObjective(Expr.Pow(x - 3, 2) + Expr.Pow(y - 4, 2));
+
+        // Solve with updateStartValues = false
+        var result = model.Solve(updateStartValues: false);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(3.0, result.Solution[x], 0.001);
+        Assert.AreEqual(4.0, result.Solution[y], 0.001);
+
+        // Verify Start values were NOT updated
+        Assert.AreEqual(originalXStart, x.Start);
+        Assert.AreEqual(originalYStart, y.Start);
+    }
+
+    [TestMethod]
+    public void UpdateStartValues_SuccessiveOptimizations_UsesUpdatedStartValues()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        x.Start = 0;
+        var y = model.AddVariable();
+        y.Start = 0;
+
+        // First optimization: minimize x^2 + y^2 subject to x + y = 4
+        model.SetObjective(x * x + y * y);
+        model.AddConstraint(x + y == 4);
+
+        var result1 = model.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
+        Assert.AreEqual(2.0, x.Start, 0.001);
+        Assert.AreEqual(2.0, y.Start, 0.001);
+
+        // Second optimization: same problem, should start from previous solution
+        var result2 = model.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result2.Status);
+
+        // Start values should still be at the solution
+        Assert.AreEqual(2.0, x.Start, 0.001);
+        Assert.AreEqual(2.0, y.Start, 0.001);
+    }
+
+    [TestMethod]
+    public void UpdateStartValues_MaxIterationsExceeded_UpdatesStartValues()
+    {
+        var model = new Model();
+        var x = model.AddVariable(-10, 10);
+        x.Start = -5;
+        var y = model.AddVariable(-10, 10);
+        y.Start = -5;
+
+        // Use Rosenbrock function which requires many iterations from a poor starting point
+        // minimize (1-x)^2 + 100*(y-x^2)^2
+        model.SetObjective(Expr.Pow(1 - x, 2) + 100 * Expr.Pow(y - x * x, 2));
+
+        // Force early termination with very low iteration limit
+        model.Options.MaxIterations = 1;
+        model.Options.PrintLevel = 0;
+
+        const double originalXStart = -5;
+        const double originalYStart = -5;
+
+        var result = model.Solve();
+
+        // Should hit iteration limit (Rosenbrock won't converge in 1 iteration from (-5,-5))
+        Assert.AreEqual(ApplicationReturnStatus.MaximumIterationsExceeded, result.Status);
+
+        // Start values should be updated (partial progress is useful for warm starts)
+        Assert.AreNotEqual(originalXStart, x.Start);
+        Assert.AreNotEqual(originalYStart, y.Start);
+    }
 }

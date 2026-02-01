@@ -28,7 +28,7 @@ public sealed class Model : IDisposable
     public void AddConstraint(Expr expression, double lowerBound, double upperBound) =>
         _constraints.Add(new Constraint(expression, lowerBound, upperBound));
 
-    public ModelResult Solve()
+    public ModelResult Solve(bool updateStartValues = true)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -102,6 +102,19 @@ public sealed class Model : IDisposable
         var solution = new Dictionary<Variable, double>();
         for (int i = 0; i < n; i++)
             solution[_variables[i]] = x[i];
+
+        // Update variable Start values if requested and solution is usable
+        if (updateStartValues && status is
+            ApplicationReturnStatus.SolveSucceeded or
+            ApplicationReturnStatus.SolvedToAcceptableLevel or
+            ApplicationReturnStatus.FeasiblePointFound or
+            ApplicationReturnStatus.MaximumIterationsExceeded or
+            ApplicationReturnStatus.MaximumCpuTimeExceeded or
+            ApplicationReturnStatus.MaximumWallTimeExceeded)
+        {
+            for (int i = 0; i < n; i++)
+                _variables[i].Start = x[i];
+        }
 
         return new ModelResult(status, solution, objValue);
     }
