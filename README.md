@@ -41,8 +41,9 @@ var y = model.AddVariable(1, 5);
 var z = model.AddVariable(1, 5);
 var w = model.AddVariable(1, 5);
 
-// Set objective: minimize x*w*(x+y+z) + z
-model.SetObjective(x * w * (x + y + z) + z);
+// Set objective: minimize x*w*(x+y+z) + z (expressions can be built incrementally)
+var expr = x * w * (x + y + z);
+model.SetObjective(expr + z);
 
 // Add constraints
 model.AddConstraint(x * y * z * w >= 25);
