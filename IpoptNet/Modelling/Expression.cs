@@ -628,44 +628,54 @@ public sealed class Product : Expr
             Factors[0].AccumulateHessian(x, grad, hess, multiplier);
             return;
         }
-        if (Factors.Count == 2)
+
+        var n = grad.Length;
+
+        // Evaluate all factors once
+        var factorValues = new double[Factors.Count];
+        for (int i = 0; i < Factors.Count; i++)
+            factorValues[i] = Factors[i].Evaluate(x);
+
+        // Compute gradients of all factors once
+        var factorGradients = new double[Factors.Count][];
+        for (int i = 0; i < Factors.Count; i++)
         {
-            // Inline the Division Multiply Hessian logic for two factors
-            // d²(L*R)/dx² = d²L/dx² * R + 2 * dL/dx * dR/dx + L * d²R/dx²
-            var left = Factors[0];
-            var right = Factors[1];
-            var rVal = right.Evaluate(x);
-            var lVal = left.Evaluate(x);
-            left.AccumulateHessian(x, grad, hess, multiplier * rVal);
-            right.AccumulateHessian(x, grad, hess, multiplier * lVal);
-            // Cross term: dL/dx * dR/dx
-            var n = grad.Length;
-            Span<double> gradL = stackalloc double[n];
-            Span<double> gradR = stackalloc double[n];
-            left.AccumulateGradient(x, gradL, 1.0);
-            right.AccumulateGradient(x, gradR, 1.0);
-            for (int i = 0; i < n; i++)
-                for (int j = 0; j <= i; j++)
-                    hess.Add(i, j, multiplier * (gradL[i] * gradR[j] + gradL[j] * gradR[i]));
-            return;
+            factorGradients[i] = new double[n];
+            Factors[i].AccumulateGradient(x, factorGradients[i], 1.0);
         }
 
-        // For more than 2 factors, recursively split into (first N-1 factors) * (last factor)
-        var leftProduct = new Product(Factors.GetRange(0, Factors.Count - 1));
-        var rightFactor = Factors[Factors.Count - 1];
-        var rValue = rightFactor.Evaluate(x);
-        var lValue = leftProduct.Evaluate(x);
-        leftProduct.AccumulateHessian(x, grad, hess, multiplier * rValue);
-        rightFactor.AccumulateHessian(x, grad, hess, multiplier * lValue);
-        // Cross term
-        var nVars = grad.Length;
-        Span<double> gradLeft = stackalloc double[nVars];
-        Span<double> gradRight = stackalloc double[nVars];
-        leftProduct.AccumulateGradient(x, gradLeft, 1.0);
-        rightFactor.AccumulateGradient(x, gradRight, 1.0);
-        for (int i = 0; i < nVars; i++)
-            for (int j = 0; j <= i; j++)
-                hess.Add(i, j, multiplier * (gradLeft[i] * gradRight[j] + gradLeft[j] * gradRight[i]));
+        // 1. Accumulate Hessian from each factor's second derivative
+        //    d²(f₁*f₂*...*fₙ)/dx² includes: d²fₖ/dx² * (∏ᵢ≠ₖ fᵢ)
+        for (int k = 0; k < Factors.Count; k++)
+        {
+            var otherProduct = 1.0;
+            for (int l = 0; l < Factors.Count; l++)
+                if (l != k)
+                    otherProduct *= factorValues[l];
+
+            Factors[k].AccumulateHessian(x, grad, hess, multiplier * otherProduct);
+        }
+
+        // 2. Add cross terms between pairs of factors
+        //    d²(f₁*f₂*...*fₙ)/dx² includes: ∂fₖ/∂xᵢ * ∂fₘ/∂xⱼ * (∏ₗ≠ₖ,ₘ fₗ)
+        for (int k = 0; k < Factors.Count; k++)
+        {
+            for (int m = k + 1; m < Factors.Count; m++)
+            {
+                var otherProduct = 1.0;
+                for (int l = 0; l < Factors.Count; l++)
+                    if (l != k && l != m)
+                        otherProduct *= factorValues[l];
+
+                for (int i = 0; i < n; i++)
+                    for (int j = 0; j <= i; j++)
+                    {
+                        var crossTerm = factorGradients[k][i] * factorGradients[m][j] +
+                                       factorGradients[k][j] * factorGradients[m][i];
+                        hess.Add(i, j, multiplier * otherProduct * crossTerm);
+                    }
+            }
+        }
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables)
