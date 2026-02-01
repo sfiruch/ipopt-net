@@ -35,6 +35,10 @@ using IpoptNet.Modelling;
 // Create a model
 var model = new Model();
 
+// Configure IPOPT (optional)
+model.Options.LinearSolver = LinearSolver.PardisoMkl;
+model.Options.HessianApproximation = HessianApproximation.LimitedMemory;
+
 // Add variables with bounds and optional initial guesses
 var x = model.AddVariable(1, 5);
 var y = model.AddVariable(1, 5) { Start = 3.7 };
@@ -136,9 +140,9 @@ The modeling API exposes all IPOPT configuration options through a strongly-type
 var model = new Model();
 
 // Configure solver options using enums (type-safe with IntelliSense)
-model.Options.LinearSolverOption = LinearSolver.PardisoMkl;  // Use Intel MKL Pardiso
-model.Options.HessianApproximationOption = HessianApproximation.Exact;
-model.Options.MuStrategyOption = MuStrategy.Adaptive;
+model.Options.LinearSolver = LinearSolver.PardisoMkl;  // Use Intel MKL Pardiso
+model.Options.HessianApproximation = HessianApproximation.Exact;
+model.Options.MuStrategy = MuStrategy.Adaptive;
 
 // Configure termination criteria
 model.Options.Tolerance = 1e-7;
@@ -150,7 +154,7 @@ model.Options.PrintLevel = 5;  // 0=no output, 5=detailed
 model.Options.OutputFile = "ipopt.log";
 
 // Configure NLP scaling
-model.Options.NlpScalingMethodOption = NlpScalingMethod.GradientBased;
+model.Options.NlpScalingMethod = NlpScalingMethod.GradientBased;
 
 // Use custom options for advanced features
 model.Options.SetCustomOption("bound_push", 0.01);
@@ -175,8 +179,8 @@ var result = model.Solve();
 
 - **Termination:** `Tolerance`, `MaxIterations`, `MaxWallTime`, `MaxCpuTime`
 - **Output:** `PrintLevel`, `OutputFile`, `PrintUserOptions`
-- **Algorithm:** `LinearSolverOption`, `HessianApproximationOption`, `MuStrategyOption`
-- **Scaling:** `NlpScalingMethodOption`, `LinearSystemScalingOption`
+- **Algorithm:** `LinearSolver`, `HessianApproximation`, `MuStrategy`
+- **Scaling:** `NlpScalingMethod`, `LinearSystemScaling`
 - **Tolerances:** `ConstraintViolationTolerance`, `DualInfeasibilityTolerance`
 
 ## Low-level API

@@ -115,61 +115,61 @@ public sealed class IpoptOptions
     internal readonly Dictionary<string, object> Options = new();
 
     // AOT-friendly mappings (single source of truth)
-    private static readonly Dictionary<LinearSolver, string> LinearSolverMap = new()
+    private static readonly Dictionary<Modelling.LinearSolver, string> LinearSolverMap = new()
     {
-        [LinearSolver.Mumps] = "mumps",
-        [LinearSolver.Ma27] = "ma27",
-        [LinearSolver.Ma57] = "ma57",
-        [LinearSolver.Ma77] = "ma77",
-        [LinearSolver.Ma86] = "ma86",
-        [LinearSolver.Ma97] = "ma97",
-        [LinearSolver.PardisoMkl] = "pardisomkl",
-        [LinearSolver.PardisoProject] = "pardiso",
-        [LinearSolver.Wsmp] = "wsmp",
-        [LinearSolver.Spral] = "spral",
-        [LinearSolver.Custom] = "custom"
+        [Modelling.LinearSolver.Mumps] = "mumps",
+        [Modelling.LinearSolver.Ma27] = "ma27",
+        [Modelling.LinearSolver.Ma57] = "ma57",
+        [Modelling.LinearSolver.Ma77] = "ma77",
+        [Modelling.LinearSolver.Ma86] = "ma86",
+        [Modelling.LinearSolver.Ma97] = "ma97",
+        [Modelling.LinearSolver.PardisoMkl] = "pardisomkl",
+        [Modelling.LinearSolver.PardisoProject] = "pardiso",
+        [Modelling.LinearSolver.Wsmp] = "wsmp",
+        [Modelling.LinearSolver.Spral] = "spral",
+        [Modelling.LinearSolver.Custom] = "custom"
     };
 
-    private static readonly Dictionary<HessianApproximation, string> HessianApproximationMap = new()
+    private static readonly Dictionary<Modelling.HessianApproximation, string> HessianApproximationMap = new()
     {
-        [HessianApproximation.Exact] = "exact",
-        [HessianApproximation.LimitedMemory] = "limited-memory"
+        [Modelling.HessianApproximation.Exact] = "exact",
+        [Modelling.HessianApproximation.LimitedMemory] = "limited-memory"
     };
 
-    private static readonly Dictionary<MuStrategy, string> MuStrategyMap = new()
+    private static readonly Dictionary<Modelling.MuStrategy, string> MuStrategyMap = new()
     {
-        [MuStrategy.Monotone] = "monotone",
-        [MuStrategy.Adaptive] = "adaptive"
+        [Modelling.MuStrategy.Monotone] = "monotone",
+        [Modelling.MuStrategy.Adaptive] = "adaptive"
     };
 
-    private static readonly Dictionary<NlpScalingMethod, string> NlpScalingMethodMap = new()
+    private static readonly Dictionary<Modelling.NlpScalingMethod, string> NlpScalingMethodMap = new()
     {
-        [NlpScalingMethod.None] = "none",
-        [NlpScalingMethod.UserScaling] = "user-scaling",
-        [NlpScalingMethod.GradientBased] = "gradient-based",
-        [NlpScalingMethod.EquilibrationBased] = "equilibration-based"
+        [Modelling.NlpScalingMethod.None] = "none",
+        [Modelling.NlpScalingMethod.UserScaling] = "user-scaling",
+        [Modelling.NlpScalingMethod.GradientBased] = "gradient-based",
+        [Modelling.NlpScalingMethod.EquilibrationBased] = "equilibration-based"
     };
 
-    private static readonly Dictionary<LinearSystemScaling, string> LinearSystemScalingMap = new()
+    private static readonly Dictionary<Modelling.LinearSystemScaling, string> LinearSystemScalingMap = new()
     {
-        [LinearSystemScaling.None] = "none",
-        [LinearSystemScaling.Mc19] = "mc19",
-        [LinearSystemScaling.SlackBased] = "slack-based"
+        [Modelling.LinearSystemScaling.None] = "none",
+        [Modelling.LinearSystemScaling.Mc19] = "mc19",
+        [Modelling.LinearSystemScaling.SlackBased] = "slack-based"
     };
 
-    private static readonly Dictionary<FixedVariableTreatment, string> FixedVariableTreatmentMap = new()
+    private static readonly Dictionary<Modelling.FixedVariableTreatment, string> FixedVariableTreatmentMap = new()
     {
-        [FixedVariableTreatment.MakeParameter] = "make_parameter",
-        [FixedVariableTreatment.MakeConstraint] = "make_constraint",
-        [FixedVariableTreatment.RelaxBounds] = "relax_bounds"
+        [Modelling.FixedVariableTreatment.MakeParameter] = "make_parameter",
+        [Modelling.FixedVariableTreatment.MakeConstraint] = "make_constraint",
+        [Modelling.FixedVariableTreatment.RelaxBounds] = "relax_bounds"
     };
 
-    private static readonly Dictionary<DerivativeTest, string> DerivativeTestMap = new()
+    private static readonly Dictionary<Modelling.DerivativeTest, string> DerivativeTestMap = new()
     {
-        [DerivativeTest.None] = "none",
-        [DerivativeTest.FirstOrder] = "first-order",
-        [DerivativeTest.SecondOrder] = "second-order",
-        [DerivativeTest.OnlySecondOrder] = "only-second-order"
+        [Modelling.DerivativeTest.None] = "none",
+        [Modelling.DerivativeTest.FirstOrder] = "first-order",
+        [Modelling.DerivativeTest.SecondOrder] = "second-order",
+        [Modelling.DerivativeTest.OnlySecondOrder] = "only-second-order"
     };
 
     // Termination options
@@ -188,43 +188,43 @@ public sealed class IpoptOptions
     public bool? PrintOptionsDocumentation { get => GetBool("print_options_documentation"); set => SetBool("print_options_documentation", value); }
 
     // Algorithm options
-    public LinearSolver? LinearSolverOption
+    public LinearSolver? LinearSolver
     {
         get => GetEnum<LinearSolver>("linear_solver");
         set => SetEnum("linear_solver", value);
     }
 
-    public HessianApproximation? HessianApproximationOption
+    public HessianApproximation? HessianApproximation
     {
         get => GetEnum<HessianApproximation>("hessian_approximation");
         set => SetEnum("hessian_approximation", value);
     }
 
-    public MuStrategy? MuStrategyOption
+    public MuStrategy? MuStrategy
     {
         get => GetEnum<MuStrategy>("mu_strategy");
         set => SetEnum("mu_strategy", value);
     }
 
-    public NlpScalingMethod? NlpScalingMethodOption
+    public NlpScalingMethod? NlpScalingMethod
     {
         get => GetEnum<NlpScalingMethod>("nlp_scaling_method");
         set => SetEnum("nlp_scaling_method", value);
     }
 
-    public LinearSystemScaling? LinearSystemScalingOption
+    public LinearSystemScaling? LinearSystemScaling
     {
         get => GetEnum<LinearSystemScaling>("linear_system_scaling");
         set => SetEnum("linear_system_scaling", value);
     }
 
-    public FixedVariableTreatment? FixedVariableTreatmentOption
+    public FixedVariableTreatment? FixedVariableTreatment
     {
         get => GetEnum<FixedVariableTreatment>("fixed_variable_treatment");
         set => SetEnum("fixed_variable_treatment", value);
     }
 
-    public DerivativeTest? DerivativeTestOption
+    public DerivativeTest? DerivativeTest
     {
         get => GetEnum<DerivativeTest>("derivative_test");
         set => SetEnum("derivative_test", value);
@@ -321,50 +321,50 @@ public sealed class IpoptOptions
     {
         return value switch
         {
-            LinearSolver e => LinearSolverMap[e],
-            HessianApproximation e => HessianApproximationMap[e],
-            MuStrategy e => MuStrategyMap[e],
-            NlpScalingMethod e => NlpScalingMethodMap[e],
-            LinearSystemScaling e => LinearSystemScalingMap[e],
-            FixedVariableTreatment e => FixedVariableTreatmentMap[e],
-            DerivativeTest e => DerivativeTestMap[e],
+            Modelling.LinearSolver e => LinearSolverMap[e],
+            Modelling.HessianApproximation e => HessianApproximationMap[e],
+            Modelling.MuStrategy e => MuStrategyMap[e],
+            Modelling.NlpScalingMethod e => NlpScalingMethodMap[e],
+            Modelling.LinearSystemScaling e => LinearSystemScalingMap[e],
+            Modelling.FixedVariableTreatment e => FixedVariableTreatmentMap[e],
+            Modelling.DerivativeTest e => DerivativeTestMap[e],
             _ => throw new ArgumentException($"Unknown enum type: {typeof(T)}")
         };
     }
 
     private static T? StringToEnum<T>(string value) where T : struct, Enum
     {
-        if (typeof(T) == typeof(LinearSolver))
+        if (typeof(T) == typeof(Modelling.LinearSolver))
         {
             var pair = LinearSolverMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
             return pair.Key != default ? (T)(object)pair.Key : null;
         }
-        if (typeof(T) == typeof(HessianApproximation))
+        if (typeof(T) == typeof(Modelling.HessianApproximation))
         {
             var pair = HessianApproximationMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
             return pair.Key != default ? (T)(object)pair.Key : null;
         }
-        if (typeof(T) == typeof(MuStrategy))
+        if (typeof(T) == typeof(Modelling.MuStrategy))
         {
             var pair = MuStrategyMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
             return pair.Key != default ? (T)(object)pair.Key : null;
         }
-        if (typeof(T) == typeof(NlpScalingMethod))
+        if (typeof(T) == typeof(Modelling.NlpScalingMethod))
         {
             var pair = NlpScalingMethodMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
             return pair.Key != default ? (T)(object)pair.Key : null;
         }
-        if (typeof(T) == typeof(LinearSystemScaling))
+        if (typeof(T) == typeof(Modelling.LinearSystemScaling))
         {
             var pair = LinearSystemScalingMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
             return pair.Key != default ? (T)(object)pair.Key : null;
         }
-        if (typeof(T) == typeof(FixedVariableTreatment))
+        if (typeof(T) == typeof(Modelling.FixedVariableTreatment))
         {
             var pair = FixedVariableTreatmentMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
             return pair.Key != default ? (T)(object)pair.Key : null;
         }
-        if (typeof(T) == typeof(DerivativeTest))
+        if (typeof(T) == typeof(Modelling.DerivativeTest))
         {
             var pair = DerivativeTestMap.FirstOrDefault(kvp => kvp.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
             return pair.Key != default ? (T)(object)pair.Key : null;

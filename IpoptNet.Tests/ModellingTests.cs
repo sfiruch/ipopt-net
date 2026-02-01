@@ -169,9 +169,9 @@ public class ModellingTests
         model.AddConstraint(x * x + y * y + z * z + w * w == 40);
 
         // Configure solver options using enums
-        model.Options.LinearSolverOption = LinearSolver.Mumps;
-        model.Options.HessianApproximationOption = HessianApproximation.Exact;
-        model.Options.MuStrategyOption = MuStrategy.Adaptive;
+        model.Options.LinearSolver = LinearSolver.Mumps;
+        model.Options.HessianApproximation = HessianApproximation.Exact;
+        model.Options.MuStrategy = MuStrategy.Adaptive;
         model.Options.Tolerance = 1e-7;
         model.Options.MaxIterations = 100;
         model.Options.PrintLevel = 0;
@@ -223,7 +223,7 @@ public class ModellingTests
         model.AddConstraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4 == 40);
 
         // Explicitly use Mumps linear solver (default)
-        model.Options.LinearSolverOption = LinearSolver.Mumps;
+        model.Options.LinearSolver = LinearSolver.Mumps;
 
         var result = model.Solve();
 
@@ -253,7 +253,7 @@ public class ModellingTests
         model.AddConstraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4 == 40);
 
         // Use Pardiso MKL linear solver
-        model.Options.LinearSolverOption = LinearSolver.PardisoMkl;
+        model.Options.LinearSolver = LinearSolver.PardisoMkl;
 
         var result = model.Solve();
 
