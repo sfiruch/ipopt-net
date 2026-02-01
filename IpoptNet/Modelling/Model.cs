@@ -28,7 +28,7 @@ public sealed class Model : IDisposable
     public void AddConstraint(Expr expression, double lowerBound, double upperBound) =>
         _constraints.Add(new Constraint(expression, lowerBound, upperBound));
 
-    public ModelResult Solve(ReadOnlySpan<double> initialPoint = default)
+    public ModelResult Solve()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -94,13 +94,10 @@ public sealed class Model : IDisposable
             }
         }
 
-        // Initialize x
+        // Initialize x from variable Start values
         var x = new double[n];
-        if (initialPoint.Length == n)
-            initialPoint.CopyTo(x);
-        else
-            for (int i = 0; i < n; i++)
-                x[i] = Math.Clamp(0, xL[i], xU[i]);
+        for (int i = 0; i < n; i++)
+            x[i] = Math.Clamp(_variables[i].Start, xL[i], xU[i]);
 
         var constraintValues = new double[m];
         var constraintMultipliers = new double[m];

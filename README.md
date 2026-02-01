@@ -35,22 +35,23 @@ using IpoptNet.Modelling;
 // Create a model
 var model = new Model();
 
-// Add variables with bounds
+// Add variables with bounds and optional initial guesses
 var x = model.AddVariable(1, 5);
-var y = model.AddVariable(1, 5);
+var y = model.AddVariable(1, 5) { Start = 3.7 };
 var z = model.AddVariable(1, 5);
 var w = model.AddVariable(1, 5);
 
 // Set objective: minimize x*w*(x+y+z) + z (expressions can be built incrementally)
-var expr = x * w * (x + y + z);
+var expr = x * (x + y + z);
+expr *= w;
 model.SetObjective(expr + z);
 
 // Add constraints
 model.AddConstraint(x * y * z * w >= 25);
 model.AddConstraint(x*x + y*y + z*z + w*w == 40);
 
-// Solve with initial point
-var result = model.Solve(initialPoint: [1, 5, 5, 1]);
+// Solve
+var result = model.Solve();
 
 if (result.Status == ApplicationReturnStatus.SolveSucceeded)
 {
@@ -79,7 +80,7 @@ The expression system supports:
 - **Power**: `Expr.Pow(x, n)`, `Expr.Sqrt(x)`
 - **Trigonometric**: `Expr.Sin(x)`, `Expr.Cos(x)`, `Expr.Tan(x)`
 - **Exponential/Log**: `Expr.Exp(x)`, `Expr.Log(x)`
-- **Constraints**: `>=`, `<=`, `==`, `>`, `<`
+- **Constraints**: `>=`, `<=`, `==`
 
 ## More Examples
 
@@ -93,7 +94,7 @@ var y = model.AddVariable();
 // Minimize (1-x)^2 + 100*(y-x^2)^2
 model.SetObjective(Expr.Pow(1 - x, 2) + 100 * Expr.Pow(y - x*x, 2));
 
-var result = model.Solve([-1, 1]);
+var result = model.Solve();
 // Converges to x=1, y=1
 ```
 
@@ -110,7 +111,7 @@ model.SetObjective(x*x + y*y);
 // Subject to x + y = 4
 model.AddConstraint(x + y == 4);
 
-var result = model.Solve([0, 0]);
+var result = model.Solve();
 // Solution: x=2, y=2, objective=8
 ```
 
@@ -123,7 +124,7 @@ var x = model.AddVariable(-Math.PI, Math.PI);
 // Minimize -sin(x)
 model.SetObjective(-Expr.Sin(x));
 
-var result = model.Solve([0]);
+var result = model.Solve();
 // Converges to x=π/2
 ```
 
@@ -156,15 +157,15 @@ model.Options.SetCustomOption("bound_push", 0.01);
 model.Options.SetCustomOption("acceptable_tol", 1e-5);
 
 // Define and solve your problem...
-var x = model.AddVariable(1, 5);
+var x = model.AddVariable(1, 5) { Start = 1 };
 // ... rest of model setup ...
-var result = model.Solve([1]);
+var result = model.Solve();
 ```
 
 ### Available Linear Solvers
 
 - `LinearSolver.Mumps` - Default, included with IPOPT
-- `LinearSolver.PardisoMkl` - Intel MKL Pardiso (bundled)
+- `LinearSolver.PardisoMkl` - Intel MKL Pardiso (included)
 - `LinearSolver.PardisoProject` - Pardiso from pardiso-project.org (often faster, requires external library)
 - `LinearSolver.Ma27`, `Ma57`, `Ma77`, `Ma86`, `Ma97` - HSL solvers (require external library)
 - `LinearSolver.Wsmp` - Watson Sparse Matrix Package (requires external library)

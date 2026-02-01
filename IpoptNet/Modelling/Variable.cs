@@ -5,6 +5,7 @@ public sealed class Variable : Expr
     public int Index { get; internal set; } = -1;
     public double LowerBound { get; set; } = double.NegativeInfinity;
     public double UpperBound { get; set; } = double.PositiveInfinity;
+    public double Start { get; set; } = 0;
 
     internal Variable() { }
 

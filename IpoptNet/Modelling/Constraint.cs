@@ -25,18 +25,3 @@ public sealed class Constraint
     public static Constraint Between(Expr expr, double lower, double upper) =>
         new(expr, lower, upper);
 }
-
-public static class ConstraintExtensions
-{
-    public static Constraint LessThanOrEqual(this Expr expr, double upper) =>
-        Constraint.LessThanOrEqual(expr, upper);
-
-    public static Constraint GreaterThanOrEqual(this Expr expr, double lower) =>
-        Constraint.GreaterThanOrEqual(expr, lower);
-
-    public static Constraint EqualTo(this Expr expr, double value) =>
-        Constraint.Equal(expr, value);
-
-    public static Constraint Between(this Expr expr, double lower, double upper) =>
-        Constraint.Between(expr, lower, upper);
-}

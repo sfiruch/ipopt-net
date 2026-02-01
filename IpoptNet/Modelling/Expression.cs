@@ -47,7 +47,7 @@ public abstract class Expr
         if (_replacement is Sum sum)
             sum.Terms.Add(other);
         // Check if this is a zero constant with no replacement yet
-        else if (_replacement == null && this is Constant { Value: 0 })
+        else if (_replacement is null && this is Constant { Value: 0 })
             ReplaceWith(other);
         // Otherwise create a new Sum with current value and new term
         else
@@ -60,7 +60,7 @@ public abstract class Expr
         if (_replacement is Sum sum)
             sum.Terms.Add(-other);
         // Check if this is a zero constant with no replacement yet
-        else if (_replacement == null && this is Constant { Value: 0 })
+        else if (_replacement is null && this is Constant { Value: 0 })
             ReplaceWith(-other);
         // Otherwise create a new Sum with current value and negated term
         else
@@ -73,7 +73,7 @@ public abstract class Expr
         if (_replacement is Product product)
             product.Factors.Add(other);
         // Check if this is a one constant with no replacement yet
-        else if (_replacement == null && this is Constant { Value: 1 })
+        else if (_replacement is null && this is Constant { Value: 1 })
             ReplaceWith(other);
         // Otherwise create a new Product with current value and new factor
         else
@@ -90,9 +90,11 @@ public abstract class Expr
             ReplaceWith(new BinaryOp(Clone(), other, BinaryOpKind.Divide));
     }
 
+    public Constraint Between(double lower, double upper) => new Constraint(this, lower, upper);
+
     protected Expr Clone()
     {
-        if (_replacement != null)
+        if (_replacement is not null)
             return _replacement.Clone();
         return CloneCore();
     }
@@ -108,15 +110,16 @@ public abstract class Expr
     public static Constraint operator <=(Expr expr, double value) => new(expr, double.NegativeInfinity, value);
     public static Constraint operator ==(Expr expr, double value) => new(expr, value, value);
     public static Constraint operator !=(Expr expr, double value) => throw new NotSupportedException("Inequality constraints (!=) are not supported in optimization models.");
-    public static Constraint operator >(Expr expr, double value) => new(expr, value, double.PositiveInfinity);
-    public static Constraint operator <(Expr expr, double value) => new(expr, double.NegativeInfinity, value);
 
     public static Constraint operator >=(double value, Expr expr) => new(expr, double.NegativeInfinity, value);
     public static Constraint operator <=(double value, Expr expr) => new(expr, value, double.PositiveInfinity);
     public static Constraint operator ==(double value, Expr expr) => new(expr, value, value);
     public static Constraint operator !=(double value, Expr expr) => throw new NotSupportedException("Inequality constraints (!=) are not supported in optimization models.");
-    public static Constraint operator >(double value, Expr expr) => new(expr, double.NegativeInfinity, value);
-    public static Constraint operator <(double value, Expr expr) => new(expr, value, double.PositiveInfinity);
+
+    public static Constraint operator >=(Expr left, Expr right) => new(left - right, 0, double.PositiveInfinity);
+    public static Constraint operator <=(Expr left, Expr right) => new(left - right, double.NegativeInfinity, 0);
+    public static Constraint operator ==(Expr left, Expr right) => new(left - right, 0, 0);
+    public static Constraint operator !=(Expr left, Expr right) => throw new NotSupportedException("Inequality constraints (!=) are not supported in optimization models.");
 
     public static Expr Pow(Expr @base, double exponent) => new PowerOp(@base, exponent);
     public static Expr Pow(Expr @base, Expr exponent) => Exp(exponent * Log(@base));
@@ -476,7 +479,7 @@ public sealed class Product : Expr
             var otherProduct = 1.0;
             foreach (var other in Factors)
             {
-                if (other != factor)
+                if (!ReferenceEquals(other, factor))
                     otherProduct *= other.Evaluate(x);
             }
             factor.AccumulateGradient(x, grad, multiplier * otherProduct);
