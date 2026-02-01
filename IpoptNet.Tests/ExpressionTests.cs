@@ -64,6 +64,37 @@ public class ExpressionTests
     }
 
     [TestMethod]
+    public void Gradient_ProductWithRepeatedFactors_MatchesFiniteDifference()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create a Product directly with repeated factors: x * x * y
+        var product = new Product([x, x, y]);
+        double[] point = [2, 3];
+
+        // d(x²y)/dx = 2xy = 2*2*3 = 12
+        // d(x²y)/dy = x² = 4
+        AssertGradientMatchesFiniteDifference(product, point);
+    }
+
+    [TestMethod]
+    public void Hessian_ProductWithRepeatedFactors_MatchesFiniteDifference()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create a Product directly with repeated factors: x * x
+        var product = new Product([x, x]);
+        double[] point = [2, 3];
+
+        // d²(x²)/dx² = 2
+        AssertHessianMatchesFiniteDifference(product, point);
+    }
+
+    [TestMethod]
     public void Gradient_Power_MatchesFiniteDifference()
     {
         var model = new Model();
@@ -420,6 +451,69 @@ public class ExpressionTests
         Assert.AreEqual(55.0, result, 1e-10); // Sum of 1 to 10
 
         AssertGradientMatchesFiniteDifference(sum, point);
+    }
+
+    [TestMethod]
+    public void AdditionOperator_CreatesSum_NotDeepTree()
+    {
+        var model = new Model();
+        var variables = new Variable[100];
+        for (int i = 0; i < 100; i++)
+            variables[i] = model.AddVariable();
+
+        // Build a large sum incrementally using regular + operator (not +=)
+        // This simulates the pattern: obj = obj + residual * residual
+        Expr sum = variables[0];
+        for (int i = 1; i < 100; i++)
+            sum = sum + variables[i];
+
+        // Verify it creates a Sum expression, not a deep tree of Divisions
+        Assert.IsInstanceOfType(sum, typeof(Sum));
+        var sumExpr = (Sum)sum;
+        Assert.AreEqual(100, sumExpr.Terms.Count);
+
+        // Verify it evaluates correctly
+        var point = new double[100];
+        for (int i = 0; i < 100; i++)
+            point[i] = i + 1;
+
+        var result = sum.Evaluate(point);
+        Assert.AreEqual(5050.0, result, 1e-10); // Sum of 1 to 100
+
+        // Verify gradient is correct
+        AssertGradientMatchesFiniteDifference(sum, point);
+    }
+
+    [TestMethod]
+    public void MultiplicationOperator_CreatesProduct_NotDeepTree()
+    {
+        var model = new Model();
+        var variables = new Variable[50];
+        for (int i = 0; i < 50; i++)
+            variables[i] = model.AddVariable();
+
+        // Build a large product incrementally using regular * operator (not *=)
+        // This simulates the pattern: obj = obj * factor
+        Expr product = variables[0];
+        for (int i = 1; i < 50; i++)
+            product = product * variables[i];
+
+        // Verify it creates a Product expression, not a deep tree of Divisions
+        Assert.IsInstanceOfType(product, typeof(Product));
+        var productExpr = (Product)product;
+        Assert.AreEqual(50, productExpr.Factors.Count);
+
+        // Verify it evaluates correctly (use small values to avoid overflow)
+        var point = new double[50];
+        for (int i = 0; i < 50; i++)
+            point[i] = 1.01; // Small multiplier
+
+        var result = product.Evaluate(point);
+        var expected = Math.Pow(1.01, 50);
+        Assert.AreEqual(expected, result, 1e-10);
+
+        // Verify gradient is correct
+        AssertGradientMatchesFiniteDifference(product, point);
     }
 
     [TestMethod]

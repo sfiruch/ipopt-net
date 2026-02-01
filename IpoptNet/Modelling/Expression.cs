@@ -25,20 +25,137 @@ public abstract class Expr
     public static implicit operator Expr(int value) => new Constant(value);
     public static implicit operator Expr(double value) => new Constant(value);
 
-    public static Expr operator +(Expr a, Expr b) => new BinaryOp(a, b, BinaryOpKind.Add);
-    public static Expr operator -(Expr a, Expr b) => new BinaryOp(a, b, BinaryOpKind.Subtract);
-    public static Expr operator *(Expr a, Expr b) => new BinaryOp(a, b, BinaryOpKind.Multiply);
-    public static Expr operator /(Expr a, Expr b) => new BinaryOp(a, b, BinaryOpKind.Divide);
-    public static Expr operator -(Expr a) => new UnaryOp(a, UnaryOpKind.Negate);
+    public static Expr operator +(Expr a, Expr b)
+    {
+        // If left operand is already a Sum, extend it with the right operand
+        if (a is Sum sumA)
+        {
+            var newTerms = new List<Expr>(sumA.Terms.Count + 1);
+            newTerms.AddRange(sumA.Terms);
+            newTerms.Add(b);
+            return new Sum(newTerms);
+        }
+        // If right operand is a Sum, prepend the left operand to it
+        else if (b is Sum sumB)
+        {
+            var newTerms = new List<Expr>(sumB.Terms.Count + 1);
+            newTerms.Add(a);
+            newTerms.AddRange(sumB.Terms);
+            return new Sum(newTerms);
+        }
+        // Always use Sum for addition to avoid deep Division trees (Sum is semantically equivalent)
+        else
+        {
+            return new Sum([a, b]);
+        }
+    }
+    public static Expr operator -(Expr a, Expr b)
+    {
+        // If left operand is already a Sum, extend it with the negated right operand
+        if (a is Sum sumA)
+        {
+            var newTerms = new List<Expr>(sumA.Terms.Count + 1);
+            newTerms.AddRange(sumA.Terms);
+            newTerms.Add(-b);
+            return new Sum(newTerms);
+        }
+        // Create a new Sum with both terms to avoid building deep Division trees
+        else
+        {
+            return new Sum([a, -b]);
+        }
+    }
+    public static Expr operator *(Expr a, Expr b)
+    {
+        // If left operand is already a Product, extend it with the right operand
+        if (a is Product prodA)
+        {
+            var newFactors = new List<Expr>(prodA.Factors.Count + 1);
+            newFactors.AddRange(prodA.Factors);
+            newFactors.Add(b);
+            return new Product(newFactors);
+        }
+        // If right operand is a Product, prepend the left operand to it
+        else if (b is Product prodB)
+        {
+            var newFactors = new List<Expr>(prodB.Factors.Count + 1);
+            newFactors.Add(a);
+            newFactors.AddRange(prodB.Factors);
+            return new Product(newFactors);
+        }
+        // Always use Product for multiplication to avoid building deep Division trees
+        else
+        {
+            return new Product([a, b]);
+        }
+    }
+    public static Expr operator /(Expr a, Expr b) => new Division(a, b);
+    public static Expr operator -(Expr a) => new Negation(a);
 
-    public static Expr operator +(Expr a, double b) => new BinaryOp(a, new Constant(b), BinaryOpKind.Add);
-    public static Expr operator +(double a, Expr b) => new BinaryOp(new Constant(a), b, BinaryOpKind.Add);
-    public static Expr operator -(Expr a, double b) => new BinaryOp(a, new Constant(b), BinaryOpKind.Subtract);
-    public static Expr operator -(double a, Expr b) => new BinaryOp(new Constant(a), b, BinaryOpKind.Subtract);
-    public static Expr operator *(Expr a, double b) => new BinaryOp(a, new Constant(b), BinaryOpKind.Multiply);
-    public static Expr operator *(double a, Expr b) => new BinaryOp(new Constant(a), b, BinaryOpKind.Multiply);
-    public static Expr operator /(Expr a, double b) => new BinaryOp(a, new Constant(b), BinaryOpKind.Divide);
-    public static Expr operator /(double a, Expr b) => new BinaryOp(new Constant(a), b, BinaryOpKind.Divide);
+    public static Expr operator +(Expr a, double b)
+    {
+        if (a is Sum sumA)
+        {
+            var newTerms = new List<Expr>(sumA.Terms.Count + 1);
+            newTerms.AddRange(sumA.Terms);
+            newTerms.Add(new Constant(b));
+            return new Sum(newTerms);
+        }
+        return new Sum([a, new Constant(b)]);
+    }
+
+    public static Expr operator +(double a, Expr b)
+    {
+        if (b is Sum sumB)
+        {
+            var newTerms = new List<Expr>(sumB.Terms.Count + 1);
+            newTerms.Add(new Constant(a));
+            newTerms.AddRange(sumB.Terms);
+            return new Sum(newTerms);
+        }
+        return new Sum([new Constant(a), b]);
+    }
+    public static Expr operator -(Expr a, double b)
+    {
+        if (a is Sum sumA)
+        {
+            var newTerms = new List<Expr>(sumA.Terms.Count + 1);
+            newTerms.AddRange(sumA.Terms);
+            newTerms.Add(new Constant(-b));
+            return new Sum(newTerms);
+        }
+        return new Sum([a, new Constant(-b)]);
+    }
+
+    public static Expr operator -(double a, Expr b)
+    {
+        return new Sum([new Constant(a), -b]);
+    }
+    public static Expr operator *(Expr a, double b)
+    {
+        if (a is Product prodA)
+        {
+            var newFactors = new List<Expr>(prodA.Factors.Count + 1);
+            newFactors.AddRange(prodA.Factors);
+            newFactors.Add(new Constant(b));
+            return new Product(newFactors);
+        }
+        return new Product([a, new Constant(b)]);
+    }
+
+    public static Expr operator *(double a, Expr b)
+    {
+        if (b is Product prodB)
+        {
+            var newFactors = new List<Expr>(prodB.Factors.Count + 1);
+            newFactors.Add(new Constant(a));
+            newFactors.AddRange(prodB.Factors);
+            return new Product(newFactors);
+        }
+        return new Product([new Constant(a), b]);
+    }
+    public static Expr operator /(Expr a, double b) => a * (1.0 / b);
+    public static Expr operator /(double a, Expr b) => new Division(new Constant(a), b);
 
     // C# 14 compound assignment operators - modify expression in-place for efficiency
     public void operator +=(Expr other)
@@ -84,10 +201,10 @@ public abstract class Expr
     {
         // Check if we've been replaced with a Product (add reciprocal)
         if (_replacement is Product product)
-            product.Factors.Add(new BinaryOp(1, other, BinaryOpKind.Divide));
+            product.Factors.Add(new Division(1, other));
         // Otherwise create a division
         else
-            ReplaceWith(new BinaryOp(Clone(), other, BinaryOpKind.Divide));
+            ReplaceWith(new Division(Clone(), other));
     }
 
     public Constraint Between(double lower, double upper) => new Constraint(this, lower, upper);
@@ -124,11 +241,11 @@ public abstract class Expr
     public static Expr Pow(Expr @base, double exponent) => new PowerOp(@base, exponent);
     public static Expr Pow(Expr @base, Expr exponent) => Exp(exponent * Log(@base));
     public static Expr Sqrt(Expr a) => new PowerOp(a, 0.5);
-    public static Expr Sin(Expr a) => new FunctionCall(a, MathFunction.Sin);
-    public static Expr Cos(Expr a) => new FunctionCall(a, MathFunction.Cos);
-    public static Expr Tan(Expr a) => new FunctionCall(a, MathFunction.Tan);
-    public static Expr Exp(Expr a) => new FunctionCall(a, MathFunction.Exp);
-    public static Expr Log(Expr a) => new FunctionCall(a, MathFunction.Log);
+    public static Expr Sin(Expr a) => new Sin(a);
+    public static Expr Cos(Expr a) => new Cos(a);
+    public static Expr Tan(Expr a) => new Tan(a);
+    public static Expr Exp(Expr a) => new Exp(a);
+    public static Expr Log(Expr a) => new Log(a);
 }
 
 public sealed class Constant : Expr
@@ -145,113 +262,55 @@ public sealed class Constant : Expr
     protected override Expr CloneCore() => new Constant(Value);
 }
 
-public enum BinaryOpKind { Add, Subtract, Multiply, Divide }
-
-public sealed class BinaryOp : Expr
+public sealed class Division : Expr
 {
     public Expr Left { get; set; }
     public Expr Right { get; set; }
-    public BinaryOpKind Kind { get; set; }
 
-    public BinaryOp(Expr left, Expr right, BinaryOpKind kind)
+    public Division(Expr left, Expr right)
     {
         Left = left;
         Right = right;
-        Kind = kind;
     }
 
     protected override double EvaluateCore(ReadOnlySpan<double> x)
     {
         var l = Left.Evaluate(x);
         var r = Right.Evaluate(x);
-        return Kind switch
-        {
-            BinaryOpKind.Add => l + r,
-            BinaryOpKind.Subtract => l - r,
-            BinaryOpKind.Multiply => l * r,
-            BinaryOpKind.Divide => l / r,
-            _ => throw new InvalidOperationException()
-        };
+        return l / r;
     }
 
     protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
     {
-        switch (Kind)
-        {
-            case BinaryOpKind.Add:
-                Left.AccumulateGradient(x, grad, multiplier);
-                Right.AccumulateGradient(x, grad, multiplier);
-                break;
-            case BinaryOpKind.Subtract:
-                Left.AccumulateGradient(x, grad, multiplier);
-                Right.AccumulateGradient(x, grad, -multiplier);
-                break;
-            case BinaryOpKind.Multiply:
-                var rVal = Right.Evaluate(x);
-                var lVal = Left.Evaluate(x);
-                Left.AccumulateGradient(x, grad, multiplier * rVal);
-                Right.AccumulateGradient(x, grad, multiplier * lVal);
-                break;
-            case BinaryOpKind.Divide:
-                var rValDiv = Right.Evaluate(x);
-                var lValDiv = Left.Evaluate(x);
-                Left.AccumulateGradient(x, grad, multiplier / rValDiv);
-                Right.AccumulateGradient(x, grad, -multiplier * lValDiv / (rValDiv * rValDiv));
-                break;
-        }
+        // d(L/R)/dx = (dL/dx * R - L * dR/dx) / R²
+        var rVal = Right.Evaluate(x);
+        var lVal = Left.Evaluate(x);
+        Left.AccumulateGradient(x, grad, multiplier / rVal);
+        Right.AccumulateGradient(x, grad, -multiplier * lVal / (rVal * rVal));
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
     {
-        switch (Kind)
-        {
-            case BinaryOpKind.Add:
-                Left.AccumulateHessian(x, grad, hess, multiplier);
-                Right.AccumulateHessian(x, grad, hess, multiplier);
-                break;
-            case BinaryOpKind.Subtract:
-                Left.AccumulateHessian(x, grad, hess, multiplier);
-                Right.AccumulateHessian(x, grad, hess, -multiplier);
-                break;
-            case BinaryOpKind.Multiply:
-                // d²(L*R)/dx² = d²L/dx² * R + 2 * dL/dx * dR/dx + L * d²R/dx²
-                var rVal = Right.Evaluate(x);
-                var lVal = Left.Evaluate(x);
-                Left.AccumulateHessian(x, grad, hess, multiplier * rVal);
-                Right.AccumulateHessian(x, grad, hess, multiplier * lVal);
-                // Cross term: dL/dx * dR/dx
-                var n = grad.Length;
-                Span<double> gradL = stackalloc double[n];
-                Span<double> gradR = stackalloc double[n];
-                Left.AccumulateGradient(x, gradL, 1.0);
-                Right.AccumulateGradient(x, gradR, 1.0);
-                for (int i = 0; i < n; i++)
-                    for (int j = 0; j <= i; j++)
-                        hess.Add(i, j, multiplier * (gradL[i] * gradR[j] + gradL[j] * gradR[i]));
-                break;
-            case BinaryOpKind.Divide:
-                // d(L/R)/dx = (dL/dx * R - L * dR/dx) / R²
-                // d²(L/R)/dx² = d²L/dx²/R - L*d²R/dx²/R² - 2*dL/dx*dR/dx/R² + 2*L*(dR/dx)²/R³
-                var rValDiv = Right.Evaluate(x);
-                var lValDiv = Left.Evaluate(x);
-                var r2 = rValDiv * rValDiv;
-                var r3 = r2 * rValDiv;
-                Left.AccumulateHessian(x, grad, hess, multiplier / rValDiv);
-                Right.AccumulateHessian(x, grad, hess, -multiplier * lValDiv / r2);
-                var nDiv = grad.Length;
-                Span<double> gradLDiv = stackalloc double[nDiv];
-                Span<double> gradRDiv = stackalloc double[nDiv];
-                Left.AccumulateGradient(x, gradLDiv, 1.0);
-                Right.AccumulateGradient(x, gradRDiv, 1.0);
-                for (int i = 0; i < nDiv; i++)
-                    for (int j = 0; j <= i; j++)
-                    {
-                        var cross = -multiplier / r2 * (gradLDiv[i] * gradRDiv[j] + gradLDiv[j] * gradRDiv[i]);
-                        var rr = multiplier * 2 * lValDiv / r3 * gradRDiv[i] * gradRDiv[j];
-                        hess.Add(i, j, cross + rr);
-                    }
-                break;
-        }
+        // d(L/R)/dx = (dL/dx * R - L * dR/dx) / R²
+        // d²(L/R)/dx² = d²L/dx²/R - L*d²R/dx²/R² - 2*dL/dx*dR/dx/R² + 2*L*(dR/dx)²/R³
+        var rVal = Right.Evaluate(x);
+        var lVal = Left.Evaluate(x);
+        var r2 = rVal * rVal;
+        var r3 = r2 * rVal;
+        Left.AccumulateHessian(x, grad, hess, multiplier / rVal);
+        Right.AccumulateHessian(x, grad, hess, -multiplier * lVal / r2);
+        var n = grad.Length;
+        Span<double> gradL = stackalloc double[n];
+        Span<double> gradR = stackalloc double[n];
+        Left.AccumulateGradient(x, gradL, 1.0);
+        Right.AccumulateGradient(x, gradR, 1.0);
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j <= i; j++)
+            {
+                var cross = -multiplier / r2 * (gradL[i] * gradR[j] + gradL[j] * gradR[i]);
+                var rr = multiplier * 2 * lVal / r3 * gradR[i] * gradR[j];
+                hess.Add(i, j, cross + rr);
+            }
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables)
@@ -260,55 +319,37 @@ public sealed class BinaryOp : Expr
         Right.CollectVariables(variables);
     }
 
-    protected override Expr CloneCore() => new BinaryOp(Left, Right, Kind);
+    protected override Expr CloneCore() => new Division(Left, Right);
 }
 
-public enum UnaryOpKind { Negate }
-
-public sealed class UnaryOp : Expr
+public sealed class Negation : Expr
 {
     public Expr Operand { get; set; }
-    public UnaryOpKind Kind { get; set; }
 
-    public UnaryOp(Expr operand, UnaryOpKind kind)
+    public Negation(Expr operand)
     {
         Operand = operand;
-        Kind = kind;
     }
 
     protected override double EvaluateCore(ReadOnlySpan<double> x)
     {
         var val = Operand.Evaluate(x);
-        return Kind switch
-        {
-            UnaryOpKind.Negate => -val,
-            _ => throw new InvalidOperationException()
-        };
+        return -val;
     }
 
     protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
     {
-        switch (Kind)
-        {
-            case UnaryOpKind.Negate:
-                Operand.AccumulateGradient(x, grad, -multiplier);
-                break;
-        }
+        Operand.AccumulateGradient(x, grad, -multiplier);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
     {
-        switch (Kind)
-        {
-            case UnaryOpKind.Negate:
-                Operand.AccumulateHessian(x, grad, hess, -multiplier);
-                break;
-        }
+        Operand.AccumulateHessian(x, grad, hess, -multiplier);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Operand.CollectVariables(variables);
 
-    protected override Expr CloneCore() => new UnaryOp(Operand, Kind);
+    protected override Expr CloneCore() => new Negation(Operand);
 }
 
 public sealed class PowerOp : Expr
@@ -352,64 +393,92 @@ public sealed class PowerOp : Expr
     protected override Expr CloneCore() => new PowerOp(Base, Exponent);
 }
 
-public enum MathFunction { Sin, Cos, Tan, Exp, Log }
-
-public sealed class FunctionCall : Expr
+public sealed class Sin : Expr
 {
     public Expr Argument { get; set; }
-    public MathFunction Function { get; set; }
 
-    public FunctionCall(Expr argument, MathFunction function)
-    {
-        Argument = argument;
-        Function = function;
-    }
+    public Sin(Expr argument) => Argument = argument;
 
-    protected override double EvaluateCore(ReadOnlySpan<double> x)
-    {
-        var arg = Argument.Evaluate(x);
-        return Function switch
-        {
-            MathFunction.Sin => Math.Sin(arg),
-            MathFunction.Cos => Math.Cos(arg),
-            MathFunction.Tan => Math.Tan(arg),
-            MathFunction.Exp => Math.Exp(arg),
-            MathFunction.Log => Math.Log(arg),
-            _ => throw new InvalidOperationException()
-        };
-    }
+    protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Sin(Argument.Evaluate(x));
 
     protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
     {
         var arg = Argument.Evaluate(x);
-        var deriv = Function switch
-        {
-            MathFunction.Sin => Math.Cos(arg),
-            MathFunction.Cos => -Math.Sin(arg),
-            MathFunction.Tan => 1.0 / (Math.Cos(arg) * Math.Cos(arg)),
-            MathFunction.Exp => Math.Exp(arg),
-            MathFunction.Log => 1.0 / arg,
-            _ => throw new InvalidOperationException()
-        };
-        Argument.AccumulateGradient(x, grad, multiplier * deriv);
+        Argument.AccumulateGradient(x, grad, multiplier * Math.Cos(arg));
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
     {
         var arg = Argument.Evaluate(x);
-        var (firstDeriv, secondDeriv) = Function switch
-        {
-            MathFunction.Sin => (Math.Cos(arg), -Math.Sin(arg)),
-            MathFunction.Cos => (-Math.Sin(arg), -Math.Cos(arg)),
-            MathFunction.Tan => (1.0 / (Math.Cos(arg) * Math.Cos(arg)), 2 * Math.Tan(arg) / (Math.Cos(arg) * Math.Cos(arg))),
-            MathFunction.Exp => (Math.Exp(arg), Math.Exp(arg)),
-            MathFunction.Log => (1.0 / arg, -1.0 / (arg * arg)),
-            _ => throw new InvalidOperationException()
-        };
-        Argument.AccumulateHessian(x, grad, hess, multiplier * firstDeriv);
+        Argument.AccumulateHessian(x, grad, hess, multiplier * Math.Cos(arg));
         var n = grad.Length;
         Span<double> gradArg = stackalloc double[n];
         Argument.AccumulateGradient(x, gradArg, 1.0);
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j <= i; j++)
+                hess.Add(i, j, multiplier * -Math.Sin(arg) * gradArg[i] * gradArg[j]);
+    }
+
+    protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+
+    protected override Expr CloneCore() => new Sin(Argument);
+}
+
+public sealed class Cos : Expr
+{
+    public Expr Argument { get; set; }
+
+    public Cos(Expr argument) => Argument = argument;
+
+    protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Cos(Argument.Evaluate(x));
+
+    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    {
+        var arg = Argument.Evaluate(x);
+        Argument.AccumulateGradient(x, grad, multiplier * -Math.Sin(arg));
+    }
+
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    {
+        var arg = Argument.Evaluate(x);
+        Argument.AccumulateHessian(x, grad, hess, multiplier * -Math.Sin(arg));
+        var n = grad.Length;
+        Span<double> gradArg = stackalloc double[n];
+        Argument.AccumulateGradient(x, gradArg, 1.0);
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j <= i; j++)
+                hess.Add(i, j, multiplier * -Math.Cos(arg) * gradArg[i] * gradArg[j]);
+    }
+
+    protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+
+    protected override Expr CloneCore() => new Cos(Argument);
+}
+
+public sealed class Tan : Expr
+{
+    public Expr Argument { get; set; }
+
+    public Tan(Expr argument) => Argument = argument;
+
+    protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Tan(Argument.Evaluate(x));
+
+    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    {
+        var arg = Argument.Evaluate(x);
+        var cos = Math.Cos(arg);
+        Argument.AccumulateGradient(x, grad, multiplier / (cos * cos));
+    }
+
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    {
+        var arg = Argument.Evaluate(x);
+        var cos = Math.Cos(arg);
+        Argument.AccumulateHessian(x, grad, hess, multiplier / (cos * cos));
+        var n = grad.Length;
+        Span<double> gradArg = stackalloc double[n];
+        Argument.AccumulateGradient(x, gradArg, 1.0);
+        var secondDeriv = 2 * Math.Tan(arg) / (cos * cos);
         for (int i = 0; i < n; i++)
             for (int j = 0; j <= i; j++)
                 hess.Add(i, j, multiplier * secondDeriv * gradArg[i] * gradArg[j]);
@@ -417,7 +486,71 @@ public sealed class FunctionCall : Expr
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
 
-    protected override Expr CloneCore() => new FunctionCall(Argument, Function);
+    protected override Expr CloneCore() => new Tan(Argument);
+}
+
+public sealed class Exp : Expr
+{
+    public Expr Argument { get; set; }
+
+    public Exp(Expr argument) => Argument = argument;
+
+    protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Exp(Argument.Evaluate(x));
+
+    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    {
+        var arg = Argument.Evaluate(x);
+        Argument.AccumulateGradient(x, grad, multiplier * Math.Exp(arg));
+    }
+
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    {
+        var arg = Argument.Evaluate(x);
+        var expVal = Math.Exp(arg);
+        Argument.AccumulateHessian(x, grad, hess, multiplier * expVal);
+        var n = grad.Length;
+        Span<double> gradArg = stackalloc double[n];
+        Argument.AccumulateGradient(x, gradArg, 1.0);
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j <= i; j++)
+                hess.Add(i, j, multiplier * expVal * gradArg[i] * gradArg[j]);
+    }
+
+    protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+
+    protected override Expr CloneCore() => new Exp(Argument);
+}
+
+public sealed class Log : Expr
+{
+    public Expr Argument { get; set; }
+
+    public Log(Expr argument) => Argument = argument;
+
+    protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Log(Argument.Evaluate(x));
+
+    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    {
+        var arg = Argument.Evaluate(x);
+        Argument.AccumulateGradient(x, grad, multiplier / arg);
+    }
+
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    {
+        var arg = Argument.Evaluate(x);
+        Argument.AccumulateHessian(x, grad, hess, multiplier / arg);
+        var n = grad.Length;
+        Span<double> gradArg = stackalloc double[n];
+        Argument.AccumulateGradient(x, gradArg, 1.0);
+        var secondDeriv = -1.0 / (arg * arg);
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j <= i; j++)
+                hess.Add(i, j, multiplier * secondDeriv * gradArg[i] * gradArg[j]);
+    }
+
+    protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+
+    protected override Expr CloneCore() => new Log(Argument);
 }
 
 public sealed class Sum : Expr
@@ -474,21 +607,20 @@ public sealed class Product : Expr
     protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
     {
         // Product rule: d(f*g*h)/dx = df/dx*g*h + f*dg/dx*h + f*g*dh/dx
-        foreach (var factor in Factors)
+        for (int i = 0; i < Factors.Count; i++)
         {
             var otherProduct = 1.0;
-            foreach (var other in Factors)
+            for (int j = 0; j < Factors.Count; j++)
             {
-                if (!ReferenceEquals(other, factor))
-                    otherProduct *= other.Evaluate(x);
+                if (i != j)
+                    otherProduct *= Factors[j].Evaluate(x);
             }
-            factor.AccumulateGradient(x, grad, multiplier * otherProduct);
+            Factors[i].AccumulateGradient(x, grad, multiplier * otherProduct);
         }
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
     {
-        // Simplified implementation: convert to nested BinaryOps for Hessian calculation
         if (Factors.Count == 0)
             return;
         if (Factors.Count == 1)
@@ -496,11 +628,44 @@ public sealed class Product : Expr
             Factors[0].AccumulateHessian(x, grad, hess, multiplier);
             return;
         }
+        if (Factors.Count == 2)
+        {
+            // Inline the Division Multiply Hessian logic for two factors
+            // d²(L*R)/dx² = d²L/dx² * R + 2 * dL/dx * dR/dx + L * d²R/dx²
+            var left = Factors[0];
+            var right = Factors[1];
+            var rVal = right.Evaluate(x);
+            var lVal = left.Evaluate(x);
+            left.AccumulateHessian(x, grad, hess, multiplier * rVal);
+            right.AccumulateHessian(x, grad, hess, multiplier * lVal);
+            // Cross term: dL/dx * dR/dx
+            var n = grad.Length;
+            Span<double> gradL = stackalloc double[n];
+            Span<double> gradR = stackalloc double[n];
+            left.AccumulateGradient(x, gradL, 1.0);
+            right.AccumulateGradient(x, gradR, 1.0);
+            for (int i = 0; i < n; i++)
+                for (int j = 0; j <= i; j++)
+                    hess.Add(i, j, multiplier * (gradL[i] * gradR[j] + gradL[j] * gradR[i]));
+            return;
+        }
 
-        var result = Factors[0];
-        for (int i = 1; i < Factors.Count; i++)
-            result = new BinaryOp(result, Factors[i], BinaryOpKind.Multiply);
-        result.AccumulateHessian(x, grad, hess, multiplier);
+        // For more than 2 factors, recursively split into (first N-1 factors) * (last factor)
+        var leftProduct = new Product(Factors.GetRange(0, Factors.Count - 1));
+        var rightFactor = Factors[Factors.Count - 1];
+        var rValue = rightFactor.Evaluate(x);
+        var lValue = leftProduct.Evaluate(x);
+        leftProduct.AccumulateHessian(x, grad, hess, multiplier * rValue);
+        rightFactor.AccumulateHessian(x, grad, hess, multiplier * lValue);
+        // Cross term
+        var nVars = grad.Length;
+        Span<double> gradLeft = stackalloc double[nVars];
+        Span<double> gradRight = stackalloc double[nVars];
+        leftProduct.AccumulateGradient(x, gradLeft, 1.0);
+        rightFactor.AccumulateGradient(x, gradRight, 1.0);
+        for (int i = 0; i < nVars; i++)
+            for (int j = 0; j <= i; j++)
+                hess.Add(i, j, multiplier * (gradLeft[i] * gradRight[j] + gradLeft[j] * gradRight[i]));
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables)
