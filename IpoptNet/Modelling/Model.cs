@@ -73,10 +73,6 @@ public sealed class Model : IDisposable
             jacRows.Length, hessRows.Length,
             evalF, evalGradF, evalG, evalJacG, evalH);
 
-        // Suppress IPOPT output by default
-        if (!Options.Options.ContainsKey("print_level"))
-            solver.SetOption("print_level", 0);
-
         // Apply user-specified options
         foreach (var (name, value) in Options.Options)
         {
