@@ -118,7 +118,7 @@ public sealed class Model : IDisposable
 
         var solution = new Dictionary<Variable, double>();
         for (int i = 0; i < n; i++)
-            solution[_variables[i]] = x[i];
+            solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]);
 
         // Update variable Start values and dual variables if requested and solution is usable
         if (updateStartValues && status is
@@ -131,8 +131,7 @@ public sealed class Model : IDisposable
         {
             for (int i = 0; i < n; i++)
             {
-                // Ensure solution values remain within bounds (defensive programming)
-                _variables[i].Start = Math.Clamp(x[i], xL[i], xU[i]);
+                _variables[i].Start = x[i];
                 _variables[i].LowerBoundDualStart = lowerBoundMultipliers[i];
                 _variables[i].UpperBoundDualStart = upperBoundMultipliers[i];
             }
