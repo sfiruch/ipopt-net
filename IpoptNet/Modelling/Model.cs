@@ -206,6 +206,15 @@ public sealed class Model : IDisposable
 
     private unsafe EvalJacGCallback CreateEvalJacGCallback(int[] structRows, int[] structCols)
     {
+        // Build a map from row -> list of (col, valueIndex) for only the sparse entries
+        var rowToEntries = new Dictionary<int, List<(int col, int idx)>>();
+        for (int i = 0; i < structRows.Length; i++)
+        {
+            if (!rowToEntries.ContainsKey(structRows[i]))
+                rowToEntries[structRows[i]] = new List<(int, int)>();
+            rowToEntries[structRows[i]].Add((structCols[i], i));
+        }
+
         return (int n, double* x, bool newX, int m, int neleJac, int* iRow, int* jCol, double* values, nint userData) =>
         {
             if (values == null)
@@ -223,23 +232,22 @@ public sealed class Model : IDisposable
                 var xSpan = new ReadOnlySpan<double>(x, n);
                 Span<double> grad = new double[n];
 
-                // Build a map from (row, col) to index for fast lookup
-                var indexMap = new Dictionary<(int, int), int>();
-                for (int i = 0; i < structRows.Length; i++)
-                    indexMap[(structRows[i], structCols[i])] = i;
-
                 // Clear values
                 for (int i = 0; i < neleJac; i++)
                     values[i] = 0;
 
                 for (int row = 0; row < m; row++)
                 {
-                    grad.Clear();
                     _constraints[row].Expression.AccumulateGradient(xSpan, grad, 1.0);
-                    for (int col = 0; col < n; col++)
+
+                    // Only iterate through columns that exist in the sparse structure
+                    if (rowToEntries.TryGetValue(row, out var entries))
                     {
-                        if (indexMap.TryGetValue((row, col), out var idx))
+                        foreach (var (col, idx) in entries)
+                        {
                             values[idx] = grad[col];
+                            grad[col] = 0;  // Clear only the sparse entries we used
+                        }
                     }
                 }
             }
