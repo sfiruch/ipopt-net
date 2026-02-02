@@ -13,7 +13,8 @@
       "Bash(./ipopt.exe:*)",
       "Bash(git revert:*)",
       "WebSearch",
-      "Bash(gh release view:*)"
+      "Bash(gh release view:*)",
+      "WebFetch(domain:coin-or.github.io)"
     ]
   }
 }
