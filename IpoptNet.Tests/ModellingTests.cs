@@ -588,4 +588,37 @@ public class ModellingTests
         Assert.AreNotEqual(originalXStart, x.Start);
         Assert.AreNotEqual(originalYStart, y.Start);
     }
+
+    [TestMethod]
+    public void HessianApproximation_LimitedMemory_SolvesSuccessfully()
+    {
+        var model = new Model();
+        var x1 = model.AddVariable(1, 5);
+        x1.Start = 1;
+        var x2 = model.AddVariable(1, 5);
+        x2.Start = 5;
+        var x3 = model.AddVariable(1, 5);
+        x3.Start = 5;
+        var x4 = model.AddVariable(1, 5);
+        x4.Start = 1;
+
+        // HS071 problem
+        model.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
+        model.AddConstraint(x1 * x2 * x3 * x4 >= 25);
+        model.AddConstraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4 == 40);
+
+        // Use limited memory approximation instead of exact Hessian
+        model.Options.HessianApproximation = HessianApproximation.LimitedMemory;
+        model.Options.PrintLevel = 0;
+
+        var result = model.Solve();
+
+        // Should still converge with limited memory approximation
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
+        Assert.AreEqual(1.0, result.Solution[x1], 0.01);
+        Assert.AreEqual(4.743, result.Solution[x2], 0.01);
+        Assert.AreEqual(3.821, result.Solution[x3], 0.01);
+        Assert.AreEqual(1.379, result.Solution[x4], 0.01);
+    }
 }

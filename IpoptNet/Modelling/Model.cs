@@ -58,14 +58,17 @@ public sealed class Model : IDisposable
 
         // Analyze sparsity
         var (jacRows, jacCols) = AnalyzeJacobianSparsity();
-        var (hessRows, hessCols) = AnalyzeHessianSparsity();
+
+        // Skip Hessian computation if using limited memory approximation
+        var useLimitedMemory = Options.HessianApproximation == HessianApproximation.LimitedMemory;
+        var (hessRows, hessCols) = useLimitedMemory ? (Array.Empty<int>(), Array.Empty<int>()) : AnalyzeHessianSparsity();
 
         // Create callbacks
         var evalF = CreateEvalFCallback();
         var evalGradF = CreateEvalGradFCallback();
         var evalG = CreateEvalGCallback();
         var evalJacG = CreateEvalJacGCallback(jacRows, jacCols);
-        var evalH = CreateEvalHCallback(hessRows, hessCols);
+        var evalH = useLimitedMemory ? CreateDummyEvalHCallback() : CreateEvalHCallback(hessRows, hessCols);
 
         using var solver = new IpoptSolver(
             n, xL, xU,
@@ -293,6 +296,12 @@ public sealed class Model : IDisposable
             }
             return true;
         };
+    }
+
+    private unsafe EvalHCallback CreateDummyEvalHCallback()
+    {
+        return (int n, double* x, bool newX, double objFactor, int m, double* lambda, bool newLambda,
+                int neleHess, int* iRow, int* jCol, double* values, nint userData) => false;
     }
 
     public void Dispose()
