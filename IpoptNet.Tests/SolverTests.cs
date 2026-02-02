@@ -152,10 +152,11 @@ public class SolverTests
         solver.SetOption("print_level", 0);
 
         double[] x = [1, 5, 5, 1];
-        var status = solver.Solve(x, out var objValue);
+        var status = solver.Solve(x, out var objValue, out var statistics);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, status);
         Assert.AreEqual(17.014, objValue, 0.01);
+        Assert.IsTrue(statistics.IterationCount > 0);
         Assert.AreEqual(1.0, x[0], 0.01);
         Assert.AreEqual(4.743, x[1], 0.01);
         Assert.AreEqual(3.821, x[2], 0.01);

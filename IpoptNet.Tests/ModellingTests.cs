@@ -903,4 +903,128 @@ public class ModellingTests
         Assert.AreEqual(2.0, result.Solution[x], 0.001);
         Assert.AreEqual(2.0, result.Solution[y], 0.001);
     }
+
+    [TestMethod]
+    public void Statistics_ExposesIterationCount()
+    {
+        var model = new Model();
+        var x = model.AddVariable(1, 5);
+        x.Start = 1;
+        var y = model.AddVariable(1, 5);
+        y.Start = 5;
+
+        model.SetObjective(x * x + y * y);
+        model.AddConstraint(x + y >= 6);
+
+        model.Options.PrintLevel = 0;
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.IsNotNull(result.Statistics);
+        Assert.IsTrue(result.Statistics.IterationCount > 0);
+        Assert.IsTrue(result.Statistics.IterationCount < 100);
+    }
+
+    [TestMethod]
+    public void Statistics_ProvidesFinalInfeasibilities()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        x.Start = 0;
+        var y = model.AddVariable();
+        y.Start = 0;
+
+        model.SetObjective(x * x + y * y);
+        model.AddConstraint(x + y == 4);
+
+        model.Options.PrintLevel = 0;
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.IsTrue(result.Statistics.PrimalInfeasibility < 1e-6);
+        Assert.IsTrue(result.Statistics.DualInfeasibility < 1e-6);
+    }
+
+    [TestMethod]
+    public void WarmStart_ReducesIterationCount_ComparedToColdStart()
+    {
+        // First solve to get warm start data
+        var model1 = new Model();
+        var x1 = model1.AddVariable(1, 5);
+        x1.Start = 1;
+        var x2 = model1.AddVariable(1, 5);
+        x2.Start = 5;
+        var x3 = model1.AddVariable(1, 5);
+        x3.Start = 5;
+        var x4 = model1.AddVariable(1, 5);
+        x4.Start = 1;
+
+        model1.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
+        var c1 = new Constraint(x1 * x2 * x3 * x4, 25, double.PositiveInfinity);
+        var c2 = new Constraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4, 40, 40);
+        model1.AddConstraint(c1);
+        model1.AddConstraint(c2);
+
+        model1.Options.PrintLevel = 0;
+        var result1 = model1.Solve(updateStartValues: true);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
+
+        // Warm start solve
+        var modelWarm = new Model();
+        var w1 = modelWarm.AddVariable(1, 5);
+        w1.Start = x1.Start;
+        w1.LowerBoundDualStart = x1.LowerBoundDualStart;
+        w1.UpperBoundDualStart = x1.UpperBoundDualStart;
+
+        var w2 = modelWarm.AddVariable(1, 5);
+        w2.Start = x2.Start;
+        w2.LowerBoundDualStart = x2.LowerBoundDualStart;
+        w2.UpperBoundDualStart = x2.UpperBoundDualStart;
+
+        var w3 = modelWarm.AddVariable(1, 5);
+        w3.Start = x3.Start;
+        w3.LowerBoundDualStart = x3.LowerBoundDualStart;
+        w3.UpperBoundDualStart = x3.UpperBoundDualStart;
+
+        var w4 = modelWarm.AddVariable(1, 5);
+        w4.Start = x4.Start;
+        w4.LowerBoundDualStart = x4.LowerBoundDualStart;
+        w4.UpperBoundDualStart = x4.UpperBoundDualStart;
+
+        modelWarm.SetObjective(w1 * w4 * (w1 + w2 + w3) + w3);
+        var cw1 = new Constraint(w1 * w2 * w3 * w4, 25, double.PositiveInfinity);
+        cw1.DualStart = c1.DualStart;
+        var cw2 = new Constraint(w1 * w1 + w2 * w2 + w3 * w3 + w4 * w4, 40, 40);
+        cw2.DualStart = c2.DualStart;
+        modelWarm.AddConstraint(cw1);
+        modelWarm.AddConstraint(cw2);
+
+        modelWarm.Options.PrintLevel = 0;
+        var resultWarm = modelWarm.Solve();
+
+        // Cold start solve
+        var modelCold = new Model();
+        var z1 = modelCold.AddVariable(1, 5);
+        z1.Start = 1;
+        var z2 = modelCold.AddVariable(1, 5);
+        z2.Start = 5;
+        var z3 = modelCold.AddVariable(1, 5);
+        z3.Start = 5;
+        var z4 = modelCold.AddVariable(1, 5);
+        z4.Start = 1;
+
+        modelCold.SetObjective(z1 * z4 * (z1 + z2 + z3) + z3);
+        modelCold.AddConstraint(z1 * z2 * z3 * z4 >= 25);
+        modelCold.AddConstraint(z1 * z1 + z2 * z2 + z3 * z3 + z4 * z4 == 40);
+
+        modelCold.Options.PrintLevel = 0;
+        var resultCold = modelCold.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultWarm.Status);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultCold.Status);
+
+        // Warm start should require significantly fewer iterations
+        Assert.IsTrue(resultWarm.Statistics.IterationCount <= 2);
+        Assert.IsTrue(resultCold.Statistics.IterationCount > resultWarm.Statistics.IterationCount);
+    }
 }

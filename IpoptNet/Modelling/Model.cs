@@ -127,7 +127,7 @@ public sealed class Model : IDisposable
             upperBoundMultipliers[i] = _variables[i].UpperBoundDualStart;
         }
 
-        var status = solver.Solve(x, out var objValue, constraintValues, constraintMultipliers,
+        var status = solver.Solve(x, out var objValue, out var statistics, constraintValues, constraintMultipliers,
                                   lowerBoundMultipliers, upperBoundMultipliers);
 
         var solution = new Dictionary<Variable, double>();
@@ -154,7 +154,7 @@ public sealed class Model : IDisposable
                 _constraints[i].DualStart = constraintMultipliers[i];
         }
 
-        return new ModelResult(status, solution, objValue);
+        return new ModelResult(status, solution, objValue, statistics);
     }
 
     private (int[] rows, int[] cols) AnalyzeJacobianSparsity()
@@ -362,4 +362,5 @@ public sealed class Model : IDisposable
 public sealed record ModelResult(
     ApplicationReturnStatus Status,
     IReadOnlyDictionary<Variable, double> Solution,
-    double ObjectiveValue);
+    double ObjectiveValue,
+    SolveStatistics Statistics);
