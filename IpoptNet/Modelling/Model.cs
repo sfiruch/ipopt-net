@@ -221,7 +221,7 @@ public sealed class Model : IDisposable
             {
                 // Compute values
                 var xSpan = new ReadOnlySpan<double>(x, n);
-                Span<double> grad = stackalloc double[n];
+                Span<double> grad = new double[n];
 
                 // Build a map from (row, col) to index for fast lookup
                 var indexMap = new Dictionary<(int, int), int>();
@@ -264,7 +264,7 @@ public sealed class Model : IDisposable
             else
             {
                 var xSpan = new ReadOnlySpan<double>(x, n);
-                Span<double> grad = stackalloc double[n];
+                Span<double> grad = new double[n];
                 var hess = new HessianAccumulator(n);
 
                 // Build a map from (row, col) to index

@@ -300,8 +300,8 @@ public sealed class Division : Expr
         Left.AccumulateHessian(x, grad, hess, multiplier / rVal);
         Right.AccumulateHessian(x, grad, hess, -multiplier * lVal / r2);
         var n = grad.Length;
-        Span<double> gradL = stackalloc double[n];
-        Span<double> gradR = stackalloc double[n];
+        Span<double> gradL = new double[n];
+        Span<double> gradR = new double[n];
         Left.AccumulateGradient(x, gradL, 1.0);
         Right.AccumulateGradient(x, gradR, 1.0);
         for (int i = 0; i < n; i++)
@@ -381,7 +381,7 @@ public sealed class PowerOp : Expr
         var secondDerivCoeff = Exponent * (Exponent - 1) * Math.Pow(bVal, Exponent - 2);
         Base.AccumulateHessian(x, grad, hess, multiplier * firstDerivCoeff);
         var n = grad.Length;
-        Span<double> gradB = stackalloc double[n];
+        Span<double> gradB = new double[n];
         Base.AccumulateGradient(x, gradB, 1.0);
         for (int i = 0; i < n; i++)
             for (int j = 0; j <= i; j++)
@@ -412,7 +412,7 @@ public sealed class Sin : Expr
         var arg = Argument.Evaluate(x);
         Argument.AccumulateHessian(x, grad, hess, multiplier * Math.Cos(arg));
         var n = grad.Length;
-        Span<double> gradArg = stackalloc double[n];
+        Span<double> gradArg = new double[n];
         Argument.AccumulateGradient(x, gradArg, 1.0);
         for (int i = 0; i < n; i++)
             for (int j = 0; j <= i; j++)
@@ -443,7 +443,7 @@ public sealed class Cos : Expr
         var arg = Argument.Evaluate(x);
         Argument.AccumulateHessian(x, grad, hess, multiplier * -Math.Sin(arg));
         var n = grad.Length;
-        Span<double> gradArg = stackalloc double[n];
+        Span<double> gradArg = new double[n];
         Argument.AccumulateGradient(x, gradArg, 1.0);
         for (int i = 0; i < n; i++)
             for (int j = 0; j <= i; j++)
@@ -476,7 +476,7 @@ public sealed class Tan : Expr
         var cos = Math.Cos(arg);
         Argument.AccumulateHessian(x, grad, hess, multiplier / (cos * cos));
         var n = grad.Length;
-        Span<double> gradArg = stackalloc double[n];
+        Span<double> gradArg = new double[n];
         Argument.AccumulateGradient(x, gradArg, 1.0);
         var secondDeriv = 2 * Math.Tan(arg) / (cos * cos);
         for (int i = 0; i < n; i++)
@@ -509,7 +509,7 @@ public sealed class Exp : Expr
         var expVal = Math.Exp(arg);
         Argument.AccumulateHessian(x, grad, hess, multiplier * expVal);
         var n = grad.Length;
-        Span<double> gradArg = stackalloc double[n];
+        Span<double> gradArg = new double[n];
         Argument.AccumulateGradient(x, gradArg, 1.0);
         for (int i = 0; i < n; i++)
             for (int j = 0; j <= i; j++)
@@ -540,7 +540,7 @@ public sealed class Log : Expr
         var arg = Argument.Evaluate(x);
         Argument.AccumulateHessian(x, grad, hess, multiplier / arg);
         var n = grad.Length;
-        Span<double> gradArg = stackalloc double[n];
+        Span<double> gradArg = new double[n];
         Argument.AccumulateGradient(x, gradArg, 1.0);
         var secondDeriv = -1.0 / (arg * arg);
         for (int i = 0; i < n; i++)
