@@ -215,6 +215,9 @@ public sealed class Model : IDisposable
             rowToEntries[structRows[i]].Add((structCols[i], i));
         }
 
+        // Allocate gradient buffer once and reuse it
+        var grad = new double[_variables.Count];
+
         return (int n, double* x, bool newX, int m, int neleJac, int* iRow, int* jCol, double* values, nint userData) =>
         {
             if (values == null)
@@ -230,7 +233,7 @@ public sealed class Model : IDisposable
             {
                 // Compute values
                 var xSpan = new ReadOnlySpan<double>(x, n);
-                Span<double> grad = new double[n];
+                Span<double> gradSpan = grad;
 
                 // Clear values
                 for (int i = 0; i < neleJac; i++)
@@ -238,15 +241,15 @@ public sealed class Model : IDisposable
 
                 for (int row = 0; row < m; row++)
                 {
-                    _constraints[row].Expression.AccumulateGradient(xSpan, grad, 1.0);
+                    _constraints[row].Expression.AccumulateGradient(xSpan, gradSpan, 1.0);
 
                     // Only iterate through columns that exist in the sparse structure
                     if (rowToEntries.TryGetValue(row, out var entries))
                     {
                         foreach (var (col, idx) in entries)
                         {
-                            values[idx] = grad[col];
-                            grad[col] = 0;  // Clear only the sparse entries we used
+                            values[idx] = gradSpan[col];
+                            gradSpan[col] = 0;  // Clear only the sparse entries we used
                         }
                     }
                 }
@@ -257,6 +260,14 @@ public sealed class Model : IDisposable
 
     private unsafe EvalHCallback CreateEvalHCallback(int[] structRows, int[] structCols)
     {
+        // Allocate gradient buffer once and reuse it
+        var grad = new double[_variables.Count];
+
+        // Build a map from (row, col) to index once
+        var indexMap = new Dictionary<(int, int), int>();
+        for (int i = 0; i < structRows.Length; i++)
+            indexMap[(structRows[i], structCols[i])] = i;
+
         return (int n, double* x, bool newX, double objFactor, int m, double* lambda, bool newLambda,
                 int neleHess, int* iRow, int* jCol, double* values, nint userData) =>
         {
@@ -272,13 +283,8 @@ public sealed class Model : IDisposable
             else
             {
                 var xSpan = new ReadOnlySpan<double>(x, n);
-                Span<double> grad = new double[n];
+                Span<double> gradSpan = grad;
                 var hess = new HessianAccumulator(n);
-
-                // Build a map from (row, col) to index
-                var indexMap = new Dictionary<(int, int), int>();
-                for (int i = 0; i < structRows.Length; i++)
-                    indexMap[(structRows[i], structCols[i])] = i;
 
                 // Clear values
                 for (int i = 0; i < neleHess; i++)
@@ -286,13 +292,13 @@ public sealed class Model : IDisposable
 
                 // Objective contribution
                 if (Math.Abs(objFactor) > 1e-15)
-                    _objective!.AccumulateHessian(xSpan, grad, hess, objFactor);
+                    _objective!.AccumulateHessian(xSpan, gradSpan, hess, objFactor);
 
                 // Constraint contributions
                 for (int row = 0; row < m; row++)
                 {
                     if (Math.Abs(lambda[row]) > 1e-15)
-                        _constraints[row].Expression.AccumulateHessian(xSpan, grad, hess, lambda[row]);
+                        _constraints[row].Expression.AccumulateHessian(xSpan, gradSpan, hess, lambda[row]);
                 }
 
                 // Copy to output
