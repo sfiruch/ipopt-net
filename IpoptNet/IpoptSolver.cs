@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace IpoptNet;
@@ -13,8 +14,17 @@ public sealed record SolveStatistics(
 public sealed class IpoptSolver : IDisposable
 {
     private nint _problem;
-    private readonly GCHandle[] _callbackHandles;
+    private GCHandle _selfHandle;
     private bool _disposed;
+
+    // Store callback delegates as fields to keep them alive
+    private readonly EvalFCallback _evalF;
+    private readonly EvalGradFCallback _evalGradF;
+    private readonly EvalGCallback _evalG;
+    private readonly EvalJacGCallback _evalJacG;
+    private readonly EvalHCallback _evalH;
+
+    // Statistics captured from intermediate callback
     private int _lastIterationCount;
     private double _lastObjectiveValue;
     private double _lastPrimalInfeasibility;
@@ -42,16 +52,15 @@ public sealed class IpoptSolver : IDisposable
         if (m > 0 && (gL.Length != m || gU.Length != m))
             throw new ArgumentException($"Constraint bounds must have length {m}");
 
-        // Set up intermediate callback to capture statistics
-        var intermediateCallback = new IntermediateCallback(IntermediateCallbackHandler);
+        // Store callbacks as fields to keep them alive
+        _evalF = evalF;
+        _evalGradF = evalGradF;
+        _evalG = evalG;
+        _evalJacG = evalJacG;
+        _evalH = evalH;
 
-        _callbackHandles = new GCHandle[6];
-        _callbackHandles[0] = GCHandle.Alloc(evalF);
-        _callbackHandles[1] = GCHandle.Alloc(evalGradF);
-        _callbackHandles[2] = GCHandle.Alloc(evalG);
-        _callbackHandles[3] = GCHandle.Alloc(evalJacG);
-        _callbackHandles[4] = GCHandle.Alloc(evalH);
-        _callbackHandles[5] = GCHandle.Alloc(intermediateCallback);
+        // Allocate GCHandle for this instance to pass as userData
+        _selfHandle = GCHandle.Alloc(this);
 
         fixed (double* pXL = xL)
         fixed (double* pXU = xU)
@@ -64,20 +73,59 @@ public sealed class IpoptSolver : IDisposable
                 jacobianNonZeros,
                 hessianNonZeros,
                 0, // C-style indexing (0-based)
-                Marshal.GetFunctionPointerForDelegate(evalF),
-                Marshal.GetFunctionPointerForDelegate(evalG),
-                Marshal.GetFunctionPointerForDelegate(evalGradF),
-                Marshal.GetFunctionPointerForDelegate(evalJacG),
-                Marshal.GetFunctionPointerForDelegate(evalH));
+                (nint)(delegate*unmanaged[Cdecl]<int, double*, int, double*, nint, int>)&EvalFStatic,
+                (nint)(delegate*unmanaged[Cdecl]<int, double*, int, int, double*, nint, int>)&EvalGStatic,
+                (nint)(delegate*unmanaged[Cdecl]<int, double*, int, double*, nint, int>)&EvalGradFStatic,
+                (nint)(delegate*unmanaged[Cdecl]<int, double*, int, int, int, int*, int*, double*, nint, int>)&EvalJacGStatic,
+                (nint)(delegate*unmanaged[Cdecl]<int, double*, int, double, int, double*, int, int, int*, int*, double*, nint, int>)&EvalHStatic);
         }
 
         if (_problem == 0)
             throw new InvalidOperationException("Failed to create IPOPT problem");
 
-        Native.SetIntermediateCallback(_problem, Marshal.GetFunctionPointerForDelegate(intermediateCallback));
+        Native.SetIntermediateCallback(_problem,
+            (nint)(delegate*unmanaged[Cdecl]<AlgorithmMode, int, double, double, double, double, double, double, double, double, int, nint, int>)&IntermediateCallbackStatic);
     }
 
-    private unsafe bool IntermediateCallbackHandler(
+    // Static callback methods with UnmanagedCallersOnly
+    // Note: Use int instead of bool for blittable types (0 = false, non-zero = true)
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe int EvalFStatic(int n, double* x, int newX, double* objValue, nint userData)
+    {
+        var instance = (IpoptSolver)GCHandle.FromIntPtr(userData).Target!;
+        return instance._evalF(n, x, newX != 0, objValue, userData) ? 1 : 0;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe int EvalGradFStatic(int n, double* x, int newX, double* gradF, nint userData)
+    {
+        var instance = (IpoptSolver)GCHandle.FromIntPtr(userData).Target!;
+        return instance._evalGradF(n, x, newX != 0, gradF, userData) ? 1 : 0;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe int EvalGStatic(int n, double* x, int newX, int m, double* g, nint userData)
+    {
+        var instance = (IpoptSolver)GCHandle.FromIntPtr(userData).Target!;
+        return instance._evalG(n, x, newX != 0, m, g, userData) ? 1 : 0;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe int EvalJacGStatic(int n, double* x, int newX, int m, int neleJac, int* iRow, int* jCol, double* values, nint userData)
+    {
+        var instance = (IpoptSolver)GCHandle.FromIntPtr(userData).Target!;
+        return instance._evalJacG(n, x, newX != 0, m, neleJac, iRow, jCol, values, userData) ? 1 : 0;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe int EvalHStatic(int n, double* x, int newX, double objFactor, int m, double* lambda, int newLambda, int neleHess, int* iRow, int* jCol, double* values, nint userData)
+    {
+        var instance = (IpoptSolver)GCHandle.FromIntPtr(userData).Target!;
+        return instance._evalH(n, x, newX != 0, objFactor, m, lambda, newLambda != 0, neleHess, iRow, jCol, values, userData) ? 1 : 0;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+    private static unsafe int IntermediateCallbackStatic(
         AlgorithmMode algMode,
         int iterCount,
         double objValue,
@@ -91,13 +139,14 @@ public sealed class IpoptSolver : IDisposable
         int lsTrials,
         nint userData)
     {
-        _lastIterationCount = iterCount;
-        _lastObjectiveValue = objValue;
-        _lastPrimalInfeasibility = infPr;
-        _lastDualInfeasibility = infDu;
-        _lastComplementarity = mu;
-        _lastLineSearchTrials = lsTrials;
-        return true;
+        var instance = (IpoptSolver)GCHandle.FromIntPtr(userData).Target!;
+        instance._lastIterationCount = iterCount;
+        instance._lastObjectiveValue = objValue;
+        instance._lastPrimalInfeasibility = infPr;
+        instance._lastDualInfeasibility = infDu;
+        instance._lastComplementarity = mu;
+        instance._lastLineSearchTrials = lsTrials;
+        return 1;
     }
 
     public bool SetOption(string name, string value)
@@ -137,7 +186,7 @@ public sealed class IpoptSolver : IDisposable
         fixed (double* pMultXL = lowerBoundMultipliers)
         fixed (double* pMultXU = upperBoundMultipliers)
         {
-            var status = Native.IpoptSolve(_problem, pX, pG, &objVal, pMultG, pMultXL, pMultXU, 0);
+            var status = Native.IpoptSolve(_problem, pX, pG, &objVal, pMultG, pMultXL, pMultXU, GCHandle.ToIntPtr(_selfHandle));
             objectiveValue = objVal;
             statistics = new SolveStatistics(
                 _lastIterationCount,
@@ -163,11 +212,8 @@ public sealed class IpoptSolver : IDisposable
             _problem = 0;
         }
 
-        foreach (var handle in _callbackHandles)
-        {
-            if (handle.IsAllocated)
-                handle.Free();
-        }
+        if (_selfHandle.IsAllocated)
+            _selfHandle.Free();
 
         GC.SuppressFinalize(this);
     }
