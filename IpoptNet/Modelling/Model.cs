@@ -76,6 +76,14 @@ public sealed class Model : IDisposable
             jacRows.Length, hessRows.Length,
             evalF, evalGradF, evalG, evalJacG, evalH);
 
+        // Auto-enable warm start if we have non-zero dual values and user hasn't explicitly set it
+        if (Options.WarmStartInitPoint is null &&
+            (_variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
+             _constraints.Any(c => c.DualStart != 0)))
+        {
+            Options.WarmStartInitPoint = true;
+        }
+
         // Apply user-specified options
         foreach (var (name, value) in Options.Options)
         {

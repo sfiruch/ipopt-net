@@ -1030,4 +1030,133 @@ public class ModellingTests
         Assert.IsTrue(resultWarm.Statistics.IterationCount <= 5);
         Assert.IsTrue(resultCold.Statistics.IterationCount > resultWarm.Statistics.IterationCount);
     }
+
+    [TestMethod]
+    public void AutoWarmStart_WithDualValues_ReducesIterationCount()
+    {
+        // First solve to get warm start data
+        var model1 = new Model();
+        var x1 = model1.AddVariable(1, 5);
+        x1.Start = 1;
+        var x2 = model1.AddVariable(1, 5);
+        x2.Start = 5;
+        var x3 = model1.AddVariable(1, 5);
+        x3.Start = 5;
+        var x4 = model1.AddVariable(1, 5);
+        x4.Start = 1;
+
+        model1.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
+        var c1 = new Constraint(x1 * x2 * x3 * x4, 25, double.PositiveInfinity);
+        var c2 = new Constraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4, 40, 40);
+        model1.AddConstraint(c1);
+        model1.AddConstraint(c2);
+
+        model1.Options.PrintLevel = 0;
+        var result1 = model1.Solve(updateStartValues: true);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
+
+        // Auto warm start solve (has dual values but WarmStartInitPoint not explicitly set)
+        var modelAuto = new Model();
+        var a1 = modelAuto.AddVariable(1, 5);
+        a1.Start = x1.Start;
+        a1.LowerBoundDualStart = x1.LowerBoundDualStart;
+        a1.UpperBoundDualStart = x1.UpperBoundDualStart;
+
+        var a2 = modelAuto.AddVariable(1, 5);
+        a2.Start = x2.Start;
+        a2.LowerBoundDualStart = x2.LowerBoundDualStart;
+        a2.UpperBoundDualStart = x2.UpperBoundDualStart;
+
+        var a3 = modelAuto.AddVariable(1, 5);
+        a3.Start = x3.Start;
+        a3.LowerBoundDualStart = x3.LowerBoundDualStart;
+        a3.UpperBoundDualStart = x3.UpperBoundDualStart;
+
+        var a4 = modelAuto.AddVariable(1, 5);
+        a4.Start = x4.Start;
+        a4.LowerBoundDualStart = x4.LowerBoundDualStart;
+        a4.UpperBoundDualStart = x4.UpperBoundDualStart;
+
+        modelAuto.SetObjective(a1 * a4 * (a1 + a2 + a3) + a3);
+        var ca1 = new Constraint(a1 * a2 * a3 * a4, 25, double.PositiveInfinity);
+        ca1.DualStart = c1.DualStart;
+        var ca2 = new Constraint(a1 * a1 + a2 * a2 + a3 * a3 + a4 * a4, 40, 40);
+        ca2.DualStart = c2.DualStart;
+        modelAuto.AddConstraint(ca1);
+        modelAuto.AddConstraint(ca2);
+
+        // Don't set WarmStartInitPoint - let it auto-detect
+        modelAuto.Options.PrintLevel = 0;
+        var resultAuto = modelAuto.Solve();
+
+        // Manual warm start solve (explicitly set WarmStartInitPoint)
+        var modelManual = new Model();
+        var m1 = modelManual.AddVariable(1, 5);
+        m1.Start = x1.Start;
+        m1.LowerBoundDualStart = x1.LowerBoundDualStart;
+        m1.UpperBoundDualStart = x1.UpperBoundDualStart;
+
+        var m2 = modelManual.AddVariable(1, 5);
+        m2.Start = x2.Start;
+        m2.LowerBoundDualStart = x2.LowerBoundDualStart;
+        m2.UpperBoundDualStart = x2.UpperBoundDualStart;
+
+        var m3 = modelManual.AddVariable(1, 5);
+        m3.Start = x3.Start;
+        m3.LowerBoundDualStart = x3.LowerBoundDualStart;
+        m3.UpperBoundDualStart = x3.UpperBoundDualStart;
+
+        var m4 = modelManual.AddVariable(1, 5);
+        m4.Start = x4.Start;
+        m4.LowerBoundDualStart = x4.LowerBoundDualStart;
+        m4.UpperBoundDualStart = x4.UpperBoundDualStart;
+
+        modelManual.SetObjective(m1 * m4 * (m1 + m2 + m3) + m3);
+        var cm1 = new Constraint(m1 * m2 * m3 * m4, 25, double.PositiveInfinity);
+        cm1.DualStart = c1.DualStart;
+        var cm2 = new Constraint(m1 * m1 + m2 * m2 + m3 * m3 + m4 * m4, 40, 40);
+        cm2.DualStart = c2.DualStart;
+        modelManual.AddConstraint(cm1);
+        modelManual.AddConstraint(cm2);
+
+        modelManual.Options.WarmStartInitPoint = true;
+        modelManual.Options.PrintLevel = 0;
+        var resultManual = modelManual.Solve();
+
+        // Cold start solve (no dual values)
+        var modelCold = new Model();
+        var z1 = modelCold.AddVariable(1, 5);
+        z1.Start = 1;
+        var z2 = modelCold.AddVariable(1, 5);
+        z2.Start = 5;
+        var z3 = modelCold.AddVariable(1, 5);
+        z3.Start = 5;
+        var z4 = modelCold.AddVariable(1, 5);
+        z4.Start = 1;
+
+        modelCold.SetObjective(z1 * z4 * (z1 + z2 + z3) + z3);
+        modelCold.AddConstraint(z1 * z2 * z3 * z4 >= 25);
+        modelCold.AddConstraint(z1 * z1 + z2 * z2 + z3 * z3 + z4 * z4 == 40);
+
+        modelCold.Options.PrintLevel = 0;
+        var resultCold = modelCold.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultAuto.Status);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultManual.Status);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultCold.Status);
+
+        // Display iteration counts
+        Console.WriteLine($"Manual warm start iterations: {resultManual.Statistics.IterationCount}");
+        Console.WriteLine($"Auto warm start iterations: {resultAuto.Statistics.IterationCount}");
+        Console.WriteLine($"Cold start iterations: {resultCold.Statistics.IterationCount}");
+
+        // Auto warm start should match manual warm start performance
+        // Both should be better than cold start
+        Assert.IsTrue(resultManual.Statistics.IterationCount <= 5, "Manual warm start should converge quickly");
+        Assert.IsTrue(resultCold.Statistics.IterationCount > resultManual.Statistics.IterationCount, "Cold start should take more iterations");
+
+        // This assertion will fail if auto warm start is not implemented
+        Assert.AreEqual(resultManual.Statistics.IterationCount, resultAuto.Statistics.IterationCount,
+            "Auto warm start should match manual warm start when dual values are present");
+    }
 }
