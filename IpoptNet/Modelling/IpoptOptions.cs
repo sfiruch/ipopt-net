@@ -241,7 +241,14 @@ public sealed class IpoptOptions
     // Initialization options
     public double? BoundPush { get => GetDouble("bound_push"); set => SetDouble("bound_push", value); }
     public double? BoundFraction { get => GetDouble("bound_frac"); set => SetDouble("bound_frac", value); }
+
+    // Warm start options
     public bool? WarmStartInitPoint { get => GetBool("warm_start_init_point"); set => SetBool("warm_start_init_point", value); }
+    public double? WarmStartBoundPush { get => GetDouble("warm_start_bound_push"); set => SetDouble("warm_start_bound_push", value); }
+    public double? WarmStartBoundFrac { get => GetDouble("warm_start_bound_frac"); set => SetDouble("warm_start_bound_frac", value); }
+    public double? WarmStartMultBoundPush { get => GetDouble("warm_start_mult_bound_push"); set => SetDouble("warm_start_mult_bound_push", value); }
+    public double? WarmStartSlackBoundPush { get => GetDouble("warm_start_slack_bound_push"); set => SetDouble("warm_start_slack_bound_push", value); }
+    public double? WarmStartSlackBoundFrac { get => GetDouble("warm_start_slack_bound_frac"); set => SetDouble("warm_start_slack_bound_frac", value); }
 
     // Linear solver specific options
     public double? Ma27PivotTolerance { get => GetDouble("ma27_pivtol"); set => SetDouble("ma27_pivtol", value); }

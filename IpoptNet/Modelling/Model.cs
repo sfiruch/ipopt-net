@@ -76,20 +76,6 @@ public sealed class Model : IDisposable
             jacRows.Length, hessRows.Length,
             evalF, evalGradF, evalG, evalJacG, evalH);
 
-        // Check if warm start data is available
-        var hasWarmStartData = _variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
-                               _constraints.Any(c => c.DualStart != 0);
-
-        // Enable warm start if we have dual variable information
-        if (hasWarmStartData && Options.WarmStartInitPoint != true)
-        {
-            solver.SetOption("warm_start_init_point", "yes");
-            solver.SetOption("warm_start_bound_push", 1e-16);
-            solver.SetOption("warm_start_bound_frac", 1e-16);
-            solver.SetOption("warm_start_mult_bound_push", 1e-16);
-            solver.SetOption("warm_start_slack_bound_push", 1e-16);
-        }
-
         // Apply user-specified options
         foreach (var (name, value) in Options.Options)
         {
@@ -107,7 +93,7 @@ public sealed class Model : IDisposable
             }
         }
 
-        // Initialize primal variables from variable Start values
+        // Initialize primal variables from variable Start values, ensuring they're within bounds
         var x = new double[n];
         for (int i = 0; i < n; i++)
             x[i] = Math.Clamp(_variables[i].Start, xL[i], xU[i]);
@@ -145,7 +131,8 @@ public sealed class Model : IDisposable
         {
             for (int i = 0; i < n; i++)
             {
-                _variables[i].Start = x[i];
+                // Ensure solution values remain within bounds (defensive programming)
+                _variables[i].Start = Math.Clamp(x[i], xL[i], xU[i]);
                 _variables[i].LowerBoundDualStart = lowerBoundMultipliers[i];
                 _variables[i].UpperBoundDualStart = upperBoundMultipliers[i];
             }
