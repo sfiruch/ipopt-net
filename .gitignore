@@ -33,3 +33,6 @@ bld/
 .idea/
 *.sln.iml
 /Ipopt-3.14.19-win64-msvs2022-md
+
+## Claude Code
+.claude/
