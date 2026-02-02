@@ -12,7 +12,8 @@
       "Bash(git branch:*)",
       "Bash(./ipopt.exe:*)",
       "Bash(git revert:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(gh release view:*)"
     ]
   }
 }
