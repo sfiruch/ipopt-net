@@ -633,7 +633,7 @@ public class ModellingTests
 
         // minimize x^2 + y^2 subject to x + y = 4
         model.SetObjective(x * x + y * y);
-        var constraint = Constraint.Equal(x + y, 4);
+        var constraint = new Constraint(x + y, 4, 4);
         model.AddConstraint(constraint);
 
         model.Options.PrintLevel = 0;
@@ -668,8 +668,8 @@ public class ModellingTests
         x4.Start = 1;
 
         model1.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
-        var c1 = Constraint.GreaterThanOrEqual(x1 * x2 * x3 * x4, 25);
-        var c2 = Constraint.Equal(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4, 40);
+        var c1 = new Constraint(x1 * x2 * x3 * x4, 25, double.PositiveInfinity);
+        var c2 = new Constraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4, 40, 40);
         model1.AddConstraint(c1);
         model1.AddConstraint(c2);
 
@@ -678,7 +678,7 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
 
-        // Second solve: new model with same problem but using warm start from first solve
+        // Second solve with warm start: should converge in very few iterations
         var model2 = new Model();
         var y1 = model2.AddVariable(1, 5);
         y1.Start = x1.Start;
@@ -701,24 +701,43 @@ public class ModellingTests
         y4.UpperBoundDualStart = x4.UpperBoundDualStart;
 
         model2.SetObjective(y1 * y4 * (y1 + y2 + y3) + y3);
-        var d1 = Constraint.GreaterThanOrEqual(y1 * y2 * y3 * y4, 25);
+        var d1 = new Constraint(y1 * y2 * y3 * y4, 25, double.PositiveInfinity);
         d1.DualStart = c1.DualStart;
-        var d2 = Constraint.Equal(y1 * y1 + y2 * y2 + y3 * y3 + y4 * y4, 40);
+        var d2 = new Constraint(y1 * y1 + y2 * y2 + y3 * y3 + y4 * y4, 40, 40);
         d2.DualStart = c2.DualStart;
         model2.AddConstraint(d1);
         model2.AddConstraint(d2);
 
+        // Limit iterations to verify warm start converges quickly
+        model2.Options.MaxIterations = 2;
         model2.Options.PrintLevel = 0;
         var result2 = model2.Solve();
 
+        // With good warm start, should converge in <= 2 iterations
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result2.Status);
-
-        // Warm started solve should converge to the same solution
         Assert.AreEqual(result1.ObjectiveValue, result2.ObjectiveValue, 0.001);
-        Assert.AreEqual(result1.Solution[x1], result2.Solution[y1], 0.001);
-        Assert.AreEqual(result1.Solution[x2], result2.Solution[y2], 0.001);
-        Assert.AreEqual(result1.Solution[x3], result2.Solution[y3], 0.001);
-        Assert.AreEqual(result1.Solution[x4], result2.Solution[y4], 0.001);
+
+        // Third solve without warm start: should fail with same iteration limit
+        var model3 = new Model();
+        var z1 = model3.AddVariable(1, 5);
+        z1.Start = 1;
+        var z2 = model3.AddVariable(1, 5);
+        z2.Start = 5;
+        var z3 = model3.AddVariable(1, 5);
+        z3.Start = 5;
+        var z4 = model3.AddVariable(1, 5);
+        z4.Start = 1;
+
+        model3.SetObjective(z1 * z4 * (z1 + z2 + z3) + z3);
+        model3.AddConstraint(z1 * z2 * z3 * z4 >= 25);
+        model3.AddConstraint(z1 * z1 + z2 * z2 + z3 * z3 + z4 * z4 == 40);
+
+        model3.Options.MaxIterations = 2;
+        model3.Options.PrintLevel = 0;
+        var result3 = model3.Solve();
+
+        // Cold start should not converge in 2 iterations
+        Assert.AreNotEqual(ApplicationReturnStatus.SolveSucceeded, result3.Status);
     }
 
     [TestMethod]
@@ -736,8 +755,8 @@ public class ModellingTests
         x4.Start = 1;
 
         model.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
-        var c1 = Constraint.GreaterThanOrEqual(x1 * x2 * x3 * x4, 25);
-        var c2 = Constraint.Equal(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4, 40);
+        var c1 = new Constraint(x1 * x2 * x3 * x4, 25, double.PositiveInfinity);
+        var c2 = new Constraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4, 40, 40);
         model.AddConstraint(c1);
         model.AddConstraint(c2);
 
@@ -746,7 +765,7 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
 
-        // Solve a slightly perturbed problem with warm start
+        // Solve perturbed problem with warm start and limited iterations
         var modelWarm = new Model();
         var w1 = modelWarm.AddVariable(1, 5);
         w1.Start = x1.Start;
@@ -770,19 +789,21 @@ public class ModellingTests
 
         // Slightly perturbed problem: change RHS from 25 to 26
         modelWarm.SetObjective(w1 * w4 * (w1 + w2 + w3) + w3);
-        var cw1 = Constraint.GreaterThanOrEqual(w1 * w2 * w3 * w4, 26);
+        var cw1 = new Constraint(w1 * w2 * w3 * w4, 26, double.PositiveInfinity);
         cw1.DualStart = c1.DualStart;
-        var cw2 = Constraint.Equal(w1 * w1 + w2 * w2 + w3 * w3 + w4 * w4, 40);
+        var cw2 = new Constraint(w1 * w1 + w2 * w2 + w3 * w3 + w4 * w4, 40, 40);
         cw2.DualStart = c2.DualStart;
         modelWarm.AddConstraint(cw1);
         modelWarm.AddConstraint(cw2);
 
+        // With warm start, should converge in few iterations
+        modelWarm.Options.MaxIterations = 5;
         modelWarm.Options.PrintLevel = 0;
         var resultWarm = modelWarm.Solve();
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultWarm.Status);
 
-        // Solve the same perturbed problem from poor initial guess (cold start)
+        // Solve same perturbed problem cold - should fail with same iteration limit
         var modelCold = new Model();
         var z1 = modelCold.AddVariable(1, 5);
         z1.Start = 1;
@@ -797,13 +818,12 @@ public class ModellingTests
         modelCold.AddConstraint(z1 * z2 * z3 * z4 >= 26);
         modelCold.AddConstraint(z1 * z1 + z2 * z2 + z3 * z3 + z4 * z4 == 40);
 
+        modelCold.Options.MaxIterations = 5;
         modelCold.Options.PrintLevel = 0;
         var resultCold = modelCold.Solve();
 
-        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultCold.Status);
-
-        // Both should reach similar objective values
-        Assert.AreEqual(resultWarm.ObjectiveValue, resultCold.ObjectiveValue, 0.01);
+        // Cold start should not converge in 5 iterations
+        Assert.AreNotEqual(ApplicationReturnStatus.SolveSucceeded, resultCold.Status);
     }
 
     [TestMethod]
@@ -816,7 +836,7 @@ public class ModellingTests
         y.Start = 0;
 
         model.SetObjective(Expr.Pow(x - 3, 2) + Expr.Pow(y - 4, 2));
-        var constraint = Constraint.Equal(x + y, 5);
+        var constraint = new Constraint(x + y, 5, 5);
         model.AddConstraint(constraint);
 
         model.Options.PrintLevel = 0;
