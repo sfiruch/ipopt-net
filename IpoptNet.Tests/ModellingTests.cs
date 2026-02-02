@@ -621,4 +621,266 @@ public class ModellingTests
         Assert.AreEqual(3.821, result.Solution[x3], 0.01);
         Assert.AreEqual(1.379, result.Solution[x4], 0.01);
     }
+
+    [TestMethod]
+    public void WarmStart_UpdatesDualVariables_OnSuccessfulSolve()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        x.Start = 0;
+        var y = model.AddVariable();
+        y.Start = 0;
+
+        // minimize x^2 + y^2 subject to x + y = 4
+        model.SetObjective(x * x + y * y);
+        var constraint = Constraint.Equal(x + y, 4);
+        model.AddConstraint(constraint);
+
+        model.Options.PrintLevel = 0;
+
+        // Initial dual values should be zero
+        Assert.AreEqual(0.0, constraint.DualStart);
+        Assert.AreEqual(0.0, x.LowerBoundDualStart);
+        Assert.AreEqual(0.0, x.UpperBoundDualStart);
+        Assert.AreEqual(0.0, y.LowerBoundDualStart);
+        Assert.AreEqual(0.0, y.UpperBoundDualStart);
+
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+
+        // After solving, dual variables should be updated
+        Assert.AreNotEqual(0.0, constraint.DualStart);
+    }
+
+    [TestMethod]
+    public void WarmStart_SuccessiveSolves_ConvergesFaster()
+    {
+        // First solve: get the solution and dual variables
+        var model1 = new Model();
+        var x1 = model1.AddVariable(1, 5);
+        x1.Start = 1;
+        var x2 = model1.AddVariable(1, 5);
+        x2.Start = 5;
+        var x3 = model1.AddVariable(1, 5);
+        x3.Start = 5;
+        var x4 = model1.AddVariable(1, 5);
+        x4.Start = 1;
+
+        model1.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
+        var c1 = Constraint.GreaterThanOrEqual(x1 * x2 * x3 * x4, 25);
+        var c2 = Constraint.Equal(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4, 40);
+        model1.AddConstraint(c1);
+        model1.AddConstraint(c2);
+
+        model1.Options.PrintLevel = 0;
+        var result1 = model1.Solve(updateStartValues: true);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
+
+        // Second solve: new model with same problem but using warm start from first solve
+        var model2 = new Model();
+        var y1 = model2.AddVariable(1, 5);
+        y1.Start = x1.Start;
+        y1.LowerBoundDualStart = x1.LowerBoundDualStart;
+        y1.UpperBoundDualStart = x1.UpperBoundDualStart;
+
+        var y2 = model2.AddVariable(1, 5);
+        y2.Start = x2.Start;
+        y2.LowerBoundDualStart = x2.LowerBoundDualStart;
+        y2.UpperBoundDualStart = x2.UpperBoundDualStart;
+
+        var y3 = model2.AddVariable(1, 5);
+        y3.Start = x3.Start;
+        y3.LowerBoundDualStart = x3.LowerBoundDualStart;
+        y3.UpperBoundDualStart = x3.UpperBoundDualStart;
+
+        var y4 = model2.AddVariable(1, 5);
+        y4.Start = x4.Start;
+        y4.LowerBoundDualStart = x4.LowerBoundDualStart;
+        y4.UpperBoundDualStart = x4.UpperBoundDualStart;
+
+        model2.SetObjective(y1 * y4 * (y1 + y2 + y3) + y3);
+        var d1 = Constraint.GreaterThanOrEqual(y1 * y2 * y3 * y4, 25);
+        d1.DualStart = c1.DualStart;
+        var d2 = Constraint.Equal(y1 * y1 + y2 * y2 + y3 * y3 + y4 * y4, 40);
+        d2.DualStart = c2.DualStart;
+        model2.AddConstraint(d1);
+        model2.AddConstraint(d2);
+
+        model2.Options.PrintLevel = 0;
+        var result2 = model2.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result2.Status);
+
+        // Warm started solve should converge to the same solution
+        Assert.AreEqual(result1.ObjectiveValue, result2.ObjectiveValue, 0.001);
+        Assert.AreEqual(result1.Solution[x1], result2.Solution[y1], 0.001);
+        Assert.AreEqual(result1.Solution[x2], result2.Solution[y2], 0.001);
+        Assert.AreEqual(result1.Solution[x3], result2.Solution[y3], 0.001);
+        Assert.AreEqual(result1.Solution[x4], result2.Solution[y4], 0.001);
+    }
+
+    [TestMethod]
+    public void WarmStart_WithPerturbedProblem_ConvergesFasterThanColdStart()
+    {
+        // Solve initial problem to get warm start information
+        var model = new Model();
+        var x1 = model.AddVariable(1, 5);
+        x1.Start = 1;
+        var x2 = model.AddVariable(1, 5);
+        x2.Start = 5;
+        var x3 = model.AddVariable(1, 5);
+        x3.Start = 5;
+        var x4 = model.AddVariable(1, 5);
+        x4.Start = 1;
+
+        model.SetObjective(x1 * x4 * (x1 + x2 + x3) + x3);
+        var c1 = Constraint.GreaterThanOrEqual(x1 * x2 * x3 * x4, 25);
+        var c2 = Constraint.Equal(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4, 40);
+        model.AddConstraint(c1);
+        model.AddConstraint(c2);
+
+        model.Options.PrintLevel = 0;
+        var result1 = model.Solve(updateStartValues: true);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
+
+        // Solve a slightly perturbed problem with warm start
+        var modelWarm = new Model();
+        var w1 = modelWarm.AddVariable(1, 5);
+        w1.Start = x1.Start;
+        w1.LowerBoundDualStart = x1.LowerBoundDualStart;
+        w1.UpperBoundDualStart = x1.UpperBoundDualStart;
+
+        var w2 = modelWarm.AddVariable(1, 5);
+        w2.Start = x2.Start;
+        w2.LowerBoundDualStart = x2.LowerBoundDualStart;
+        w2.UpperBoundDualStart = x2.UpperBoundDualStart;
+
+        var w3 = modelWarm.AddVariable(1, 5);
+        w3.Start = x3.Start;
+        w3.LowerBoundDualStart = x3.LowerBoundDualStart;
+        w3.UpperBoundDualStart = x3.UpperBoundDualStart;
+
+        var w4 = modelWarm.AddVariable(1, 5);
+        w4.Start = x4.Start;
+        w4.LowerBoundDualStart = x4.LowerBoundDualStart;
+        w4.UpperBoundDualStart = x4.UpperBoundDualStart;
+
+        // Slightly perturbed problem: change RHS from 25 to 26
+        modelWarm.SetObjective(w1 * w4 * (w1 + w2 + w3) + w3);
+        var cw1 = Constraint.GreaterThanOrEqual(w1 * w2 * w3 * w4, 26);
+        cw1.DualStart = c1.DualStart;
+        var cw2 = Constraint.Equal(w1 * w1 + w2 * w2 + w3 * w3 + w4 * w4, 40);
+        cw2.DualStart = c2.DualStart;
+        modelWarm.AddConstraint(cw1);
+        modelWarm.AddConstraint(cw2);
+
+        modelWarm.Options.PrintLevel = 0;
+        var resultWarm = modelWarm.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultWarm.Status);
+
+        // Solve the same perturbed problem from poor initial guess (cold start)
+        var modelCold = new Model();
+        var z1 = modelCold.AddVariable(1, 5);
+        z1.Start = 1;
+        var z2 = modelCold.AddVariable(1, 5);
+        z2.Start = 5;
+        var z3 = modelCold.AddVariable(1, 5);
+        z3.Start = 5;
+        var z4 = modelCold.AddVariable(1, 5);
+        z4.Start = 1;
+
+        modelCold.SetObjective(z1 * z4 * (z1 + z2 + z3) + z3);
+        modelCold.AddConstraint(z1 * z2 * z3 * z4 >= 26);
+        modelCold.AddConstraint(z1 * z1 + z2 * z2 + z3 * z3 + z4 * z4 == 40);
+
+        modelCold.Options.PrintLevel = 0;
+        var resultCold = modelCold.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultCold.Status);
+
+        // Both should reach similar objective values
+        Assert.AreEqual(resultWarm.ObjectiveValue, resultCold.ObjectiveValue, 0.01);
+    }
+
+    [TestMethod]
+    public void WarmStart_DoesNotUpdateDualsWhenUpdateStartValuesFalse()
+    {
+        var model = new Model();
+        var x = model.AddVariable(0, 10);
+        x.Start = 0;
+        var y = model.AddVariable(0, 10);
+        y.Start = 0;
+
+        model.SetObjective(Expr.Pow(x - 3, 2) + Expr.Pow(y - 4, 2));
+        var constraint = Constraint.Equal(x + y, 5);
+        model.AddConstraint(constraint);
+
+        model.Options.PrintLevel = 0;
+
+        // Solve without updating start values
+        var result = model.Solve(updateStartValues: false);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+
+        // Dual variables should remain at zero
+        Assert.AreEqual(0.0, constraint.DualStart);
+        Assert.AreEqual(0.0, x.LowerBoundDualStart);
+        Assert.AreEqual(0.0, x.UpperBoundDualStart);
+        Assert.AreEqual(0.0, y.LowerBoundDualStart);
+        Assert.AreEqual(0.0, y.UpperBoundDualStart);
+    }
+
+    [TestMethod]
+    public void WarmStart_WithBoundedVariables_UpdatesBoundDuals()
+    {
+        var model = new Model();
+        var x = model.AddVariable(0, 2);
+        x.Start = 0;
+        var y = model.AddVariable(0, 2);
+        y.Start = 0;
+
+        // minimize (x-5)^2 + (y-5)^2
+        // Both variables will be pushed to their upper bounds
+        model.SetObjective(Expr.Pow(x - 5, 2) + Expr.Pow(y - 5, 2));
+
+        model.Options.PrintLevel = 0;
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+
+        // Solution should be at bounds
+        Assert.AreEqual(2.0, result.Solution[x], 0.001);
+        Assert.AreEqual(2.0, result.Solution[y], 0.001);
+
+        // Upper bound duals should be non-zero (active constraints)
+        Assert.AreNotEqual(0.0, x.UpperBoundDualStart);
+        Assert.AreNotEqual(0.0, y.UpperBoundDualStart);
+    }
+
+    [TestMethod]
+    public void WarmStart_AutomaticallyEnabled_WhenDualDataPresent()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        x.Start = 2;
+        x.LowerBoundDualStart = 0.5;  // Non-zero dual triggers warm start
+        var y = model.AddVariable();
+        y.Start = 2;
+
+        model.SetObjective(x * x + y * y);
+        model.AddConstraint(x + y == 4);
+
+        // Don't explicitly set WarmStartInitPoint
+        model.Options.PrintLevel = 0;
+
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(2.0, result.Solution[x], 0.001);
+        Assert.AreEqual(2.0, result.Solution[y], 0.001);
+    }
 }

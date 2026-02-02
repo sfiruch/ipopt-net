@@ -5,6 +5,7 @@ public sealed class Constraint
     public Expr Expression { get; }
     public double LowerBound { get; }
     public double UpperBound { get; }
+    public double DualStart { get; set; } = 0;
 
     public Constraint(Expr expression, double lowerBound, double upperBound)
     {

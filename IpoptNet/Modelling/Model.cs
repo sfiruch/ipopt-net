@@ -76,6 +76,20 @@ public sealed class Model : IDisposable
             jacRows.Length, hessRows.Length,
             evalF, evalGradF, evalG, evalJacG, evalH);
 
+        // Check if warm start data is available
+        var hasWarmStartData = _variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
+                               _constraints.Any(c => c.DualStart != 0);
+
+        // Enable warm start if we have dual variable information
+        if (hasWarmStartData && Options.WarmStartInitPoint != true)
+        {
+            solver.SetOption("warm_start_init_point", "yes");
+            solver.SetOption("warm_start_bound_push", 1e-16);
+            solver.SetOption("warm_start_bound_frac", 1e-16);
+            solver.SetOption("warm_start_mult_bound_push", 1e-16);
+            solver.SetOption("warm_start_slack_bound_push", 1e-16);
+        }
+
         // Apply user-specified options
         foreach (var (name, value) in Options.Options)
         {
@@ -93,20 +107,34 @@ public sealed class Model : IDisposable
             }
         }
 
-        // Initialize x from variable Start values
+        // Initialize primal variables from variable Start values
         var x = new double[n];
         for (int i = 0; i < n; i++)
             x[i] = Math.Clamp(_variables[i].Start, xL[i], xU[i]);
 
+        // Initialize dual variables
         var constraintValues = new double[m];
         var constraintMultipliers = new double[m];
-        var status = solver.Solve(x, out var objValue, constraintValues, constraintMultipliers);
+        var lowerBoundMultipliers = new double[n];
+        var upperBoundMultipliers = new double[n];
+
+        for (int i = 0; i < m; i++)
+            constraintMultipliers[i] = _constraints[i].DualStart;
+
+        for (int i = 0; i < n; i++)
+        {
+            lowerBoundMultipliers[i] = _variables[i].LowerBoundDualStart;
+            upperBoundMultipliers[i] = _variables[i].UpperBoundDualStart;
+        }
+
+        var status = solver.Solve(x, out var objValue, constraintValues, constraintMultipliers,
+                                  lowerBoundMultipliers, upperBoundMultipliers);
 
         var solution = new Dictionary<Variable, double>();
         for (int i = 0; i < n; i++)
             solution[_variables[i]] = x[i];
 
-        // Update variable Start values if requested and solution is usable
+        // Update variable Start values and dual variables if requested and solution is usable
         if (updateStartValues && status is
             ApplicationReturnStatus.SolveSucceeded or
             ApplicationReturnStatus.SolvedToAcceptableLevel or
@@ -116,7 +144,14 @@ public sealed class Model : IDisposable
             ApplicationReturnStatus.MaximumWallTimeExceeded)
         {
             for (int i = 0; i < n; i++)
+            {
                 _variables[i].Start = x[i];
+                _variables[i].LowerBoundDualStart = lowerBoundMultipliers[i];
+                _variables[i].UpperBoundDualStart = upperBoundMultipliers[i];
+            }
+
+            for (int i = 0; i < m; i++)
+                _constraints[i].DualStart = constraintMultipliers[i];
         }
 
         return new ModelResult(status, solution, objValue);
