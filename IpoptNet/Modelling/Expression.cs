@@ -811,12 +811,22 @@ public sealed class Product : Expr
         for (int i = 0; i < Factors.Count; i++)
             factorValues[i] = Factors[i].Evaluate(x);
 
-        // Compute gradients of all factors once
+        // Compute gradients of all factors once and keep track of non-zeros
         var factorGradients = new double[Factors.Count][];
+        var nonZeroIndices = new List<int>[Factors.Count];
+
         for (int i = 0; i < Factors.Count; i++)
         {
             factorGradients[i] = new double[n];
             Factors[i].AccumulateGradient(x, factorGradients[i], 1.0);
+
+            var nonZeros = new List<int>();
+            for (int j = 0; j < n; j++)
+            {
+                if (Math.Abs(factorGradients[i][j]) > 1e-18)
+                    nonZeros.Add(j);
+            }
+            nonZeroIndices[i] = nonZeros;
         }
 
         // 1. Accumulate Hessian from each factor's second derivative
@@ -825,30 +835,57 @@ public sealed class Product : Expr
         {
             var otherProduct = 1.0;
             for (int l = 0; l < Factors.Count; l++)
+            {
                 if (l != k)
+                {
                     otherProduct *= factorValues[l];
+                    if (Math.Abs(otherProduct) < 1e-100) break; // Optimization: bail out if product becomes zero
+                }
+            }
 
-            Factors[k].AccumulateHessian(x, grad, hess, multiplier * otherProduct);
+            if (Math.Abs(otherProduct) > 1e-18)
+                Factors[k].AccumulateHessian(x, grad, hess, multiplier * otherProduct);
         }
 
         // 2. Add cross terms between pairs of factors
         //    d²(f₁*f₂*...*fₙ)/dx² includes: ∂fₖ/∂xᵢ * ∂fₘ/∂xⱼ * (∏ₗ≠ₖ,ₘ fₗ)
         for (int k = 0; k < Factors.Count; k++)
         {
+            if (nonZeroIndices[k].Count == 0) continue;
+
             for (int m = k + 1; m < Factors.Count; m++)
             {
+                if (nonZeroIndices[m].Count == 0) continue;
+
                 var otherProduct = 1.0;
                 for (int l = 0; l < Factors.Count; l++)
+                {
                     if (l != k && l != m)
-                        otherProduct *= factorValues[l];
-
-                for (int i = 0; i < n; i++)
-                    for (int j = 0; j <= i; j++)
                     {
-                        var crossTerm = factorGradients[k][i] * factorGradients[m][j] +
-                                       factorGradients[k][j] * factorGradients[m][i];
-                        hess.Add(i, j, multiplier * otherProduct * crossTerm);
+                        otherProduct *= factorValues[l];
+                        if (Math.Abs(otherProduct) < 1e-100) break;
                     }
+                }
+
+                if (Math.Abs(otherProduct) > 1e-18)
+                {
+                    var coeff = multiplier * otherProduct;
+                    var idxK = nonZeroIndices[k];
+                    var idxM = nonZeroIndices[m];
+                    var gradK = factorGradients[k];
+                    var gradM = factorGradients[m];
+
+                    foreach (var i in idxK)
+                    {
+                        foreach (var j in idxM)
+                        {
+                            // H_ij += (gK_i * gM_j + gK_j * gM_i) * coeff
+                            // We call Add twice to cover both symmetric terms
+                            hess.Add(i, j, coeff * gradK[i] * gradM[j]);
+                            hess.Add(j, i, coeff * gradK[j] * gradM[i]);
+                        }
+                    }
+                }
             }
         }
     }
