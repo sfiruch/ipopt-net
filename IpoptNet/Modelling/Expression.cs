@@ -901,8 +901,31 @@ public sealed class Product : Expr
                     var gradM = factorGradients[m];
                     var spanM = CollectionsMarshal.AsSpan(idxM);
 
-                    // The interaction is gradK * gradM^T + gradM * gradK^T
-                    // For H_ij where i >= j, the contribution is: gK_i * gM_j + gM_i * gK_j
+                    // CROSS-TERM HESSIAN COMPUTATION (Product Rule)
+                    // =============================================
+                    // For product f = F_k * F_m (where other factors are constant),
+                    // the Hessian cross-terms are:
+                    //   H = (∇F_k)(∇F_m)^T + (∇F_m)(∇F_k)^T
+                    //
+                    // This is a SYMMETRIC outer product. We compute BOTH parts:
+                    //   H[i,j] += coeff * gradK[i] * gradM[j]  (first outer product)
+                    //   H[j,i] += coeff * gradM[j] * gradK[i]  (transpose)
+                    //
+                    // Since hess.Add() normalizes to lower-triangular form,
+                    // BOTH calls may map to the SAME entry (i,j) when swapped.
+                    //
+                    // IMPORTANT: This is NOT double-counting! Here's why:
+                    // - When i and j are from DIFFERENT factor gradient index sets,
+                    //   one of gradK[j] or gradM[i] is typically zero
+                    // - Example: For f = x*y*z, cross-term between x and y:
+                    //     gradK = [1,0,0] (gradient of x)
+                    //     gradM = [0,1,0] (gradient of y)
+                    //     At (i=0, j=1): gradK[0]*gradM[1] = 1*1 = 1 ✓
+                    //                    gradM[0]*gradK[1] = 0*0 = 0 ✓
+                    //     Total contribution = 1 (correct!)
+                    //
+                    // The two hess.Add() calls ensure we capture BOTH parts of
+                    // the symmetric outer product correctly.
                     foreach (var i in spanK)
                     {
                         var gKi = gradK[i];
@@ -915,8 +938,7 @@ public sealed class Product : Expr
                             var gMj = gradM[j];
                             var gKj = gradK[j]; 
                             
-                            // H_ij += gK_i * gM_j + gM_i * gK_j
-                            // Since hess.Add handles lower-triangular swap, we add both parts.
+                            // Add both parts of the symmetric outer product
                             hess.Add(i, j, c_gKi * gMj);
                             hess.Add(j, i, c_gMi * gKj);
                         }

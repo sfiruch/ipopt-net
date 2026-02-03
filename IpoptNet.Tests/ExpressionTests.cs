@@ -217,6 +217,94 @@ public class ExpressionTests
         AssertHessianMatchesFiniteDifference(expr, point);
     }
 
+    [TestMethod]
+    public void Hessian_SimpleProduct_MatchesAnalytical()
+    {
+        // This test specifically catches the bug where product cross-terms are doubled
+        // For f(x,y) = x * y:
+        //   ∂²f/∂x∂y = 1  (the only non-zero Hessian entry)
+        // The bug would give ∂²f/∂x∂y = 2 (doubled)
+        
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var expr = x * y;
+        double[] point = [3.0, 5.0];
+
+        var n = point.Length;
+        var grad = new double[n];
+        var hess = new HessianAccumulator(n);
+        expr.AccumulateHessian(point, grad, hess, 1.0);
+
+        // Analytical Hessian for f(x,y) = x*y:
+        // H[0,0] = ∂²f/∂x² = 0
+        // H[1,1] = ∂²f/∂y² = 0  
+        // H[1,0] = ∂²f/∂x∂y = 1 (stored in lower triangle)
+        
+        hess.Entries.TryGetValue((0, 0), out var h_xx);
+        hess.Entries.TryGetValue((1, 1), out var h_yy);
+        hess.Entries.TryGetValue((1, 0), out var h_xy);
+
+        Console.WriteLine($"DEBUG: h_xx={h_xx}, h_yy={h_yy}, h_xy={h_xy}");
+        Console.WriteLine($"DEBUG: Total Hessian entries: {hess.Entries.Count}");
+        foreach (var entry in hess.Entries)
+        {
+            Console.WriteLine($"  H[{entry.Key.row},{entry.Key.col}] = {entry.Value}");
+        }
+
+        Assert.AreEqual(0.0, h_xx, 1e-10, "Hessian ∂²f/∂x² should be 0");
+        Assert.AreEqual(0.0, h_yy, 1e-10, "Hessian ∂²f/∂y² should be 0");
+        Assert.AreEqual(1.0, h_xy, 1e-10, "Hessian ∂²f/∂x∂y should be 1 (BUG: gives 2 if cross-terms doubled)");
+    }
+
+    [TestMethod]
+    public void Hessian_ThreeFactorProduct_CrossTermsCorrect()
+    {
+        // Test f(x,y,z) = x * y * z
+        // Cross-terms should be:
+        //   ∂²f/∂x∂y = z
+        //   ∂²f/∂x∂z = y
+        //   ∂²f/∂y∂z = x
+        
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+        var z = model.AddVariable();
+
+        var expr = x * y * z;
+        double[] point = [2.0, 3.0, 5.0];
+
+        // First verify this is actually creating a Product
+        Assert.IsInstanceOfType(expr, typeof(Product), "x*y*z should create a Product");
+
+        var n = point.Length;
+        var grad = new double[n];
+        var hess = new HessianAccumulator(n);
+        expr.AccumulateHessian(point, grad, hess, 1.0);
+
+        // Analytical values:
+        // ∂²f/∂x∂y = z = 5.0
+        // ∂²f/∂x∂z = y = 3.0  
+        // ∂²f/∂y∂z = x = 2.0
+
+        // Get cross-terms (stored in lower triangle)
+        hess.Entries.TryGetValue((1, 0), out var h_xy);  // ∂²f/∂x∂y
+        hess.Entries.TryGetValue((2, 0), out var h_xz);  // ∂²f/∂x∂z
+        hess.Entries.TryGetValue((2, 1), out var h_yz);  // ∂²f/∂y∂z
+
+        Console.WriteLine($"DEBUG 3-factor: h_xy={h_xy} (expected {point[2]}), h_xz={h_xz} (expected {point[1]}), h_yz={h_yz} (expected {point[0]})");
+        Console.WriteLine($"DEBUG: Total Hessian entries: {hess.Entries.Count}");
+        foreach (var entry in hess.Entries)
+        {
+            Console.WriteLine($"  H[{entry.Key.row},{entry.Key.col}] = {entry.Value}");
+        }
+
+        Assert.AreEqual(point[2], h_xy, 1e-10, $"∂²f/∂x∂y should equal z={point[2]}, got {h_xy}");
+        Assert.AreEqual(point[1], h_xz, 1e-10, $"∂²f/∂x∂z should equal y={point[1]}, got {h_xz}");
+        Assert.AreEqual(point[0], h_yz, 1e-10, $"∂²f/∂y∂z should equal x={point[0]}, got {h_yz}");
+    }
+
     private static void AssertGradientMatchesFiniteDifference(Expr expr, double[] point)
     {
         var n = point.Length;
