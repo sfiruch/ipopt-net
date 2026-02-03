@@ -1,4 +1,6 @@
 using System.Runtime.CompilerServices;
+using System.Buffers;
+using System.Runtime.InteropServices;
 
 namespace IpoptNet.Modelling;
 
@@ -817,20 +819,30 @@ public sealed class Product : Expr
 
         for (int i = 0; i < Factors.Count; i++)
         {
-            factorGradients[i] = new double[n];
-            Factors[i].AccumulateGradient(x, factorGradients[i], 1.0);
-
-            var nonZeros = new List<int>();
-            for (int j = 0; j < n; j++)
+            if (Factors[i].IsConstantWrtX())
             {
-                if (Math.Abs(factorGradients[i][j]) > 1e-18)
-                    nonZeros.Add(j);
+                nonZeroIndices[i] = [];
+                continue;
+            }
+
+            var rented = ArrayPool<double>.Shared.Rent(n);
+            Array.Clear(rented, 0, n);
+            factorGradients[i] = rented;
+            Factors[i].AccumulateGradient(x, rented, 1.0);
+
+            // Use CollectVariables to avoid O(N) scan
+            var vars = new HashSet<Variable>();
+            Factors[i].CollectVariables(vars);
+            var nonZeros = new List<int>(vars.Count);
+            foreach (var v in vars)
+            {
+                if (Math.Abs(rented[v.Index]) > 1e-18)
+                    nonZeros.Add(v.Index);
             }
             nonZeroIndices[i] = nonZeros;
         }
 
         // 1. Accumulate Hessian from each factor's second derivative
-        //    d²(f₁*f₂*...*fₙ)/dx² includes: d²fₖ/dx² * (∏ᵢ≠ₖ fᵢ)
         for (int k = 0; k < Factors.Count; k++)
         {
             var otherProduct = 1.0;
@@ -839,7 +851,7 @@ public sealed class Product : Expr
                 if (l != k)
                 {
                     otherProduct *= factorValues[l];
-                    if (Math.Abs(otherProduct) < 1e-100) break; // Optimization: bail out if product becomes zero
+                    if (Math.Abs(otherProduct) < 1e-100) break;
                 }
             }
 
@@ -848,14 +860,17 @@ public sealed class Product : Expr
         }
 
         // 2. Add cross terms between pairs of factors
-        //    d²(f₁*f₂*...*fₙ)/dx² includes: ∂fₖ/∂xᵢ * ∂fₘ/∂xⱼ * (∏ₗ≠ₖ,ₘ fₗ)
         for (int k = 0; k < Factors.Count; k++)
         {
-            if (nonZeroIndices[k].Count == 0) continue;
+            var idxK = nonZeroIndices[k];
+            if (idxK.Count == 0) continue;
+            var gradK = factorGradients[k];
+            var spanK = CollectionsMarshal.AsSpan(idxK);
 
             for (int m = k + 1; m < Factors.Count; m++)
             {
-                if (nonZeroIndices[m].Count == 0) continue;
+                var idxM = nonZeroIndices[m];
+                if (idxM.Count == 0) continue;
 
                 var otherProduct = 1.0;
                 for (int l = 0; l < Factors.Count; l++)
@@ -870,24 +885,36 @@ public sealed class Product : Expr
                 if (Math.Abs(otherProduct) > 1e-18)
                 {
                     var coeff = multiplier * otherProduct;
-                    var idxK = nonZeroIndices[k];
-                    var idxM = nonZeroIndices[m];
-                    var gradK = factorGradients[k];
                     var gradM = factorGradients[m];
+                    var spanM = CollectionsMarshal.AsSpan(idxM);
 
-                    foreach (var i in idxK)
+                    // The interaction is gradK * gradM^T + gradM * gradK^T
+                    // For H_ij where i >= j, the contribution is: gK_i * gM_j + gM_i * gK_j
+                    foreach (var i in spanK)
                     {
-                        foreach (var j in idxM)
+                        var gKi = gradK[i];
+                        var gMi = gradM[i]; 
+                        var c_gKi = coeff * gKi;
+                        var c_gMi = coeff * gMi;
+
+                        foreach (var j in spanM)
                         {
-                            // H_ij += (gK_i * gM_j + gK_j * gM_i) * coeff
-                            // We call Add twice to cover both symmetric terms
-                            hess.Add(i, j, coeff * gradK[i] * gradM[j]);
-                            hess.Add(j, i, coeff * gradK[j] * gradM[i]);
+                            var gMj = gradM[j];
+                            var gKj = gradK[j]; 
+                            
+                            // H_ij += gK_i * gM_j + gM_i * gK_j
+                            // Since hess.Add handles lower-triangular swap, we add both parts.
+                            hess.Add(i, j, c_gKi * gMj);
+                            hess.Add(j, i, c_gMi * gKj);
                         }
                     }
                 }
             }
         }
+
+        for (int i = 0; i < Factors.Count; i++)
+            if (factorGradients[i] != null)
+                ArrayPool<double>.Shared.Return(factorGradients[i]);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables)
@@ -950,20 +977,22 @@ public sealed class Product : Expr
 
 public sealed class HessianAccumulator
 {
-    private readonly Dictionary<(int, int), double> _entries = new();
+    private readonly Dictionary<long, double> _entries = new();
     private readonly int _n;
 
     public HessianAccumulator(int n) => _n = n;
 
     public void Add(int i, int j, double value)
     {
-        if (Math.Abs(value) < 1e-15) return;
-        var key = i >= j ? (i, j) : (j, i); // Lower triangular
-        _entries.TryGetValue(key, out var existing);
-        _entries[key] = existing + value;
+        if (Math.Abs(value) < 1e-18) return;
+        
+        long key = i >= j ? ((long)i << 32) | (uint)j : ((long)j << 32) | (uint)i;
+        ref var entry = ref CollectionsMarshal.GetValueRefOrAddDefault(_entries, key, out _);
+        entry += value;
     }
 
-    public IReadOnlyDictionary<(int row, int col), double> Entries => _entries;
+    public IReadOnlyDictionary<(int row, int col), double> Entries =>
+        _entries.ToDictionary(kvp => ((int)(kvp.Key >> 32), (int)(kvp.Key & 0xFFFFFFFF)), kvp => kvp.Value);
 
     public void Clear() => _entries.Clear();
 
@@ -972,7 +1001,7 @@ public sealed class HessianAccumulator
         // For IPOPT, we need the structure of the lower triangular Hessian
         var count = 0;
         foreach (var entry in _entries)
-            if (Math.Abs(entry.Value) >= 1e-15)
+            if (Math.Abs(entry.Value) >= 1e-18)
                 count++;
         return count;
     }
