@@ -350,12 +350,15 @@ public sealed class Model : IDisposable
 
     private unsafe EvalGradFCallback CreateCachedEvalGradFCallback()
     {
+        // Objective must be linear when this callback is used
+        System.Diagnostics.Debug.Assert(_objective!.IsLinear());
+
         var n = _variables.Count;
         var zeroX = new double[n];
 
         // Pre-compute constant objective gradient
         var cachedGrad = new double[n];
-        _objective!.AccumulateGradient(zeroX, cachedGrad, 1.0);
+        _objective.AccumulateGradient(zeroX, cachedGrad, 1.0);
 
         return (int n, double* x, bool newX, double* gradF, nint userData) =>
         {
@@ -367,6 +370,9 @@ public sealed class Model : IDisposable
 
     private unsafe EvalJacGCallback CreateCachedEvalJacGCallback(int[] structRows, int[] structCols)
     {
+        // All constraints must be linear when this callback is used
+        System.Diagnostics.Debug.Assert(_constraints.All(c => c.Expression.IsLinear()));
+
         var n = _variables.Count;
         var m = _constraints.Count;
         var zeroX = new double[n];
@@ -425,36 +431,33 @@ public sealed class Model : IDisposable
         for (int i = 0; i < structRows.Length; i++)
             indexMap[(structRows[i], structCols[i])] = i;
 
-        // Pre-compute objective Hessian contribution
-        var objectiveHessValues = new double[structRows.Length];
+        // Pre-compute objective Hessian contribution (sparse: only non-zero entries)
+        var objectiveHessEntries = new List<(int idx, double value)>();
         {
             var grad = new double[n];
             var hess = new HessianAccumulator(n);
             _objective!.AccumulateHessian(zeroX, grad, hess, 1.0);
 
             foreach (var (key, value) in hess.Entries)
-            {
-                if (indexMap.TryGetValue(key, out var idx))
-                    objectiveHessValues[idx] = value;
-            }
+                objectiveHessEntries.Add((indexMap[key], value));
         }
 
-        // Pre-compute constraint Hessian contributions
-        var constraintHessValues = new double[m][];
+        // Pre-compute constraint Hessian contributions (sparse: only store non-zero entries per constraint)
+        // All constraints are at most quadratic when this callback is used
+        System.Diagnostics.Debug.Assert(_constraints.All(c => c.Expression.IsAtMostQuadratic()));
+
+        var constraintHessEntries = new List<(int idx, double value)>[m];
         for (int c = 0; c < m; c++)
         {
-            if (_constraints[c].Expression.IsAtMostQuadratic())
-            {
-                var grad = new double[n];
-                var hess = new HessianAccumulator(n);
-                _constraints[c].Expression.AccumulateHessian(zeroX, grad, hess, 1.0);
+            var grad = new double[n];
+            var hess = new HessianAccumulator(n);
+            _constraints[c].Expression.AccumulateHessian(zeroX, grad, hess, 1.0);
 
-                constraintHessValues[c] = new double[structRows.Length];
+            if (hess.Entries.Count > 0)
+            {
+                constraintHessEntries[c] = new List<(int, double)>(hess.Entries.Count);
                 foreach (var (key, value) in hess.Entries)
-                {
-                    if (indexMap.TryGetValue(key, out var idx))
-                        constraintHessValues[c][idx] = value;
-                }
+                    constraintHessEntries[c].Add((indexMap[key], value));
             }
         }
 
@@ -472,16 +475,20 @@ public sealed class Model : IDisposable
             }
             else
             {
-                // Compute scaled combination of pre-computed Hessians
+                // Initialize with objective contribution
                 for (int i = 0; i < neleHess; i++)
-                    values[i] = objFactor * objectiveHessValues[i];
+                    values[i] = 0;
 
+                foreach (var (idx, value) in objectiveHessEntries)
+                    values[idx] += objFactor * value;
+
+                // Add constraint contributions (only iterate over non-zero entries)
                 for (int c = 0; c < m; c++)
                 {
-                    if (constraintHessValues[c] != null && Math.Abs(lambda[c]) > 1e-15)
+                    if (constraintHessEntries[c] != null && Math.Abs(lambda[c]) > 1e-15)
                     {
-                        for (int i = 0; i < neleHess; i++)
-                            values[i] += lambda[c] * constraintHessValues[c][i];
+                        foreach (var (idx, value) in constraintHessEntries[c])
+                            values[idx] += lambda[c] * value;
                     }
                 }
             }
