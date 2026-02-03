@@ -1159,4 +1159,168 @@ public class ModellingTests
         Assert.AreEqual(resultManual.Statistics.IterationCount, resultAuto.Statistics.IterationCount,
             "Auto warm start should match manual warm start when dual values are present");
     }
+
+    [TestMethod]
+    public void LinearProgram_ConstantMatrices()
+    {
+        // Test that LP problems correctly use constant gradient and Jacobian
+        // Objective: minimize x + 2*y
+        // subject to: x + y >= 3
+        //            x >= 0, y >= 0
+        var model = new Model();
+        var x = model.AddVariable(0, double.PositiveInfinity);
+        var y = model.AddVariable(0, double.PositiveInfinity);
+
+        model.SetObjective(x + 2 * y);
+        model.AddConstraint(x + y >= 3);
+
+        model.Options.PrintLevel = 0;
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        // Optimal solution minimizes objective on the constraint line x + y = 3
+        // Since objective is x + 2*y and constraint is x + y = 3 (so x = 3 - y)
+        // Substitute: (3 - y) + 2*y = 3 + y
+        // This is minimized when y = 0, giving x = 3
+        Assert.AreEqual(3.0, result.Solution[x], 0.01);
+        Assert.AreEqual(0.0, result.Solution[y], 0.01);
+        Assert.AreEqual(3.0, result.ObjectiveValue, 0.01);
+    }
+
+    [TestMethod]
+    public void QuadraticProgram_ConstantHessian()
+    {
+        // Test that QP problems with linear constraints correctly use constant Hessian and Jacobian
+        // Objective: minimize x^2 + y^2 - 4*x - 6*y
+        // subject to: x + y <= 5
+        //            x, y >= 0
+        var model = new Model();
+        var x = model.AddVariable(0, double.PositiveInfinity);
+        var y = model.AddVariable(0, double.PositiveInfinity);
+
+        model.SetObjective(x * x + y * y - 4 * x - 6 * y);
+        model.AddConstraint(x + y <= 5);
+
+        model.Options.PrintLevel = 0;
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        // Unconstrained optimum would be at (2, 3) with objective -13
+        // Constrained optimum is at (2, 3) since 2+3=5 satisfies the constraint
+        Assert.AreEqual(2.0, result.Solution[x], 0.01);
+        Assert.AreEqual(3.0, result.Solution[y], 0.01);
+        Assert.AreEqual(-13.0, result.ObjectiveValue, 0.01);
+    }
+
+    [TestMethod]
+    public void QuadraticallyConstrainedProgram()
+    {
+        // Test that QCP problems with quadratic constraints use constant Hessian
+        // Objective: minimize x^2 + y^2
+        // subject to: (x-2)^2 + (y-2)^2 <= 1
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        model.SetObjective(x * x + y * y);
+        model.AddConstraint(Expr.Pow(x - 2, 2) + Expr.Pow(y - 2, 2) <= 1);
+
+        model.Options.PrintLevel = 0;
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        // Solution is on the circle closest to origin
+        var expectedVal = 2.0 - 1.0 / Math.Sqrt(2);
+        Assert.AreEqual(expectedVal, result.Solution[x], 0.01);
+        Assert.AreEqual(expectedVal, result.Solution[y], 0.01);
+    }
+
+    [TestMethod]
+    public void NonlinearProgram_NoConstantMatrices()
+    {
+        // Test that nonlinear problems still work (matrices are recomputed each iteration)
+        // Objective: minimize sin(x) + cos(y)
+        // subject to: x^2 + y^2 <= 4
+        var model = new Model();
+        var x = model.AddVariable(-3, 3);
+        var y = model.AddVariable(-3, 3);
+        x.Start = 1;
+        y.Start = 1;
+
+        model.SetObjective(Expr.Sin(x) + Expr.Cos(y));
+        model.AddConstraint(x * x + y * y <= 4);
+
+        model.Options.PrintLevel = 0;
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        // Minimum is approximately at x=pi/2, y=pi (or nearby on constraint boundary)
+        Assert.IsTrue(result.ObjectiveValue < 0, "Objective should be negative at optimum");
+    }
+
+    [TestMethod]
+    public void ExpressionAnalysis_Linearity()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Constants are linear
+        Expr constant = 5.0;
+        Assert.IsTrue(constant.IsConstantWrtX());
+        Assert.IsTrue(constant.IsLinear());
+        Assert.IsTrue(constant.IsAtMostQuadratic());
+
+        // Variables are linear
+        Assert.IsFalse(x.IsConstantWrtX());
+        Assert.IsTrue(x.IsLinear());
+        Assert.IsTrue(x.IsAtMostQuadratic());
+
+        // Linear combinations
+        var linear = 2 * x + 3 * y - 5;
+        Assert.IsFalse(linear.IsConstantWrtX());
+        Assert.IsTrue(linear.IsLinear());
+        Assert.IsTrue(linear.IsAtMostQuadratic());
+
+        // Quadratic expressions
+        var quadratic = x * x + y * y;
+        Assert.IsFalse(quadratic.IsConstantWrtX());
+        Assert.IsFalse(quadratic.IsLinear());
+        Assert.IsTrue(quadratic.IsAtMostQuadratic());
+
+        // Bilinear terms are quadratic
+        var bilinear = x * y;
+        Assert.IsFalse(bilinear.IsConstantWrtX());
+        Assert.IsFalse(bilinear.IsLinear());
+        Assert.IsTrue(bilinear.IsAtMostQuadratic());
+
+        // Cubic is not quadratic
+        var cubic = x * x * x;
+        Assert.IsFalse(cubic.IsConstantWrtX());
+        Assert.IsFalse(cubic.IsLinear());
+        Assert.IsFalse(cubic.IsAtMostQuadratic());
+
+        // Nonlinear functions
+        var sine = Expr.Sin(x);
+        Assert.IsFalse(sine.IsConstantWrtX());
+        Assert.IsFalse(sine.IsLinear());
+        Assert.IsFalse(sine.IsAtMostQuadratic());
+
+        // Division by constant is linear if numerator is linear
+        var divByConstant = (2 * x + 3) / 5;
+        Assert.IsFalse(divByConstant.IsConstantWrtX());
+        Assert.IsTrue(divByConstant.IsLinear());
+        Assert.IsTrue(divByConstant.IsAtMostQuadratic());
+
+        // Power operations
+        var squared = Expr.Pow(x, 2);
+        Assert.IsFalse(squared.IsConstantWrtX());
+        Assert.IsFalse(squared.IsLinear());
+        Assert.IsTrue(squared.IsAtMostQuadratic());
+
+        var cubed = Expr.Pow(x, 3);
+        Assert.IsFalse(cubed.IsConstantWrtX());
+        Assert.IsFalse(cubed.IsLinear());
+        Assert.IsFalse(cubed.IsAtMostQuadratic());
+    }
 }

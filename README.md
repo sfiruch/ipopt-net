@@ -20,6 +20,7 @@ The package includes native binaries for:
 
 - **Modeling API**: Define nonlinear optimization problems using C# expressions with natural syntax
 - **Automatic Differentiation**: Gradients and Hessians computed automatically via reverse-mode AD
+- **Intelligent Matrix Caching**: Automatically detects and pre-computes constant matrices for LP/QP/QCP problems
 - **High-level Wrapper**: Clean, disposable `IpoptSolver` class for direct API access
 - **Native Performance**: Uses .NET 10 `LibraryImport` for efficient C API calls
 - **Expression Support**: Arithmetic, trigonometric, exponential, logarithmic, and power operations
@@ -85,6 +86,49 @@ The expression system supports:
 - **Trigonometric**: `Expr.Sin(x)`, `Expr.Cos(x)`, `Expr.Tan(x)`
 - **Exponential/Log**: `Expr.Exp(x)`, `Expr.Log(x)`
 - **Constraints**: `>=`, `<=`, `==`
+
+## Performance Optimization
+
+The solver automatically detects problem structure and optimizes matrix computations:
+
+### Constant Matrix Detection
+
+For certain problem types, derivative matrices remain constant throughout the solution process. The library automatically detects these cases and pre-computes matrices once:
+
+| Problem Type | Constant Matrices | Description |
+|-------------|------------------|-------------|
+| **Linear Programming (LP)** | Gradient, Jacobian | All derivatives are constant coefficients |
+| **Quadratic Programming (QP)** | Jacobian, Hessian | Linear constraints have constant gradients; quadratic terms have constant second derivatives |
+| **Quadratically Constrained (QCP)** | Hessian contributions | Quadratic constraints contribute constant Hessian terms |
+
+**Example - Linear Program:**
+```csharp
+var model = new Model();
+var x = model.AddVariable(0, 10);
+var y = model.AddVariable(0, 10);
+
+// Linear objective and constraints - matrices computed once
+model.SetObjective(2*x + 3*y);
+model.AddConstraint(x + 2*y <= 10);
+model.AddConstraint(3*x + y <= 12);
+
+var result = model.Solve();
+```
+
+**Example - Quadratic Program:**
+```csharp
+var model = new Model();
+var x = model.AddVariable();
+var y = model.AddVariable();
+
+// Quadratic objective, linear constraints - Hessian and Jacobian computed once
+model.SetObjective(x*x + y*y - 4*x - 6*y);
+model.AddConstraint(x + y <= 5);
+
+var result = model.Solve();
+```
+
+This optimization is completely automatic - no code changes required. The solver analyzes the expression structure and applies the appropriate caching strategy.
 
 ## More Examples
 

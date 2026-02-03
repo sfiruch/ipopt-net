@@ -63,12 +63,13 @@ public sealed class Model : IDisposable
         var useLimitedMemory = Options.HessianApproximation == HessianApproximation.LimitedMemory;
         var (hessRows, hessCols) = useLimitedMemory ? (Array.Empty<int>(), Array.Empty<int>()) : AnalyzeHessianSparsity();
 
-        // Create callbacks
+        // Create callbacks with automatic constant matrix detection
         var evalF = CreateEvalFCallback();
-        var evalGradF = CreateEvalGradFCallback();
+        var evalGradF = _objective.IsLinear() ? CreateCachedEvalGradFCallback() : CreateEvalGradFCallback();
         var evalG = CreateEvalGCallback();
-        var evalJacG = CreateEvalJacGCallback(jacRows, jacCols);
-        var evalH = useLimitedMemory ? CreateDummyEvalHCallback() : CreateEvalHCallback(hessRows, hessCols);
+        var evalJacG = _constraints.All(c => c.Expression.IsLinear()) ? CreateCachedEvalJacGCallback(jacRows, jacCols) : CreateEvalJacGCallback(jacRows, jacCols);
+        var evalH = useLimitedMemory ? CreateDummyEvalHCallback() :
+                    (_objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsAtMostQuadratic()) ? CreateCachedEvalHCallback(hessRows, hessCols) : CreateEvalHCallback(hessRows, hessCols));
 
         using var solver = new IpoptSolver(
             n, xL, xU,
@@ -345,6 +346,147 @@ public sealed class Model : IDisposable
     {
         return (int n, double* x, bool newX, double objFactor, int m, double* lambda, bool newLambda,
                 int neleHess, int* iRow, int* jCol, double* values, nint userData) => false;
+    }
+
+    private unsafe EvalGradFCallback CreateCachedEvalGradFCallback()
+    {
+        var n = _variables.Count;
+        var zeroX = new double[n];
+
+        // Pre-compute constant objective gradient
+        var cachedGrad = new double[n];
+        _objective!.AccumulateGradient(zeroX, cachedGrad, 1.0);
+
+        return (int n, double* x, bool newX, double* gradF, nint userData) =>
+        {
+            for (int i = 0; i < n; i++)
+                gradF[i] = cachedGrad[i];
+            return true;
+        };
+    }
+
+    private unsafe EvalJacGCallback CreateCachedEvalJacGCallback(int[] structRows, int[] structCols)
+    {
+        var n = _variables.Count;
+        var m = _constraints.Count;
+        var zeroX = new double[n];
+
+        // Pre-compute constant Jacobian values
+        var cachedValues = new double[structRows.Length];
+        var grad = new double[n];
+        var rowToEntries = new Dictionary<int, List<(int col, int idx)>>();
+        for (int i = 0; i < structRows.Length; i++)
+        {
+            if (!rowToEntries.ContainsKey(structRows[i]))
+                rowToEntries[structRows[i]] = new List<(int, int)>();
+            rowToEntries[structRows[i]].Add((structCols[i], i));
+        }
+
+        for (int row = 0; row < m; row++)
+        {
+            Array.Clear(grad);
+            _constraints[row].Expression.AccumulateGradient(zeroX, grad, 1.0);
+            if (rowToEntries.TryGetValue(row, out var entries))
+            {
+                foreach (var (col, idx) in entries)
+                    cachedValues[idx] = grad[col];
+            }
+        }
+
+        return (int n, double* x, bool newX, int m, int neleJac, int* iRow, int* jCol, double* values, nint userData) =>
+        {
+            if (values == null)
+            {
+                // Return sparsity structure
+                for (int i = 0; i < structRows.Length; i++)
+                {
+                    iRow[i] = structRows[i];
+                    jCol[i] = structCols[i];
+                }
+            }
+            else
+            {
+                // Return cached values
+                for (int i = 0; i < neleJac; i++)
+                    values[i] = cachedValues[i];
+            }
+            return true;
+        };
+    }
+
+    private unsafe EvalHCallback CreateCachedEvalHCallback(int[] structRows, int[] structCols)
+    {
+        var n = _variables.Count;
+        var m = _constraints.Count;
+        var zeroX = new double[n];
+
+        // Build a map from (row, col) to index once
+        var indexMap = new Dictionary<(int, int), int>();
+        for (int i = 0; i < structRows.Length; i++)
+            indexMap[(structRows[i], structCols[i])] = i;
+
+        // Pre-compute objective Hessian contribution
+        var objectiveHessValues = new double[structRows.Length];
+        {
+            var grad = new double[n];
+            var hess = new HessianAccumulator(n);
+            _objective!.AccumulateHessian(zeroX, grad, hess, 1.0);
+
+            foreach (var (key, value) in hess.Entries)
+            {
+                if (indexMap.TryGetValue(key, out var idx))
+                    objectiveHessValues[idx] = value;
+            }
+        }
+
+        // Pre-compute constraint Hessian contributions
+        var constraintHessValues = new double[m][];
+        for (int c = 0; c < m; c++)
+        {
+            if (_constraints[c].Expression.IsAtMostQuadratic())
+            {
+                var grad = new double[n];
+                var hess = new HessianAccumulator(n);
+                _constraints[c].Expression.AccumulateHessian(zeroX, grad, hess, 1.0);
+
+                constraintHessValues[c] = new double[structRows.Length];
+                foreach (var (key, value) in hess.Entries)
+                {
+                    if (indexMap.TryGetValue(key, out var idx))
+                        constraintHessValues[c][idx] = value;
+                }
+            }
+        }
+
+        return (int n, double* x, bool newX, double objFactor, int m, double* lambda, bool newLambda,
+                int neleHess, int* iRow, int* jCol, double* values, nint userData) =>
+        {
+            if (values == null)
+            {
+                // Return sparsity structure
+                for (int i = 0; i < structRows.Length; i++)
+                {
+                    iRow[i] = structRows[i];
+                    jCol[i] = structCols[i];
+                }
+            }
+            else
+            {
+                // Compute scaled combination of pre-computed Hessians
+                for (int i = 0; i < neleHess; i++)
+                    values[i] = objFactor * objectiveHessValues[i];
+
+                for (int c = 0; c < m; c++)
+                {
+                    if (constraintHessValues[c] != null && Math.Abs(lambda[c]) > 1e-15)
+                    {
+                        for (int i = 0; i < neleHess; i++)
+                            values[i] += lambda[c] * constraintHessValues[c][i];
+                    }
+                }
+            }
+            return true;
+        };
     }
 
     public void Dispose()

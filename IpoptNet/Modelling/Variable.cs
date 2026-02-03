@@ -30,6 +30,9 @@ public sealed class Variable : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => variables.Add(this);
+    protected override bool IsConstantWrtXCore() => false;
+    protected override bool IsLinearCore() => true;
+    protected override bool IsAtMostQuadraticCore() => true;
 
     protected override Expr CloneCore() => this; // Variables are singletons - return self
 }

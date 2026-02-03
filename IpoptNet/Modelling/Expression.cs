@@ -14,10 +14,30 @@ public abstract class Expr
     public void CollectVariables(HashSet<Variable> variables) =>
         (_replacement ?? this).CollectVariablesCore(variables);
 
+    /// <summary>
+    /// Returns true if this expression contains no variables (is a constant value).
+    /// </summary>
+    public bool IsConstantWrtX() => (_replacement ?? this).IsConstantWrtXCore();
+
+    /// <summary>
+    /// Returns true if this expression is linear (constant gradient, zero Hessian).
+    /// Examples: 2*x + 3*y - 5, x, Constant
+    /// </summary>
+    public bool IsLinear() => (_replacement ?? this).IsLinearCore();
+
+    /// <summary>
+    /// Returns true if this expression is at most quadratic (constant Hessian).
+    /// Examples: x*y, x^2, 2*x + 3*y - 5
+    /// </summary>
+    public bool IsAtMostQuadratic() => (_replacement ?? this).IsAtMostQuadraticCore();
+
     protected abstract double EvaluateCore(ReadOnlySpan<double> x);
     protected abstract void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier);
     protected abstract void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier);
     protected abstract void CollectVariablesCore(HashSet<Variable> variables);
+    protected abstract bool IsConstantWrtXCore();
+    protected abstract bool IsLinearCore();
+    protected abstract bool IsAtMostQuadraticCore();
 
     public override bool Equals(object? obj) => ReferenceEquals(this, obj);
     public override int GetHashCode() => RuntimeHelpers.GetHashCode(this);
@@ -258,6 +278,9 @@ public sealed class Constant : Expr
     protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier) { }
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier) { }
     protected override void CollectVariablesCore(HashSet<Variable> variables) { }
+    protected override bool IsConstantWrtXCore() => true;
+    protected override bool IsLinearCore() => true;
+    protected override bool IsAtMostQuadraticCore() => true;
 
     protected override Expr CloneCore() => new Constant(Value);
 }
@@ -319,6 +342,20 @@ public sealed class Division : Expr
         Right.CollectVariables(variables);
     }
 
+    protected override bool IsConstantWrtXCore() => Left.IsConstantWrtX() && Right.IsConstantWrtX();
+
+    protected override bool IsLinearCore()
+    {
+        // Linear if numerator is linear and denominator is constant
+        return Left.IsLinear() && Right.IsConstantWrtX();
+    }
+
+    protected override bool IsAtMostQuadraticCore()
+    {
+        // At most quadratic if numerator is at most quadratic and denominator is constant
+        return Left.IsAtMostQuadratic() && Right.IsConstantWrtX();
+    }
+
     protected override Expr CloneCore() => new Division(Left, Right);
 }
 
@@ -348,6 +385,9 @@ public sealed class Negation : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Operand.CollectVariables(variables);
+    protected override bool IsConstantWrtXCore() => Operand.IsConstantWrtX();
+    protected override bool IsLinearCore() => Operand.IsLinear();
+    protected override bool IsAtMostQuadraticCore() => Operand.IsAtMostQuadratic();
 
     protected override Expr CloneCore() => new Negation(Operand);
 }
@@ -390,6 +430,23 @@ public sealed class PowerOp : Expr
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Base.CollectVariables(variables);
 
+    protected override bool IsConstantWrtXCore() => Base.IsConstantWrtX();
+
+    protected override bool IsLinearCore()
+    {
+        // Linear if exponent is 1 and base is linear, or if base is constant
+        return (Math.Abs(Exponent - 1.0) < 1e-15 && Base.IsLinear()) || Base.IsConstantWrtX();
+    }
+
+    protected override bool IsAtMostQuadraticCore()
+    {
+        // At most quadratic if: (exponent is at most 2 and base is linear) or (exponent is 1 and base is quadratic) or (base is constant)
+        if (Base.IsConstantWrtX()) return true;
+        if (Math.Abs(Exponent - 1.0) < 1e-15) return Base.IsAtMostQuadratic();
+        if (Math.Abs(Exponent - 2.0) < 1e-15) return Base.IsLinear();
+        return false;
+    }
+
     protected override Expr CloneCore() => new PowerOp(Base, Exponent);
 }
 
@@ -420,6 +477,9 @@ public sealed class Sin : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
+    protected override bool IsLinearCore() => Argument.IsConstantWrtX();
+    protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
 
     protected override Expr CloneCore() => new Sin(Argument);
 }
@@ -451,6 +511,9 @@ public sealed class Cos : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
+    protected override bool IsLinearCore() => Argument.IsConstantWrtX();
+    protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
 
     protected override Expr CloneCore() => new Cos(Argument);
 }
@@ -485,6 +548,9 @@ public sealed class Tan : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
+    protected override bool IsLinearCore() => Argument.IsConstantWrtX();
+    protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
 
     protected override Expr CloneCore() => new Tan(Argument);
 }
@@ -517,6 +583,9 @@ public sealed class Exp : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
+    protected override bool IsLinearCore() => Argument.IsConstantWrtX();
+    protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
 
     protected override Expr CloneCore() => new Exp(Argument);
 }
@@ -549,6 +618,9 @@ public sealed class Log : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
+    protected override bool IsLinearCore() => Argument.IsConstantWrtX();
+    protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
 
     protected override Expr CloneCore() => new Log(Argument);
 }
@@ -585,6 +657,10 @@ public sealed class Sum : Expr
         foreach (var term in Terms)
             term.CollectVariables(variables);
     }
+
+    protected override bool IsConstantWrtXCore() => Terms.All(t => t.IsConstantWrtX());
+    protected override bool IsLinearCore() => Terms.All(t => t.IsLinear());
+    protected override bool IsAtMostQuadraticCore() => Terms.All(t => t.IsAtMostQuadratic());
 
     protected override Expr CloneCore() => new Sum([.. Terms]);
 }
@@ -682,6 +758,32 @@ public sealed class Product : Expr
     {
         foreach (var factor in Factors)
             factor.CollectVariables(variables);
+    }
+
+    protected override bool IsConstantWrtXCore() => Factors.All(f => f.IsConstantWrtX());
+
+    protected override bool IsLinearCore()
+    {
+        // Linear if at most one factor is non-constant and that factor is linear
+        var nonConstantFactors = Factors.Where(f => !f.IsConstantWrtX()).ToList();
+        return nonConstantFactors.Count == 0 || (nonConstantFactors.Count == 1 && nonConstantFactors[0].IsLinear());
+    }
+
+    protected override bool IsAtMostQuadraticCore()
+    {
+        // Count non-constant factors and their degrees
+        var nonConstantFactors = Factors.Where(f => !f.IsConstantWrtX()).ToList();
+
+        if (nonConstantFactors.Count == 0)
+            return true; // All constant
+
+        if (nonConstantFactors.Count == 1)
+            return nonConstantFactors[0].IsAtMostQuadratic(); // One factor, check if it's at most quadratic
+
+        if (nonConstantFactors.Count == 2)
+            return nonConstantFactors.All(f => f.IsLinear()); // Two linear factors: degree 1*1 = 2
+
+        return false; // More than two non-constant factors means degree > 2
     }
 
     protected override Expr CloneCore() => new Product([.. Factors]);
