@@ -177,26 +177,19 @@ public sealed class Model : IDisposable
 
     private (int[] rows, int[] cols) AnalyzeHessianSparsity()
     {
-        // Collect all variables from objective and constraints
-        var allVars = new HashSet<Variable>();
-        _objective?.CollectVariables(allVars);
+        var entries = new HashSet<(int row, int col)>();
+        _objective?.CollectHessianSparsity(entries);
         foreach (var c in _constraints)
-            c.Expression.CollectVariables(allVars);
+            c.Expression.CollectHessianSparsity(entries);
 
-        // For simplicity, assume dense lower triangular Hessian over all variables
-        // A more sophisticated analysis could track actual sparsity
-        var entries = new List<(int row, int col)>();
-        var varIndices = allVars.Select(v => v.Index).OrderBy(i => i).ToList();
-        foreach (var i in varIndices)
-            foreach (var j in varIndices.Where(jj => jj <= i))
-                entries.Add((i, j));
+        var sortedEntries = entries.OrderBy(e => e.row).ThenBy(e => e.col).ToList();
 
-        var rows = new int[entries.Count];
-        var cols = new int[entries.Count];
-        for (int idx = 0; idx < entries.Count; idx++)
+        var rows = new int[sortedEntries.Count];
+        var cols = new int[sortedEntries.Count];
+        for (int i = 0; i < sortedEntries.Count; i++)
         {
-            rows[idx] = entries[idx].row;
-            cols[idx] = entries[idx].col;
+            rows[i] = sortedEntries[i].row;
+            cols[i] = sortedEntries[i].col;
         }
         return (rows, cols);
     }

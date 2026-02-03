@@ -13,6 +13,8 @@ public abstract class Expr
         (_replacement ?? this).AccumulateHessianCore(x, grad, hess, multiplier);
     public void CollectVariables(HashSet<Variable> variables) =>
         (_replacement ?? this).CollectVariablesCore(variables);
+    public void CollectHessianSparsity(HashSet<(int row, int col)> entries) =>
+        (_replacement ?? this).CollectHessianSparsityCore(entries);
 
     /// <summary>
     /// Returns true if this expression contains no variables (is a constant value).
@@ -35,9 +37,24 @@ public abstract class Expr
     protected abstract void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier);
     protected abstract void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier);
     protected abstract void CollectVariablesCore(HashSet<Variable> variables);
+    protected abstract void CollectHessianSparsityCore(HashSet<(int row, int col)> entries);
     protected abstract bool IsConstantWrtXCore();
     protected abstract bool IsLinearCore();
     protected abstract bool IsAtMostQuadraticCore();
+
+    protected static void AddSparsityEntry(HashSet<(int row, int col)> entries, int i, int j)
+    {
+        if (i < j) (i, j) = (j, i);
+        entries.Add((i, j));
+    }
+
+    protected static void AddClique(HashSet<(int row, int col)> entries, HashSet<Variable> variables)
+    {
+        var vars = variables.ToArray();
+        for (int i = 0; i < vars.Length; i++)
+            for (int j = 0; j <= i; j++)
+                AddSparsityEntry(entries, vars[i].Index, vars[j].Index);
+    }
 
     public override bool Equals(object? obj) => ReferenceEquals(this, obj);
     public override int GetHashCode() => RuntimeHelpers.GetHashCode(this);
@@ -278,6 +295,7 @@ public sealed class Constant : Expr
     protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier) { }
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier) { }
     protected override void CollectVariablesCore(HashSet<Variable> variables) { }
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries) { }
     protected override bool IsConstantWrtXCore() => true;
     protected override bool IsLinearCore() => true;
     protected override bool IsAtMostQuadraticCore() => true;
@@ -342,6 +360,21 @@ public sealed class Division : Expr
         Right.CollectVariables(variables);
     }
 
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        if (Right.IsConstantWrtX())
+        {
+            Left.CollectHessianSparsity(entries);
+        }
+        else
+        {
+            var vars = new HashSet<Variable>();
+            Left.CollectVariables(vars);
+            Right.CollectVariables(vars);
+            AddClique(entries, vars);
+        }
+    }
+
     protected override bool IsConstantWrtXCore() => Left.IsConstantWrtX() && Right.IsConstantWrtX();
 
     protected override bool IsLinearCore()
@@ -385,6 +418,7 @@ public sealed class Negation : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Operand.CollectVariables(variables);
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries) => Operand.CollectHessianSparsity(entries);
     protected override bool IsConstantWrtXCore() => Operand.IsConstantWrtX();
     protected override bool IsLinearCore() => Operand.IsLinear();
     protected override bool IsAtMostQuadraticCore() => Operand.IsAtMostQuadratic();
@@ -429,6 +463,20 @@ public sealed class PowerOp : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Base.CollectVariables(variables);
+
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        if (Math.Abs(Exponent - 1.0) < 1e-15)
+        {
+            Base.CollectHessianSparsity(entries);
+        }
+        else if (!Base.IsConstantWrtX())
+        {
+            var vars = new HashSet<Variable>();
+            Base.CollectVariables(vars);
+            AddClique(entries, vars);
+        }
+    }
 
     protected override bool IsConstantWrtXCore() => Base.IsConstantWrtX();
 
@@ -477,6 +525,15 @@ public sealed class Sin : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        if (!Argument.IsConstantWrtX())
+        {
+            var vars = new HashSet<Variable>();
+            Argument.CollectVariables(vars);
+            AddClique(entries, vars);
+        }
+    }
     protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
     protected override bool IsLinearCore() => Argument.IsConstantWrtX();
     protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
@@ -511,6 +568,15 @@ public sealed class Cos : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        if (!Argument.IsConstantWrtX())
+        {
+            var vars = new HashSet<Variable>();
+            Argument.CollectVariables(vars);
+            AddClique(entries, vars);
+        }
+    }
     protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
     protected override bool IsLinearCore() => Argument.IsConstantWrtX();
     protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
@@ -548,6 +614,15 @@ public sealed class Tan : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        if (!Argument.IsConstantWrtX())
+        {
+            var vars = new HashSet<Variable>();
+            Argument.CollectVariables(vars);
+            AddClique(entries, vars);
+        }
+    }
     protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
     protected override bool IsLinearCore() => Argument.IsConstantWrtX();
     protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
@@ -583,6 +658,15 @@ public sealed class Exp : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        if (!Argument.IsConstantWrtX())
+        {
+            var vars = new HashSet<Variable>();
+            Argument.CollectVariables(vars);
+            AddClique(entries, vars);
+        }
+    }
     protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
     protected override bool IsLinearCore() => Argument.IsConstantWrtX();
     protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
@@ -618,6 +702,15 @@ public sealed class Log : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        if (!Argument.IsConstantWrtX())
+        {
+            var vars = new HashSet<Variable>();
+            Argument.CollectVariables(vars);
+            AddClique(entries, vars);
+        }
+    }
     protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
     protected override bool IsLinearCore() => Argument.IsConstantWrtX();
     protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
@@ -656,6 +749,12 @@ public sealed class Sum : Expr
     {
         foreach (var term in Terms)
             term.CollectVariables(variables);
+    }
+
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        foreach (var term in Terms)
+            term.CollectHessianSparsity(entries);
     }
 
     protected override bool IsConstantWrtXCore() => Terms.All(t => t.IsConstantWrtX());
@@ -758,6 +857,29 @@ public sealed class Product : Expr
     {
         foreach (var factor in Factors)
             factor.CollectVariables(variables);
+    }
+
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        foreach (var factor in Factors)
+            factor.CollectHessianSparsity(entries);
+
+        var factorVars = new HashSet<Variable>[Factors.Count];
+        for (int i = 0; i < Factors.Count; i++)
+        {
+            factorVars[i] = new HashSet<Variable>();
+            Factors[i].CollectVariables(factorVars[i]);
+        }
+
+        for (int i = 0; i < Factors.Count; i++)
+        {
+            for (int j = i + 1; j < Factors.Count; j++)
+            {
+                foreach (var v1 in factorVars[i])
+                    foreach (var v2 in factorVars[j])
+                        AddSparsityEntry(entries, v1.Index, v2.Index);
+            }
+        }
     }
 
     protected override bool IsConstantWrtXCore() => Factors.All(f => f.IsConstantWrtX());

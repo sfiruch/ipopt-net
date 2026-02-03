@@ -30,6 +30,7 @@ public sealed class Variable : Expr
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => variables.Add(this);
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries) { }
     protected override bool IsConstantWrtXCore() => false;
     protected override bool IsLinearCore() => true;
     protected override bool IsAtMostQuadraticCore() => true;
