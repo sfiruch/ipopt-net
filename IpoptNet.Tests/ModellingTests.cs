@@ -10,6 +10,7 @@ public class ModellingTests
     public void HS071_WithModel()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x1 = model.AddVariable(1, 5);
         x1.Start = 1;
         var x2 = model.AddVariable(1, 5);
@@ -40,6 +41,7 @@ public class ModellingTests
     public void Rosenbrock_Unconstrained()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = -1;
         var y = model.AddVariable();
@@ -60,6 +62,7 @@ public class ModellingTests
     public void SimpleQuadratic_BoundConstrained()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(0, 10);
         x.Start = 0;
         var y = model.AddVariable(0, 10);
@@ -80,6 +83,7 @@ public class ModellingTests
     public void LinearConstraint()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = 0;
         var y = model.AddVariable();
@@ -102,6 +106,7 @@ public class ModellingTests
     public void TrigonometricExpression()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(-Math.PI, Math.PI);
         x.Start = 0;
 
@@ -120,6 +125,7 @@ public class ModellingTests
     public void ExponentialExpression()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(-5, 5);
         x.Start = 0;
 
@@ -137,6 +143,7 @@ public class ModellingTests
     public void DivisionExpression()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(0.1, 10);
         x.Start = 2;
 
@@ -155,6 +162,7 @@ public class ModellingTests
     public void ConfigureOptionsWithEnums()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(1, 5);
         x.Start = 1;
         var y = model.AddVariable(1, 5);
@@ -186,6 +194,7 @@ public class ModellingTests
     public void ConfigureCustomOptions()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = 0;
         var y = model.AddVariable();
@@ -209,6 +218,7 @@ public class ModellingTests
     public void SolveWithMumps()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x1 = model.AddVariable(1, 5);
         x1.Start = 1;
         var x2 = model.AddVariable(1, 5);
@@ -239,6 +249,7 @@ public class ModellingTests
     public void SolveWithPardisoMkl()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x1 = model.AddVariable(1, 5);
         x1.Start = 1;
         var x2 = model.AddVariable(1, 5);
@@ -269,6 +280,7 @@ public class ModellingTests
     public void ExprToExprConstraints()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = 0;
         var y = model.AddVariable();
@@ -461,6 +473,7 @@ public class ModellingTests
     public void UpdateStartValues_DefaultBehavior_UpdatesStartValues()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = 0;
         var y = model.AddVariable();
@@ -487,6 +500,7 @@ public class ModellingTests
     public void UpdateStartValues_ExplicitTrue_UpdatesStartValues()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = 10;
         var y = model.AddVariable();
@@ -509,6 +523,7 @@ public class ModellingTests
     public void UpdateStartValues_False_DoesNotUpdateStartValues()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = 100;
         var y = model.AddVariable();
@@ -536,6 +551,7 @@ public class ModellingTests
     public void UpdateStartValues_SuccessiveOptimizations_UsesUpdatedStartValues()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = 0;
         var y = model.AddVariable();
@@ -563,6 +579,7 @@ public class ModellingTests
     public void UpdateStartValues_MaxIterationsExceeded_UpdatesStartValues()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(-10, 10);
         x.Start = -5;
         var y = model.AddVariable(-10, 10);
@@ -626,6 +643,7 @@ public class ModellingTests
     public void WarmStart_UpdatesDualVariables_OnSuccessfulSolve()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = 0;
         var y = model.AddVariable();
@@ -658,6 +676,7 @@ public class ModellingTests
     {
         // First solve: get the solution and dual variables
         var model1 = new Model();
+        model1.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x1 = model1.AddVariable(1, 5);
         x1.Start = 1;
         var x2 = model1.AddVariable(1, 5);
@@ -680,6 +699,7 @@ public class ModellingTests
 
         // Second solve with warm start: should converge in very few iterations
         var model2 = new Model();
+        model2.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var y1 = model2.AddVariable(1, 5);
         y1.Start = x1.Start;
         y1.LowerBoundDualStart = x1.LowerBoundDualStart;
@@ -720,6 +740,7 @@ public class ModellingTests
 
         // Third solve without warm start: should fail with same iteration limit
         var model3 = new Model();
+        model3.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var z1 = model3.AddVariable(1, 5);
         z1.Start = 1;
         var z2 = model3.AddVariable(1, 5);
@@ -746,6 +767,7 @@ public class ModellingTests
     {
         // Solve initial problem to get warm start information
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x1 = model.AddVariable(1, 5);
         x1.Start = 1;
         var x2 = model.AddVariable(1, 5);
@@ -768,6 +790,7 @@ public class ModellingTests
 
         // Solve perturbed problem with warm start and limited iterations
         var modelWarm = new Model();
+        modelWarm.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var w1 = modelWarm.AddVariable(1, 5);
         w1.Start = x1.Start;
         w1.LowerBoundDualStart = x1.LowerBoundDualStart;
@@ -806,6 +829,7 @@ public class ModellingTests
 
         // Solve same perturbed problem cold
         var modelCold = new Model();
+        modelCold.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var z1 = modelCold.AddVariable(1, 5);
         z1.Start = 1;
         var z2 = modelCold.AddVariable(1, 5);
@@ -832,6 +856,7 @@ public class ModellingTests
     public void WarmStart_DoesNotUpdateDualsWhenUpdateStartValuesFalse()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(0, 10);
         x.Start = 0;
         var y = model.AddVariable(0, 10);
@@ -860,6 +885,7 @@ public class ModellingTests
     public void WarmStart_WithBoundedVariables_UpdatesBoundDuals()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(0, 2);
         x.Start = 0;
         var y = model.AddVariable(0, 2);
@@ -887,6 +913,7 @@ public class ModellingTests
     public void WarmStart_AutomaticallyEnabled_WhenDualDataPresent()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = 2;
         x.LowerBoundDualStart = 0.5;  // Non-zero dual triggers warm start
@@ -910,6 +937,7 @@ public class ModellingTests
     public void Statistics_ExposesIterationCount()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(1, 5);
         x.Start = 1;
         var y = model.AddVariable(1, 5);
@@ -931,6 +959,7 @@ public class ModellingTests
     public void Statistics_ProvidesFinalInfeasibilities()
     {
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         x.Start = 0;
         var y = model.AddVariable();
@@ -952,6 +981,7 @@ public class ModellingTests
     {
         // First solve to get warm start data
         var model1 = new Model();
+        model1.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x1 = model1.AddVariable(1, 5);
         x1.Start = 1;
         var x2 = model1.AddVariable(1, 5);
@@ -973,6 +1003,7 @@ public class ModellingTests
 
         // Warm start solve
         var modelWarm = new Model();
+        modelWarm.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var w1 = modelWarm.AddVariable(1, 5);
         w1.Start = x1.Start;
         w1.LowerBoundDualStart = x1.LowerBoundDualStart;
@@ -1007,6 +1038,7 @@ public class ModellingTests
 
         // Cold start solve
         var modelCold = new Model();
+        modelCold.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var z1 = modelCold.AddVariable(1, 5);
         z1.Start = 1;
         var z2 = modelCold.AddVariable(1, 5);
@@ -1036,6 +1068,7 @@ public class ModellingTests
     {
         // First solve to get warm start data
         var model1 = new Model();
+        model1.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x1 = model1.AddVariable(1, 5);
         x1.Start = 1;
         var x2 = model1.AddVariable(1, 5);
@@ -1057,6 +1090,7 @@ public class ModellingTests
 
         // Auto warm start solve (has dual values but WarmStartInitPoint not explicitly set)
         var modelAuto = new Model();
+        modelAuto.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var a1 = modelAuto.AddVariable(1, 5);
         a1.Start = x1.Start;
         a1.LowerBoundDualStart = x1.LowerBoundDualStart;
@@ -1091,6 +1125,7 @@ public class ModellingTests
 
         // Manual warm start solve (explicitly set WarmStartInitPoint)
         var modelManual = new Model();
+        modelManual.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var m1 = modelManual.AddVariable(1, 5);
         m1.Start = x1.Start;
         m1.LowerBoundDualStart = x1.LowerBoundDualStart;
@@ -1125,6 +1160,7 @@ public class ModellingTests
 
         // Cold start solve (no dual values)
         var modelCold = new Model();
+        modelCold.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var z1 = modelCold.AddVariable(1, 5);
         z1.Start = 1;
         var z2 = modelCold.AddVariable(1, 5);
@@ -1168,6 +1204,7 @@ public class ModellingTests
         // subject to: x + y >= 3
         //            x >= 0, y >= 0
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(0, double.PositiveInfinity);
         var y = model.AddVariable(0, double.PositiveInfinity);
 
@@ -1195,6 +1232,7 @@ public class ModellingTests
         // subject to: x + y <= 5
         //            x, y >= 0
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(0, double.PositiveInfinity);
         var y = model.AddVariable(0, double.PositiveInfinity);
 
@@ -1219,6 +1257,7 @@ public class ModellingTests
         // Objective: minimize x^2 + y^2
         // subject to: (x-2)^2 + (y-2)^2 <= 1
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable();
         var y = model.AddVariable();
 
@@ -1242,6 +1281,7 @@ public class ModellingTests
         // Objective: minimize sin(x) + cos(y)
         // subject to: x^2 + y^2 <= 4
         var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         var x = model.AddVariable(-3, 3);
         var y = model.AddVariable(-3, 3);
         x.Start = 1;

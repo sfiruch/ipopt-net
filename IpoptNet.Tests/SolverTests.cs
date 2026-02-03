@@ -149,6 +149,7 @@ public class SolverTests
         using var solver = new IpoptSolver(n, xL, xU, m, gL, gU, jacobianNonZeros, hessianNonZeros,
             evalF, evalGradF, evalG, evalJacG, evalH);
 
+        solver.SetOption("derivative_test", "second-order");
         solver.SetOption("print_level", 0);
 
         double[] x = [1, 5, 5, 1];

@@ -14,6 +14,10 @@ public sealed class Model : IDisposable
     /// </summary>
     public IpoptOptions Options { get; } = new();
 
+    public Model()
+    {
+    }
+
     public Variable AddVariable(double lowerBound = double.NegativeInfinity, double upperBound = double.PositiveInfinity)
     {
         var variable = new Variable(lowerBound, upperBound) { Index = _variables.Count };

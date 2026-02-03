@@ -825,14 +825,27 @@ public sealed class Product : Expr
                 continue;
             }
 
+            // 1. Identify variables involved first
+            var vars = new HashSet<Variable>();
+            Factors[i].CollectVariables(vars);
+
             var rented = ArrayPool<double>.Shared.Rent(n);
-            Array.Clear(rented, 0, n);
+            
+            // 2. Zero-init ONLY involved variables if sparse
+            if (vars.Count < n / 32)
+            {
+                foreach (var v in vars)
+                    rented[v.Index] = 0.0;
+            }
+            else
+            {
+                Array.Clear(rented, 0, n);
+            }
+
             factorGradients[i] = rented;
             Factors[i].AccumulateGradient(x, rented, 1.0);
 
-            // Use CollectVariables to avoid O(N) scan
-            var vars = new HashSet<Variable>();
-            Factors[i].CollectVariables(vars);
+            // 3. Identify non-zeros
             var nonZeros = new List<int>(vars.Count);
             foreach (var v in vars)
             {
