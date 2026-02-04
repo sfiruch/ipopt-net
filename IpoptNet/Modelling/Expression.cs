@@ -1292,9 +1292,46 @@ public class QuadExpr : Expr
             else if (term is PowerOp { Exponent: 2 } pow)
             {
                 // x^2 → quadratic term
-                quadTerms1.Add(pow.Base);
-                quadTerms2.Add(pow.Base);
-                quadWeights.Add(1.0);
+                // But if base is a LinExpr, we need to expand it: (a*x + b*y + c)^2
+                if (pow.Base is LinExpr linBase)
+                {
+                    // Expand (LinExpr)^2 into quadratic and linear terms
+                    // (a1*t1 + a2*t2 + ... + c)^2 = sum(ai*aj*ti*tj) + 2*sum(ai*ti*c) + c^2
+                    
+                    // Quadratic cross terms: ai * aj * ti * tj for all i,j pairs
+                    for (int i = 0; i < linBase.Terms.Count; i++)
+                    {
+                        for (int j = i; j < linBase.Terms.Count; j++)
+                        {
+                            double weight = linBase.Weights[i] * linBase.Weights[j];
+                            if (i != j) weight *= 2.0; // Cross terms appear twice
+                            
+                            quadTerms1.Add(linBase.Terms[i]);
+                            quadTerms2.Add(linBase.Terms[j]);
+                            quadWeights.Add(weight);
+                        }
+                    }
+                    
+                    // Linear terms from 2 * c * sum(ai*ti)
+                    if (linBase.ConstantTerm != 0.0)
+                    {
+                        for (int i = 0; i < linBase.Terms.Count; i++)
+                        {
+                            linearTerms.Add(linBase.Terms[i]);
+                            linearWeights.Add(2.0 * linBase.ConstantTerm * linBase.Weights[i]);
+                        }
+                    }
+                    
+                    // Constant term: c^2
+                    constantSum += linBase.ConstantTerm * linBase.ConstantTerm;
+                }
+                else
+                {
+                    // Simple case: just a variable or other expression squared
+                    quadTerms1.Add(pow.Base);
+                    quadTerms2.Add(pow.Base);
+                    quadWeights.Add(1.0);
+                }
             }
             else
             {

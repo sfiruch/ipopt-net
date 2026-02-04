@@ -1531,4 +1531,46 @@ public class ExpressionTests
 
         Console.WriteLine("Compound operators work efficiently on direct types!");
     }
+
+    [TestMethod]
+    public void QuadExpr_FromPowerOp()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Test (x-3)^2 + (y-4)^2 pattern
+        var xm3 = x - 3;
+        var ym4 = y - 4;
+        
+        var xSq = Expr.Pow(xm3, 2);
+        var ySq = Expr.Pow(ym4, 2);
+        
+        var obj = xSq + ySq;
+        
+        Console.WriteLine("obj type: " + obj.GetType().Name);
+        Console.WriteLine("obj actual: " + obj.GetActual().GetType().Name);
+        
+        var actualObj = obj.GetActual();
+        if (actualObj is QuadExpr quad)
+        {
+            Console.WriteLine("QuadExpr:");
+            Console.WriteLine("  LinearTerms: " + quad.LinearTerms.Count);
+            Console.WriteLine("  QuadraticTerms: " + quad.QuadraticTerms1.Count);
+            Console.WriteLine("  ConstantTerm: " + quad.ConstantTerm);
+            
+            // Should have 2 quadratic terms (x^2 and y^2)
+            Assert.AreEqual(2, quad.QuadraticTerms1.Count, "Should have 2 quadratic terms");
+            
+            // Verify no Products in LinearTerms
+            foreach (var term in quad.LinearTerms)
+            {
+                Assert.IsFalse(term is Product, "LinearTerms should not contain Products");
+            }
+        }
+        else
+        {
+            Assert.Fail("Expected QuadExpr, got " + actualObj.GetType().Name);
+        }
+    }
 }

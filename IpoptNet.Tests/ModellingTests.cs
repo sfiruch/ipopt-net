@@ -80,6 +80,12 @@ public class ModellingTests
         Assert.AreEqual(0.0, result.ObjectiveValue, 0.001);
         Assert.AreEqual(3.0, result.Solution[x], 0.001);
         Assert.AreEqual(4.0, result.Solution[y], 0.001);
+        
+        // Verify derivative test passed
+        Assert.IsNotNull(result.DerivativeTestResult, "Derivative test should have been captured");
+        Assert.IsTrue(result.DerivativeTestResult.Passed, 
+            $"Derivative test should pass. Errors: {result.DerivativeTestResult.ErrorCount}. Details:\n{result.DerivativeTestResult.Details}");
+        Assert.AreEqual(0, result.DerivativeTestResult.ErrorCount, "Should have no derivative errors");
     }
 
     [TestMethod]

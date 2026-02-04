@@ -132,93 +132,130 @@ public sealed class Model : IDisposable
         var evalJacG = CreateEvalJacGCallback(jacRows, jacCols);
         var evalH = useLimitedMemory ? CreateDummyEvalHCallback() : CreateEvalHCallback(hessRows, hessCols);
 
-        using var solver = new IpoptSolver(
-            n, xL, xU,
-            m, gL, gU,
-            jacRows.Length, hessRows.Length,
-            evalF, evalGradF, evalG, evalJacG, evalH);
-
-        // Apply user-specified options
-        foreach (var (name, value) in Options.Options)
+        // If derivative test is enabled, redirect output to a temp file to capture results
+        string? tempOutputFile = null;
+        bool captureDerivativeTest = Options.DerivativeTest is not null && Options.DerivativeTest != DerivativeTest.None;
+        if (captureDerivativeTest && Options.OutputFile is null)
         {
-            switch (value)
-            {
-                case string strValue:
-                    solver.SetOption(name, strValue);
-                    break;
-                case int intValue:
-                    solver.SetOption(name, intValue);
-                    break;
-                case double dblValue:
-                    solver.SetOption(name, dblValue);
-                    break;
-            }
+            tempOutputFile = Path.GetTempFileName();
         }
 
-        // Auto-set constant derivative options if user hasn't explicitly set them
-        // These are set directly on the solver to avoid persisting in Options across multiple solves
-
-        // Auto-enable warm start if we have non-zero dual values and user hasn't explicitly set it
-        if (Options.WarmStartInitPoint is null &&
-            (_variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
-             _constraints.Any(c => c.DualStart != 0)))
-        {
-            solver.SetOption("warm_start_init_point", "yes");
-        }
-
-        // Auto-enable grad_f_constant if objective has constant gradients and user hasn't explicitly set it
-        if (Options.GradFConstant is null && _objective.IsLinear())
-        {
-            solver.SetOption("grad_f_constant", "yes");
-        }
-
-        // Auto-enable jac_c_constant if all equality constraints have constant Jacobians
-        var equalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) < 1e-15).ToList();
-        if (Options.JacCConstant is null && equalityConstraints.All(c => c.Expression.IsLinear()))
-        {
-            solver.SetOption("jac_c_constant", "yes");
-        }
-
-        // Auto-enable jac_d_constant if all inequality constraints have constant Jacobians
-        var inequalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) >= 1e-15).ToList();
-        if (Options.JacDConstant is null && inequalityConstraints.All(c => c.Expression.IsLinear()))
-        {
-            solver.SetOption("jac_d_constant", "yes");
-        }
-
-        // Auto-enable hessian_constant if objective and all constraints are at most quadratic
-        if (Options.HessianConstant is null && !useLimitedMemory &&
-            _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsAtMostQuadratic()))
-        {
-            solver.SetOption("hessian_constant", "yes");
-        }
-
-        // Initialize primal variables from variable Start values, ensuring they're within bounds
-        var x = new double[n];
-        for (int i = 0; i < n; i++)
-            x[i] = Math.Clamp(_variables[i].Start, xL[i], xU[i]);
-
-        // Initialize dual variables
+        ApplicationReturnStatus status;
+        double objValue;
+        SolveStatistics statistics;
+        var solution = new Dictionary<Variable, double>();
         var constraintValues = new double[m];
         var constraintMultipliers = new double[m];
         var lowerBoundMultipliers = new double[n];
         var upperBoundMultipliers = new double[n];
 
-        for (int i = 0; i < m; i++)
-            constraintMultipliers[i] = _constraints[i].DualStart;
-
-        for (int i = 0; i < n; i++)
+        // Run solver in its own scope so it disposes before we read the output file
         {
-            lowerBoundMultipliers[i] = _variables[i].LowerBoundDualStart;
-            upperBoundMultipliers[i] = _variables[i].UpperBoundDualStart;
+            using var solver = new IpoptSolver(
+                n, xL, xU,
+                m, gL, gU,
+                jacRows.Length, hessRows.Length,
+                evalF, evalGradF, evalG, evalJacG, evalH);
+
+            // Apply user-specified options
+            foreach (var (name, value) in Options.Options)
+            {
+                switch (value)
+                {
+                    case string strValue:
+                        solver.SetOption(name, strValue);
+                        break;
+                    case int intValue:
+                        solver.SetOption(name, intValue);
+                        break;
+                    case double dblValue:
+                        solver.SetOption(name, dblValue);
+                        break;
+                }
+            }
+
+            // If derivative test is enabled, redirect output to a temp file to capture results
+            if (tempOutputFile is not null)
+            {
+                solver.SetOption("output_file", tempOutputFile);
+                solver.SetOption("file_print_level", 5); // Ensure derivative checker output is captured
+            }
+
+            // Auto-set constant derivative options if user hasn't explicitly set them
+            // These are set directly on the solver to avoid persisting in Options across multiple solves
+
+            // Auto-enable warm start if we have non-zero dual values and user hasn't explicitly set it
+            if (Options.WarmStartInitPoint is null &&
+                (_variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
+                 _constraints.Any(c => c.DualStart != 0)))
+            {
+                solver.SetOption("warm_start_init_point", "yes");
+            }
+
+            // Auto-enable grad_f_constant if objective has constant gradients and user hasn't explicitly set it
+            if (Options.GradFConstant is null && _objective.IsLinear())
+            {
+                solver.SetOption("grad_f_constant", "yes");
+            }
+
+            // Auto-enable jac_c_constant if all equality constraints have constant Jacobians
+            var equalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) < 1e-15).ToList();
+            if (Options.JacCConstant is null && equalityConstraints.All(c => c.Expression.IsLinear()))
+            {
+                solver.SetOption("jac_c_constant", "yes");
+            }
+
+            // Auto-enable jac_d_constant if all inequality constraints have constant Jacobians
+            var inequalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) >= 1e-15).ToList();
+            if (Options.JacDConstant is null && inequalityConstraints.All(c => c.Expression.IsLinear()))
+            {
+                solver.SetOption("jac_d_constant", "yes");
+            }
+
+            // Auto-enable hessian_constant if objective and all constraints are at most quadratic
+            if (Options.HessianConstant is null && !useLimitedMemory &&
+                _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsAtMostQuadratic()))
+            {
+                solver.SetOption("hessian_constant", "yes");
+            }
+
+            // Initialize primal variables from variable Start values, ensuring they're within bounds
+            var x = new double[n];
+            for (int i = 0; i < n; i++)
+                x[i] = Math.Clamp(_variables[i].Start, xL[i], xU[i]);
+
+            // Initialize dual variables
+            for (int i = 0; i < m; i++)
+                constraintMultipliers[i] = _constraints[i].DualStart;
+
+            for (int i = 0; i < n; i++)
+            {
+                lowerBoundMultipliers[i] = _variables[i].LowerBoundDualStart;
+                upperBoundMultipliers[i] = _variables[i].UpperBoundDualStart;
+            }
+
+            status = solver.Solve(x, out objValue, out statistics, constraintValues, constraintMultipliers,
+                                      lowerBoundMultipliers, upperBoundMultipliers);
+
+            // Build solution
+            for (int i = 0; i < n; i++)
+                solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]);
+        } // solver disposed here
+
+        // Parse derivative test results if we captured output (must be after solver disposal)
+        DerivativeTestResult? derivativeTestResult = null;
+        if (tempOutputFile is not null)
+        {
+            try
+            {
+                derivativeTestResult = ParseDerivativeTestResults(tempOutputFile);
+            }
+            finally
+            {
+                // Clean up temp file
+                try { File.Delete(tempOutputFile); } catch { }
+            }
         }
-
-        var status = solver.Solve(x, out var objValue, out var statistics, constraintValues, constraintMultipliers,
-                                  lowerBoundMultipliers, upperBoundMultipliers);
-
-        var solution = new Dictionary<Variable, double>();
-        for (int i = 0; i < n; i++)
-            solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]);
 
         // Update variable Start values and dual variables if requested and solution is usable
         if (updateStartValues && status is
@@ -231,7 +268,8 @@ public sealed class Model : IDisposable
         {
             for (int i = 0; i < n; i++)
             {
-                _variables[i].Start = x[i];
+                // x values are already in solution dictionary
+                _variables[i].Start = solution[_variables[i]];
                 _variables[i].LowerBoundDualStart = lowerBoundMultipliers[i];
                 _variables[i].UpperBoundDualStart = upperBoundMultipliers[i];
             }
@@ -240,7 +278,7 @@ public sealed class Model : IDisposable
                 _constraints[i].DualStart = constraintMultipliers[i];
         }
 
-        return new ModelResult(status, solution, objValue, statistics);
+        return new ModelResult(status, solution, objValue, statistics, derivativeTestResult);
     }
 
     private (int[] rows, int[] cols) AnalyzeJacobianSparsity()
@@ -448,6 +486,49 @@ public sealed class Model : IDisposable
                 int neleHess, int* iRow, int* jCol, double* pValues, nint userData) => false;
     }
 
+    private static DerivativeTestResult ParseDerivativeTestResults(string outputFile)
+    {
+        var content = File.ReadAllText(outputFile);
+        var lines = content.Split('\n');
+
+        int errorCount = 0;
+        var errorDetails = new List<string>();
+        bool foundDerivativeChecker = false;
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+
+            // Look for derivative checker starting
+            if (line.Contains("Starting derivative checker"))
+            {
+                foundDerivativeChecker = true;
+            }
+
+            // Look for "Derivative checker detected X error(s)"
+            if (line.Contains("Derivative checker detected"))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(line, @"detected (\d+) error");
+                if (match.Success && int.TryParse(match.Groups[1].Value, out int count))
+                {
+                    errorCount += count;
+                }
+            }
+
+            // Capture error lines (marked with *)
+            if (foundDerivativeChecker && line.TrimStart().StartsWith("*"))
+            {
+                errorDetails.Add(line.Trim());
+            }
+        }
+
+        var details = errorDetails.Count > 0
+            ? string.Join(Environment.NewLine, errorDetails)
+            : foundDerivativeChecker ? "All derivative checks passed" : "No derivative checker output found";
+
+        return new DerivativeTestResult(errorCount == 0 && foundDerivativeChecker, errorCount, details);
+    }
+
     public void Dispose()
     {
         _disposed = true;
@@ -458,4 +539,13 @@ public sealed record ModelResult(
     ApplicationReturnStatus Status,
     IReadOnlyDictionary<Variable, double> Solution,
     double ObjectiveValue,
-    SolveStatistics Statistics);
+    SolveStatistics Statistics,
+    DerivativeTestResult? DerivativeTestResult = null);
+
+/// <summary>
+/// Results from IPOPT's derivative checker, if DerivativeTest option was enabled.
+/// </summary>
+public sealed record DerivativeTestResult(
+    bool Passed,
+    int ErrorCount,
+    string Details);
