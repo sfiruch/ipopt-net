@@ -93,18 +93,12 @@ public abstract class Expr
         // If left operand is already a Sum, extend it with the right operand
         if (a is Sum sumA)
         {
-            var newTerms = new List<Expr>(sumA.Terms.Count + 1);
-            newTerms.AddRange(sumA.Terms);
-            newTerms.Add(b);
-            return new Sum(newTerms);
+            return new Sum([.. sumA.Terms, b]);
         }
         // If right operand is a Sum, prepend the left operand to it
         else if (b is Sum sumB)
         {
-            var newTerms = new List<Expr>(sumB.Terms.Count + 1);
-            newTerms.Add(a);
-            newTerms.AddRange(sumB.Terms);
-            return new Sum(newTerms);
+            return new Sum([a, .. sumB.Terms]);
         }
         // Always use Sum for addition to avoid deep Division trees (Sum is semantically equivalent)
         else
@@ -117,10 +111,7 @@ public abstract class Expr
         // If left operand is already a Sum, extend it with the negated right operand
         if (a is Sum sumA)
         {
-            var newTerms = new List<Expr>(sumA.Terms.Count + 1);
-            newTerms.AddRange(sumA.Terms);
-            newTerms.Add(-b);
-            return new Sum(newTerms);
+            return new Sum([.. sumA.Terms, -b]);
         }
         // Create a new Sum with both terms to avoid building deep Division trees
         else
@@ -133,18 +124,12 @@ public abstract class Expr
         // If left operand is already a Product, extend it with the right operand
         if (a is Product prodA)
         {
-            var newFactors = new List<Expr>(prodA.Factors.Count + 1);
-            newFactors.AddRange(prodA.Factors);
-            newFactors.Add(b);
-            return new Product(newFactors);
+            return new Product([.. prodA.Factors, b]);
         }
         // If right operand is a Product, prepend the left operand to it
         else if (b is Product prodB)
         {
-            var newFactors = new List<Expr>(prodB.Factors.Count + 1);
-            newFactors.Add(a);
-            newFactors.AddRange(prodB.Factors);
-            return new Product(newFactors);
+            return new Product([a, .. prodB.Factors]);
         }
         // Always use Product for multiplication to avoid building deep Division trees
         else
@@ -159,10 +144,7 @@ public abstract class Expr
     {
         if (a is Sum sumA)
         {
-            var newTerms = new List<Expr>(sumA.Terms.Count + 1);
-            newTerms.AddRange(sumA.Terms);
-            newTerms.Add(new Constant(b));
-            return new Sum(newTerms);
+            return new Sum([.. sumA.Terms, new Constant(b)]);
         }
         return new Sum([a, new Constant(b)]);
     }
@@ -171,10 +153,7 @@ public abstract class Expr
     {
         if (b is Sum sumB)
         {
-            var newTerms = new List<Expr>(sumB.Terms.Count + 1);
-            newTerms.Add(new Constant(a));
-            newTerms.AddRange(sumB.Terms);
-            return new Sum(newTerms);
+            return new Sum([new Constant(a), .. sumB.Terms]);
         }
         return new Sum([new Constant(a), b]);
     }
@@ -182,10 +161,7 @@ public abstract class Expr
     {
         if (a is Sum sumA)
         {
-            var newTerms = new List<Expr>(sumA.Terms.Count + 1);
-            newTerms.AddRange(sumA.Terms);
-            newTerms.Add(new Constant(-b));
-            return new Sum(newTerms);
+            return new Sum([.. sumA.Terms, new Constant(-b)]);
         }
         return new Sum([a, new Constant(-b)]);
     }
@@ -198,10 +174,7 @@ public abstract class Expr
     {
         if (a is Product prodA)
         {
-            var newFactors = new List<Expr>(prodA.Factors.Count + 1);
-            newFactors.AddRange(prodA.Factors);
-            newFactors.Add(new Constant(b));
-            return new Product(newFactors);
+            return new Product([.. prodA.Factors, new Constant(b)]);
         }
         return new Product([a, new Constant(b)]);
     }
@@ -210,10 +183,7 @@ public abstract class Expr
     {
         if (b is Product prodB)
         {
-            var newFactors = new List<Expr>(prodB.Factors.Count + 1);
-            newFactors.Add(new Constant(a));
-            newFactors.AddRange(prodB.Factors);
-            return new Product(newFactors);
+            return new Product([new Constant(a), .. prodB.Factors]);
         }
         return new Product([new Constant(a), b]);
     }
@@ -524,7 +494,7 @@ public sealed class PowerOp : Expr
 
         var n = x.Length;
         var gradB = ArrayPool<double>.Shared.Rent(n);
-        
+
         var vars = new HashSet<Variable>();
         Base.CollectVariables(vars);
 
@@ -596,7 +566,7 @@ public sealed class Sin : Expr
 
         var n = x.Length;
         var gradArg = ArrayPool<double>.Shared.Rent(n);
-        
+
         var vars = new HashSet<Variable>();
         Argument.CollectVariables(vars);
 
@@ -649,7 +619,7 @@ public sealed class Cos : Expr
 
         var n = x.Length;
         var gradArg = ArrayPool<double>.Shared.Rent(n);
-        
+
         var vars = new HashSet<Variable>();
         Argument.CollectVariables(vars);
 
@@ -704,7 +674,7 @@ public sealed class Tan : Expr
 
         var n = x.Length;
         var gradArg = ArrayPool<double>.Shared.Rent(n);
-        
+
         var vars = new HashSet<Variable>();
         Argument.CollectVariables(vars);
 
@@ -759,7 +729,7 @@ public sealed class Exp : Expr
 
         var n = x.Length;
         var gradArg = ArrayPool<double>.Shared.Rent(n);
-        
+
         var vars = new HashSet<Variable>();
         Argument.CollectVariables(vars);
 
@@ -812,7 +782,7 @@ public sealed class Log : Expr
 
         var n = x.Length;
         var gradArg = ArrayPool<double>.Shared.Rent(n);
-        
+
         var vars = new HashSet<Variable>();
         Argument.CollectVariables(vars);
 
@@ -955,7 +925,7 @@ public sealed class Product : Expr
             Factors[i].CollectVariables(vars);
 
             var rented = ArrayPool<double>.Shared.Rent(n);
-            
+
             // 2. Zero-init ONLY involved variables if sparse
             if (vars.Count < n / 32)
             {
@@ -1054,15 +1024,15 @@ public sealed class Product : Expr
                     foreach (var i in spanK)
                     {
                         var gKi = gradK[i];
-                        var gMi = gradM[i]; 
+                        var gMi = gradM[i];
                         var c_gKi = coeff * gKi;
                         var c_gMi = coeff * gMi;
 
                         foreach (var j in spanM)
                         {
                             var gMj = gradM[j];
-                            var gKj = gradK[j]; 
-                            
+                            var gKj = gradK[j];
+
                             // Add both parts of the symmetric outer product
                             hess.Add(i, j, c_gKi * gMj);
                             hess.Add(j, i, c_gMi * gKj);
@@ -1145,7 +1115,7 @@ public sealed class HessianAccumulator
     public void Add(int i, int j, double value)
     {
         if (Math.Abs(value) < 1e-18) return;
-        
+
         long key = i >= j ? ((long)i << 32) | (uint)j : ((long)j << 32) | (uint)i;
         ref var entry = ref CollectionsMarshal.GetValueRefOrAddDefault(_entries, key, out _);
         entry += value;

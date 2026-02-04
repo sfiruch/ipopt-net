@@ -101,7 +101,7 @@ public sealed class Model : IDisposable
 
         // Auto-set constant derivative options if user hasn't explicitly set them
         // These are set directly on the solver to avoid persisting in Options across multiple solves
-        
+
         // Auto-enable warm start if we have non-zero dual values and user hasn't explicitly set it
         if (Options.WarmStartInitPoint is null &&
             (_variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
@@ -131,7 +131,7 @@ public sealed class Model : IDisposable
         }
 
         // Auto-enable hessian_constant if objective and all constraints are at most quadratic
-        if (Options.HessianConstant is null && !useLimitedMemory && 
+        if (Options.HessianConstant is null && !useLimitedMemory &&
             _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsAtMostQuadratic()))
         {
             solver.SetOption("hessian_constant", "yes");
@@ -190,22 +190,30 @@ public sealed class Model : IDisposable
     private (int[] rows, int[] cols) AnalyzeJacobianSparsity()
     {
         var entries = new HashSet<(int row, int col)>();
+        var vars = new HashSet<Variable>();
+
         for (int i = 0; i < _constraints.Count; i++)
         {
-            var vars = new HashSet<Variable>();
+            vars.Clear();
             _constraints[i].Expression.CollectVariables(vars);
             foreach (var v in vars)
                 entries.Add((i, v.Index));
         }
 
-        var rows = new int[entries.Count];
-        var cols = new int[entries.Count];
-        var idx = 0;
-        foreach (var (row, col) in entries.OrderBy(e => e.row).ThenBy(e => e.col))
+        var entriesArray = new (int row, int col)[entries.Count];
+        entries.CopyTo(entriesArray);
+        Array.Sort(entriesArray, (a, b) =>
         {
-            rows[idx] = row;
-            cols[idx] = col;
-            idx++;
+            int cmp = a.row.CompareTo(b.row);
+            return cmp != 0 ? cmp : a.col.CompareTo(b.col);
+        });
+
+        var rows = new int[entriesArray.Length];
+        var cols = new int[entriesArray.Length];
+        for (int i = 0; i < entriesArray.Length; i++)
+        {
+            rows[i] = entriesArray[i].row;
+            cols[i] = entriesArray[i].col;
         }
         return (rows, cols);
     }
@@ -306,7 +314,7 @@ public sealed class Model : IDisposable
             {
                 // Compute values
                 var x = new ReadOnlySpan<double>(pX, n);
-                var values  = new Span<double>(pValues, neleJac);
+                var values = new Span<double>(pValues, neleJac);
                 Span<double> gradSpan = grad;
 
                 values.Clear();
