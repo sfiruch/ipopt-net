@@ -217,7 +217,7 @@ public sealed class Model : IDisposable
         {
             var x = new ReadOnlySpan<double>(pX, n);
             var gradF = new Span<double>(pGradF, n);
-            grad.Clear();
+            gradF.Clear();
             _objective!.AccumulateGradient(x, gradF, 1.0);
 
             for (int i = 0; i < n; i++)
