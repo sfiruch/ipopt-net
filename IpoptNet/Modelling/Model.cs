@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace IpoptNet.Modelling;
@@ -200,33 +202,45 @@ public sealed class Model : IDisposable
 
     private unsafe EvalFCallback CreateEvalFCallback()
     {
-        return (int n, double* x, bool newX, double* objValue, nint userData) =>
+        return (int n, double* pX, bool newX, double* objValue, nint userData) =>
         {
-            var xSpan = new ReadOnlySpan<double>(x, n);
-            *objValue = _objective!.Evaluate(xSpan);
+            var x = new ReadOnlySpan<double>(pX, n);
+            *objValue = _objective!.Evaluate(x);
+
+            Debug.Assert(IsValidNumber(*objValue));
+
             return true;
         };
     }
 
     private unsafe EvalGradFCallback CreateEvalGradFCallback()
     {
-        return (int n, double* x, bool newX, double* gradF, nint userData) =>
+        return (int n, double* pX, bool newX, double* pGradF, nint userData) =>
         {
-            var xSpan = new ReadOnlySpan<double>(x, n);
-            var gradSpan = new Span<double>(gradF, n);
-            gradSpan.Clear();
-            _objective!.AccumulateGradient(xSpan, gradSpan, 1.0);
+            var x = new ReadOnlySpan<double>(pX, n);
+            var grad = new Span<double>(pGradF, n);
+            grad.Clear();
+            _objective!.AccumulateGradient(x, grad, 1.0);
+
+            Debug.Assert(grad.ToArray().All(v => IsValidNumber(v)));
+
             return true;
         };
     }
 
+    public static bool IsValidNumber(double v) => !double.IsInfinity(v) && !double.IsNaN(v);
+
     private unsafe EvalGCallback CreateEvalGCallback()
     {
-        return (int n, double* x, bool newX, int m, double* g, nint userData) =>
+        return (int n, double* pX, bool newX, int m, double* pG, nint userData) =>
         {
-            var xSpan = new ReadOnlySpan<double>(x, n);
+            var x = new ReadOnlySpan<double>(pX, n);
+            var g = new Span<double>(pG, m);
             for (int i = 0; i < m; i++)
-                g[i] = _constraints[i].Expression.Evaluate(xSpan);
+            {
+                g[i] = _constraints[i].Expression.Evaluate(x);
+                Debug.Assert(IsValidNumber(g[i]));
+            }
             return true;
         };
     }
@@ -245,9 +259,9 @@ public sealed class Model : IDisposable
         // Allocate gradient buffer once and reuse it
         var grad = new double[_variables.Count];
 
-        return (int n, double* x, bool newX, int m, int neleJac, int* iRow, int* jCol, double* values, nint userData) =>
+        return (int n, double* pX, bool newX, int m, int neleJac, int* iRow, int* jCol, double* pValues, nint userData) =>
         {
-            if (values == null)
+            if (pValues == null)
             {
                 // Return sparsity structure
                 for (int i = 0; i < structRows.Length; i++)
@@ -259,26 +273,23 @@ public sealed class Model : IDisposable
             else
             {
                 // Compute values
-                var xSpan = new ReadOnlySpan<double>(x, n);
+                var x = new ReadOnlySpan<double>(pX, n);
+                var values  = new Span<double>(pValues, neleJac);
                 Span<double> gradSpan = grad;
 
-                // Clear values
-                for (int i = 0; i < neleJac; i++)
-                    values[i] = 0;
+                values.Clear();
 
                 for (int row = 0; row < m; row++)
                 {
-                    _constraints[row].Expression.AccumulateGradient(xSpan, gradSpan, 1.0);
+                    _constraints[row].Expression.AccumulateGradient(x, gradSpan, 1.0);
 
-                    // Only iterate through columns that exist in the sparse structure
                     if (rowToEntries.TryGetValue(row, out var entries))
-                    {
                         foreach (var (col, idx) in entries)
                         {
                             values[idx] = gradSpan[col];
-                            gradSpan[col] = 0;  // Clear only the sparse entries we used
+                            Debug.Assert(IsValidNumber(values[idx]));
+                            gradSpan[col] = 0;  // Clear the sparse entries we used
                         }
-                    }
                 }
             }
             return true;
@@ -287,9 +298,6 @@ public sealed class Model : IDisposable
 
     private unsafe EvalHCallback CreateEvalHCallback(int[] structRows, int[] structCols)
     {
-        // Allocate gradient buffer once and reuse it
-        var grad = new double[_variables.Count];
-
         // Build a map from (row, col) to index once
         var indexMap = new Dictionary<(int, int), int>();
         for (int i = 0; i < structRows.Length; i++)
@@ -297,10 +305,10 @@ public sealed class Model : IDisposable
 
         var hess = new HessianAccumulator(_variables.Count);
 
-        return (int n, double* x, bool newX, double objFactor, int m, double* lambda, bool newLambda,
-                int neleHess, int* iRow, int* jCol, double* values, nint userData) =>
+        return (int n, double* pX, bool newX, double objFactor, int m, double* lambda, bool newLambda,
+                int neleHess, int* iRow, int* jCol, double* pValues, nint userData) =>
         {
-            if (values == null)
+            if (pValues == null)
             {
                 // Return sparsity structure
                 for (int i = 0; i < structRows.Length; i++)
@@ -311,31 +319,27 @@ public sealed class Model : IDisposable
             }
             else
             {
-                var xSpan = new ReadOnlySpan<double>(x, n);
-                Span<double> gradSpan = grad;
+                var x = new ReadOnlySpan<double>(pX, n);
                 hess.Clear();
-
-                // Clear values
-                for (int i = 0; i < neleHess; i++)
-                    values[i] = 0;
 
                 // Objective contribution
                 if (Math.Abs(objFactor) > 1e-15)
-                    _objective!.AccumulateHessian(xSpan, hess, objFactor);
+                    _objective!.AccumulateHessian(x, hess, objFactor);
 
                 // Constraint contributions
                 for (int row = 0; row < m; row++)
-                {
                     if (Math.Abs(lambda[row]) > 1e-15)
-                        _constraints[row].Expression.AccumulateHessian(xSpan, hess, lambda[row]);
-                }
+                        _constraints[row].Expression.AccumulateHessian(x, hess, lambda[row]);
 
                 // Copy to values array
+                var values = new Span<double>(pValues, neleHess);
+                values.Clear();
                 foreach (var (key, value) in hess.GetEntries())
-                {
                     if (indexMap.TryGetValue(key, out var idx))
+                    {
                         values[idx] = value;
-                }
+                        Debug.Assert(IsValidNumber(values[idx]));
+                    }
             }
             return true;
         };
@@ -343,24 +347,23 @@ public sealed class Model : IDisposable
 
     private unsafe EvalHCallback CreateDummyEvalHCallback()
     {
-        return (int n, double* x, bool newX, double objFactor, int m, double* lambda, bool newLambda,
-                int neleHess, int* iRow, int* jCol, double* values, nint userData) => false;
+        return (int n, double* pX, bool newX, double objFactor, int m, double* lambda, bool newLambda,
+                int neleHess, int* iRow, int* jCol, double* pValues, nint userData) => false;
     }
 
     private unsafe EvalGradFCallback CreateCachedEvalGradFCallback()
     {
         // Objective must be linear when this callback is used
-        System.Diagnostics.Debug.Assert(_objective!.IsLinear());
-
-        var n = _variables.Count;
-        var zeroX = new double[n];
+        Debug.Assert(_objective!.IsLinear());
 
         // Pre-compute constant objective gradient
-        var cachedGrad = new double[n];
-        _objective.AccumulateGradient(zeroX, cachedGrad, 1.0);
+        var cachedGrad = new double[_variables.Count];
+        _objective.AccumulateGradient(new double[_variables.Count], cachedGrad, 1.0);
+        Debug.Assert(cachedGrad.All(v => IsValidNumber(v)));
 
-        return (int n, double* x, bool newX, double* gradF, nint userData) =>
+        return (int n, double* pX, bool newX, double* pGradF, nint userData) =>
         {
+            var gradF = new Span<double>(pGradF, n);
             for (int i = 0; i < n; i++)
                 gradF[i] = cachedGrad[i];
             return true;
@@ -370,15 +373,8 @@ public sealed class Model : IDisposable
     private unsafe EvalJacGCallback CreateCachedEvalJacGCallback(int[] structRows, int[] structCols)
     {
         // All constraints must be linear when this callback is used
-        System.Diagnostics.Debug.Assert(_constraints.All(c => c.Expression.IsLinear()));
+        Debug.Assert(_constraints.All(c => c.Expression.IsLinear()));
 
-        var n = _variables.Count;
-        var m = _constraints.Count;
-        var zeroX = new double[n];
-
-        // Pre-compute constant Jacobian values
-        var cachedValues = new double[structRows.Length];
-        var grad = new double[n];
         var rowToEntries = new Dictionary<int, List<(int col, int idx)>>();
         for (int i = 0; i < structRows.Length; i++)
         {
@@ -387,20 +383,25 @@ public sealed class Model : IDisposable
             rowToEntries[structRows[i]].Add((structCols[i], i));
         }
 
-        for (int row = 0; row < m; row++)
+        // Pre-compute constant Jacobian values
+        var cachedValues = new double[structRows.Length];
+        var zeroX = new double[_variables.Count];
+        var grad = new double[_variables.Count];
+        for (int row = 0; row < _constraints.Count; row++)
         {
             Array.Clear(grad);
             _constraints[row].Expression.AccumulateGradient(zeroX, grad, 1.0);
             if (rowToEntries.TryGetValue(row, out var entries))
-            {
                 foreach (var (col, idx) in entries)
+                {
                     cachedValues[idx] = grad[col];
-            }
+                    Debug.Assert(IsValidNumber(cachedValues[idx]));
+                }
         }
 
-        return (int n, double* x, bool newX, int m, int neleJac, int* iRow, int* jCol, double* values, nint userData) =>
+        return (int n, double* pVx, bool newX, int m, int neleJac, int* iRow, int* jCol, double* pValues, nint userData) =>
         {
-            if (values == null)
+            if (pValues == null)
             {
                 // Return sparsity structure
                 for (int i = 0; i < structRows.Length; i++)
@@ -411,7 +412,7 @@ public sealed class Model : IDisposable
             }
             else
             {
-                // Return cached values
+                var values = new Span<double>(pValues, neleJac);
                 for (int i = 0; i < neleJac; i++)
                     values[i] = cachedValues[i];
             }
@@ -421,11 +422,8 @@ public sealed class Model : IDisposable
 
     private unsafe EvalHCallback CreateCachedEvalHCallback(int[] structRows, int[] structCols)
     {
-        var n = _variables.Count;
-        var m = _constraints.Count;
-        var zeroX = new double[n];
-        var grad = new double[n];
-        var hess = new HessianAccumulator(n);
+        // All constraints are at most quadratic when this callback is used
+        Debug.Assert(_constraints.All(c => c.Expression.IsAtMostQuadratic()));
 
         // Build a map from (row, col) to index once
         var indexMap = new Dictionary<(int, int), int>();
@@ -433,6 +431,8 @@ public sealed class Model : IDisposable
             indexMap[(structRows[i], structCols[i])] = i;
 
         // Pre-compute objective Hessian contribution (sparse: only non-zero entries)
+        var zeroX = new double[_variables.Count];
+        var hess = new HessianAccumulator(_variables.Count);
         var objectiveHessEntries = new List<(int idx, double value)>();
         {
             _objective!.AccumulateHessian(zeroX, hess, 1.0);
@@ -442,11 +442,8 @@ public sealed class Model : IDisposable
         }
 
         // Pre-compute constraint Hessian contributions (sparse: only store non-zero entries per constraint)
-        // All constraints are at most quadratic when this callback is used
-        System.Diagnostics.Debug.Assert(_constraints.All(c => c.Expression.IsAtMostQuadratic()));
-
-        var constraintHessEntries = new List<(int idx, double value)>[m];
-        for (int c = 0; c < m; c++)
+        var constraintHessEntries = new List<(int idx, double value)>[_constraints.Count];
+        for (int c = 0; c < _constraints.Count; c++)
         {
             hess.Clear();
             _constraints[c].Expression.AccumulateHessian(zeroX, hess, 1.0);
@@ -459,10 +456,10 @@ public sealed class Model : IDisposable
             }
         }
 
-        return (int n, double* x, bool newX, double objFactor, int m, double* lambda, bool newLambda,
-                int neleHess, int* iRow, int* jCol, double* values, nint userData) =>
+        return (int n, double* pX, bool newX, double objFactor, int m, double* lambda, bool newLambda,
+                int neleHess, int* iRow, int* jCol, double* pValues, nint userData) =>
         {
-            if (values == null)
+            if (pValues == null)
             {
                 // Return sparsity structure
                 for (int i = 0; i < structRows.Length; i++)
@@ -473,22 +470,25 @@ public sealed class Model : IDisposable
             }
             else
             {
-                // Initialize with objective contribution
-                for (int i = 0; i < neleHess; i++)
-                    values[i] = 0;
+                Debug.Assert(IsValidNumber(objFactor));
 
+                var values = new Span<double>(pValues, neleHess);
+
+                values.Clear();
                 foreach (var (idx, value) in objectiveHessEntries)
+                {
                     values[idx] += objFactor * value;
+                    Debug.Assert(IsValidNumber(values[idx]));
+                }
 
                 // Add constraint contributions (only iterate over non-zero entries)
                 for (int c = 0; c < m; c++)
-                {
                     if (constraintHessEntries[c] != null && Math.Abs(lambda[c]) > 1e-15)
-                    {
                         foreach (var (idx, value) in constraintHessEntries[c])
+                        {
                             values[idx] += lambda[c] * value;
-                    }
-                }
+                            Debug.Assert(IsValidNumber(values[idx]));
+                        }
             }
             return true;
         };
