@@ -82,41 +82,6 @@ public sealed class Model : IDisposable
             jacRows.Length, hessRows.Length,
             evalF, evalGradF, evalG, evalJacG, evalH);
 
-        // Auto-enable warm start if we have non-zero dual values and user hasn't explicitly set it
-        if (Options.WarmStartInitPoint is null &&
-            (_variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
-             _constraints.Any(c => c.DualStart != 0)))
-        {
-            Options.WarmStartInitPoint = true;
-        }
-
-        // Auto-enable grad_f_constant if objective has constant gradients and user hasn't explicitly set it
-        if (Options.GradFConstant is null && _objective.IsLinear())
-        {
-            Options.GradFConstant = true;
-        }
-
-        // Auto-enable jac_c_constant if all equality constraints have constant Jacobians
-        var equalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) < 1e-15).ToList();
-        if (Options.JacCConstant is null && equalityConstraints.All(c => c.Expression.IsLinear()))
-        {
-            Options.JacCConstant = true;
-        }
-
-        // Auto-enable jac_d_constant if all inequality constraints have constant Jacobians
-        var inequalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) >= 1e-15).ToList();
-        if (Options.JacDConstant is null && inequalityConstraints.All(c => c.Expression.IsLinear()))
-        {
-            Options.JacDConstant = true;
-        }
-
-        // Auto-enable hessian_constant if objective and all constraints are at most quadratic
-        if (Options.HessianConstant is null && !useLimitedMemory && 
-            _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsAtMostQuadratic()))
-        {
-            Options.HessianConstant = true;
-        }
-
         // Apply user-specified options
         foreach (var (name, value) in Options.Options)
         {
@@ -132,6 +97,44 @@ public sealed class Model : IDisposable
                     solver.SetOption(name, dblValue);
                     break;
             }
+        }
+
+        // Auto-set constant derivative options if user hasn't explicitly set them
+        // These are set directly on the solver to avoid persisting in Options across multiple solves
+        
+        // Auto-enable warm start if we have non-zero dual values and user hasn't explicitly set it
+        if (Options.WarmStartInitPoint is null &&
+            (_variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
+             _constraints.Any(c => c.DualStart != 0)))
+        {
+            solver.SetOption("warm_start_init_point", "yes");
+        }
+
+        // Auto-enable grad_f_constant if objective has constant gradients and user hasn't explicitly set it
+        if (Options.GradFConstant is null && _objective.IsLinear())
+        {
+            solver.SetOption("grad_f_constant", "yes");
+        }
+
+        // Auto-enable jac_c_constant if all equality constraints have constant Jacobians
+        var equalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) < 1e-15).ToList();
+        if (Options.JacCConstant is null && equalityConstraints.All(c => c.Expression.IsLinear()))
+        {
+            solver.SetOption("jac_c_constant", "yes");
+        }
+
+        // Auto-enable jac_d_constant if all inequality constraints have constant Jacobians
+        var inequalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) >= 1e-15).ToList();
+        if (Options.JacDConstant is null && inequalityConstraints.All(c => c.Expression.IsLinear()))
+        {
+            solver.SetOption("jac_d_constant", "yes");
+        }
+
+        // Auto-enable hessian_constant if objective and all constraints are at most quadratic
+        if (Options.HessianConstant is null && !useLimitedMemory && 
+            _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsAtMostQuadratic()))
+        {
+            solver.SetOption("hessian_constant", "yes");
         }
 
         // Initialize primal variables from variable Start values, ensuring they're within bounds

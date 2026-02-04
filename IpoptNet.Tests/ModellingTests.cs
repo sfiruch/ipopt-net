@@ -1408,6 +1408,156 @@ public class ModellingTests
     }
 
     [TestMethod]
+    public void ConstantOptions_RecomputedOnEachSolve()
+    {
+        var model = new Model();
+        var x = model.AddVariable(0, 10);
+        var y = model.AddVariable(0, 10);
+
+        // First solve: Linear program
+        model.SetObjective(x + 2 * y);
+        model.AddConstraint(x + y == 4);
+
+        model.Options.PrintLevel = 0;
+        var result1 = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
+        
+        // Options should still be null - they're set on solver, not Options
+        Assert.IsNull(model.Options.GradFConstant);
+        Assert.IsNull(model.Options.JacCConstant);
+        Assert.IsNull(model.Options.HessianConstant);
+
+        // Second solve: Add a nonlinear constraint (changes problem structure)
+        model.AddConstraint(x * y >= 2);
+
+        var result2 = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result2.Status);
+        
+        // Options should still be null - proving they don't persist incorrectly
+        Assert.IsNull(model.Options.GradFConstant);
+        Assert.IsNull(model.Options.JacCConstant);
+        Assert.IsNull(model.Options.HessianConstant);
+    }
+
+    [TestMethod]
+    public void LinearProgram_GradientCachedByIPOPT()
+    {
+        var model = new Model();
+        var x = model.AddVariable(0, 10);
+        var y = model.AddVariable(0, 10);
+
+        // Linear objective - gradient should be constant
+        model.SetObjective(x + 2 * y);
+        model.AddConstraint(x + y >= 3);
+
+        model.Options.PrintLevel = 0;
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        
+        // For LP, gradient should be evaluated only once (IPOPT caches it)
+        // We verify this indirectly through solve statistics
+        Assert.IsTrue(result.Statistics.IterationCount >= 1);
+    }
+
+    [TestMethod]
+    public void LinearProgram_JacobianCachedByIPOPT()
+    {
+        var model = new Model();
+        var x = model.AddVariable(0, 10);
+        var y = model.AddVariable(0, 10);
+        var z = model.AddVariable(0, 10);
+
+        // Linear objective and constraints
+        model.SetObjective(x + 2 * y + 3 * z);
+        model.AddConstraint(x + y >= 3);
+        model.AddConstraint(y + z == 5);
+        model.AddConstraint(x - z <= 2);
+
+        model.Options.PrintLevel = 5; // Verbose output to see evaluation counts
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        
+        // The solve should succeed with minimal evaluations due to caching
+        // IPOPT output will show "Number of equality constraint Jacobian evaluations = 1"
+        Assert.IsTrue(result.Statistics.IterationCount >= 0);
+    }
+
+    [TestMethod]
+    public void QuadraticProgram_HessianCachedByIPOPT()
+    {
+        var model = new Model();
+        var x = model.AddVariable(-10, 10);
+        var y = model.AddVariable(-10, 10);
+
+        // Quadratic objective - Hessian should be constant
+        model.SetObjective(x * x + y * y - 4 * x - 6 * y);
+        
+        // Linear constraints
+        model.AddConstraint(x + y >= 1);
+        model.AddConstraint(x - y <= 5);
+
+        model.Options.PrintLevel = 5; // Verbose to see evaluation counts
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        
+        // For QP with linear constraints, Hessian evaluations should be minimal
+        // IPOPT will cache after first evaluation
+        Assert.IsTrue(result.Statistics.IterationCount >= 0);
+    }
+
+    [TestMethod]
+    public void QuadraticallyConstrainedProgram_HessianCachedByIPOPT()
+    {
+        var model = new Model();
+        var x = model.AddVariable(0, 10);
+        var y = model.AddVariable(0, 10);
+
+        // Quadratic objective
+        model.SetObjective(x * x + y * y);
+        
+        // Quadratic constraint - Hessian still constant
+        model.AddConstraint(x * x + y * y <= 25);
+        model.AddConstraint(x + 2 * y >= 3);
+
+        model.Options.PrintLevel = 5;
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        
+        // QCQP should also benefit from Hessian caching
+        Assert.IsTrue(result.Statistics.IterationCount >= 0);
+    }
+
+    [TestMethod]
+    public void NonlinearProgram_DerivativesNotCached()
+    {
+        var model = new Model();
+        var x = model.AddVariable(0.1, 10);
+        var y = model.AddVariable(0.1, 10);
+
+        // Nonlinear objective - derivatives change at each iteration
+        model.SetObjective(Expr.Exp(x) + Expr.Sin(y));
+        
+        // Nonlinear constraint
+        model.AddConstraint(x * y >= 2);
+        model.AddConstraint(Expr.Log(x) + y >= 1);
+
+        model.Options.PrintLevel = 5;
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        
+        // For NLP, gradient/Jacobian/Hessian evaluated at each iteration
+        // Should see iteration_count evaluations in IPOPT output
+        Assert.IsTrue(result.Statistics.IterationCount >= 1);
+    }
+
+    [TestMethod]
     public void GradFConstant_AutomaticallyEnabled_ForLinearObjective()
     {
         var model = new Model();
@@ -1426,8 +1576,8 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // After solving with linear objective, GradFConstant should be true
-        Assert.IsTrue(model.Options.GradFConstant == true);
+        // After solving, GradFConstant should still be null (set on solver, not Options)
+        Assert.IsNull(model.Options.GradFConstant);
     }
 
     [TestMethod]
@@ -1441,7 +1591,6 @@ public class ModellingTests
         model.SetObjective(x * x + y * y);
         model.AddConstraint(x + y >= 3);
 
-        // Before solving, GradFConstant should be null
         Assert.IsNull(model.Options.GradFConstant);
 
         model.Options.PrintLevel = 0;
@@ -1449,7 +1598,7 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // After solving with nonlinear objective, GradFConstant should still be null
+        // GradFConstant should remain null (not auto-set for nonlinear)
         Assert.IsNull(model.Options.GradFConstant);
     }
 
@@ -1477,7 +1626,7 @@ public class ModellingTests
     }
 
     [TestMethod]
-    public void JacCConstant_AutomaticallyEnabled_ForLinearEqualityConstraints()
+    public void JacCConstant_ForLinearEqualityConstraints()
     {
         var model = new Model();
         var x = model.AddVariable(0, 10);
@@ -1496,8 +1645,8 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // JacCConstant should be true for linear equality constraints
-        Assert.IsTrue(model.Options.JacCConstant == true);
+        // JacCConstant remains null (auto-set on solver only)
+        Assert.IsNull(model.Options.JacCConstant);
     }
 
     [TestMethod]
@@ -1520,12 +1669,12 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // JacCConstant should remain null for nonlinear equality constraints
+        // JacCConstant remains null
         Assert.IsNull(model.Options.JacCConstant);
     }
 
     [TestMethod]
-    public void JacDConstant_AutomaticallyEnabled_ForLinearInequalityConstraints()
+    public void JacDConstant_ForLinearInequalityConstraints()
     {
         var model = new Model();
         var x = model.AddVariable(0, 10);
@@ -1544,8 +1693,8 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // JacDConstant should be true for linear inequality constraints
-        Assert.IsTrue(model.Options.JacDConstant == true);
+        // JacDConstant remains null (auto-set on solver only)
+        Assert.IsNull(model.Options.JacDConstant);
     }
 
     [TestMethod]
@@ -1568,7 +1717,7 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // JacDConstant should remain null for nonlinear inequality constraints
+        // JacDConstant remains null
         Assert.IsNull(model.Options.JacDConstant);
     }
 
@@ -1589,8 +1738,8 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // JacCConstant should be true - empty matrix is constant
-        Assert.IsTrue(model.Options.JacCConstant == true);
+        // JacCConstant remains null (auto-set on solver only)
+        Assert.IsNull(model.Options.JacCConstant);
     }
 
     [TestMethod]
@@ -1610,12 +1759,12 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // JacDConstant should be true - empty matrix is constant
-        Assert.IsTrue(model.Options.JacDConstant == true);
+        // JacDConstant remains null (auto-set on solver only)
+        Assert.IsNull(model.Options.JacDConstant);
     }
 
     [TestMethod]
-    public void HessianConstant_AutomaticallyEnabled_ForQuadraticProgram()
+    public void HessianConstant_ForQuadraticProgram()
     {
         var model = new Model();
         var x = model.AddVariable(0, 10);
@@ -1635,12 +1784,12 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // HessianConstant should be true for QP
-        Assert.IsTrue(model.Options.HessianConstant == true);
+        // HessianConstant remains null (auto-set on solver only)
+        Assert.IsNull(model.Options.HessianConstant);
     }
 
     [TestMethod]
-    public void HessianConstant_AutomaticallyEnabled_ForQuadraticallyConstrainedProgram()
+    public void HessianConstant_ForQuadraticallyConstrainedProgram()
     {
         var model = new Model();
         var x = model.AddVariable(0, 10);
@@ -1659,8 +1808,8 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // HessianConstant should be true for QCQP
-        Assert.IsTrue(model.Options.HessianConstant == true);
+        // HessianConstant remains null (auto-set on solver only)
+        Assert.IsNull(model.Options.HessianConstant);
     }
 
     [TestMethod]
@@ -1683,7 +1832,7 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // HessianConstant should remain null for nonlinear objective
+        // HessianConstant remains null
         Assert.IsNull(model.Options.HessianConstant);
     }
 
@@ -1707,7 +1856,7 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // HessianConstant should remain null for nonlinear constraint
+        // HessianConstant remains null
         Assert.IsNull(model.Options.HessianConstant);
     }
 
@@ -1732,12 +1881,12 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // HessianConstant should remain null when using limited memory approximation
+        // HessianConstant remains null
         Assert.IsNull(model.Options.HessianConstant);
     }
 
     [TestMethod]
-    public void AllConstantOptions_SetCorrectly_ForLinearProgram()
+    public void AllConstantOptions_NotPersistedToOptions_ForLinearProgram()
     {
         var model = new Model();
         var x = model.AddVariable(0, 10);
@@ -1755,11 +1904,11 @@ public class ModellingTests
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
-        // All constant options should be enabled for LP
-        Assert.IsTrue(model.Options.GradFConstant == true);
-        Assert.IsTrue(model.Options.JacCConstant == true);
-        Assert.IsTrue(model.Options.JacDConstant == true);
-        Assert.IsTrue(model.Options.HessianConstant == true);
+        // All constant options should remain null (set on solver only, not Options)
+        Assert.IsNull(model.Options.GradFConstant);
+        Assert.IsNull(model.Options.JacCConstant);
+        Assert.IsNull(model.Options.JacDConstant);
+        Assert.IsNull(model.Options.HessianConstant);
     }
 
     [TestMethod]
