@@ -247,54 +247,135 @@ public abstract class Expr
     // C# 14 compound assignment operators - modify expression in-place for efficiency
     public void operator +=(Expr other)
     {
-        // Special case: if this is a zero constant, just replace with other
-        if (_replacement is null && this is Constant { Value: 0 })
+        // Check if we've been replaced with a QuadExpr - use efficient AddTerm
+        if (_replacement is QuadExpr quad)
+        {
+            quad.AddTerm(other, 1.0);
+        }
+        // Check if we've been replaced with a LinExpr - use efficient AddTerm
+        else if (_replacement is LinExpr lin)
+        {
+            lin.AddTerm(other, 1.0);
+        }
+        // Check if this is directly a QuadExpr (no replacement) - use efficient AddTerm
+        else if (_replacement is null && this is QuadExpr thisQuad)
+        {
+            thisQuad.AddTerm(other, 1.0);
+        }
+        // Check if this is directly a LinExpr (no replacement) - use efficient AddTerm
+        else if (_replacement is null && this is LinExpr thisLin)
+        {
+            thisLin.AddTerm(other, 1.0);
+        }
+        // Check if this is a zero constant with no replacement yet
+        else if (_replacement is null && this is Constant { Value: 0 })
         {
             ReplaceWith(other);
-            return;
         }
-        
-        // Always use the proper + operator to ensure correct processing
-        // The + operator will create a new QuadExpr/LinExpr with proper term extraction
-        var result = Clone() + other;
-        ReplaceWith(result);
+        // Otherwise create appropriate expression type
+        else
+        {
+            var current = Clone();
+            // Use QuadExpr if either operand is quadratic
+            if ((!current.IsLinear() && current.IsAtMostQuadratic()) || 
+                (!other.IsLinear() && other.IsAtMostQuadratic()) ||
+                current is QuadExpr || other is QuadExpr)
+            {
+                ReplaceWith(new QuadExpr([current, other]));
+            }
+            else
+            {
+                ReplaceWith(new LinExpr([current, other]));
+            }
+        }
     }
 
     public void operator -=(Expr other)
     {
-        // Special case: if this is a zero constant, just replace with -other
-        if (_replacement is null && this is Constant { Value: 0 })
+        // Check if we've been replaced with a QuadExpr - use efficient AddTerm
+        if (_replacement is QuadExpr quad)
+        {
+            quad.AddTerm(other, -1.0);
+        }
+        // Check if we've been replaced with a LinExpr - use efficient AddTerm
+        else if (_replacement is LinExpr lin)
+        {
+            lin.AddTerm(other, -1.0);
+        }
+        // Check if this is directly a QuadExpr (no replacement) - use efficient AddTerm
+        else if (_replacement is null && this is QuadExpr thisQuad)
+        {
+            thisQuad.AddTerm(other, -1.0);
+        }
+        // Check if this is directly a LinExpr (no replacement) - use efficient AddTerm
+        else if (_replacement is null && this is LinExpr thisLin)
+        {
+            thisLin.AddTerm(other, -1.0);
+        }
+        // Check if this is a zero constant with no replacement yet
+        else if (_replacement is null && this is Constant { Value: 0 })
         {
             ReplaceWith(-other);
-            return;
         }
-        
-        // Always use the proper - operator to ensure correct processing
-        var result = Clone() - other;
-        ReplaceWith(result);
+        // Otherwise create appropriate expression type
+        else
+        {
+            var current = Clone();
+            // Use QuadExpr if either operand is quadratic
+            if ((!current.IsLinear() && current.IsAtMostQuadratic()) || 
+                (!other.IsLinear() && other.IsAtMostQuadratic()) ||
+                current is QuadExpr || other is QuadExpr)
+            {
+                ReplaceWith(new QuadExpr([current, -other]));
+            }
+            else
+            {
+                ReplaceWith(new LinExpr([current, -other]));
+            }
+        }
     }
 
     public void operator *=(Expr other)
     {
         // Check if we've been replaced with a Product
-        if (_replacement is Product product)
-            product.Factors.Add(other);
+        if (_replacement is Product replacementProduct)
+        {
+            replacementProduct.Factors.Add(other);
+        }
+        // Check if this is directly a Product (no replacement)
+        else if (_replacement is null && this is Product thisProduct)
+        {
+            thisProduct.Factors.Add(other);
+        }
         // Check if this is a one constant with no replacement yet
         else if (_replacement is null && this is Constant { Value: 1 })
+        {
             ReplaceWith(other);
+        }
         // Otherwise create a new Product with current value and new factor
         else
+        {
             ReplaceWith(new Product([Clone(), other]));
+        }
     }
 
     public void operator /=(Expr other)
     {
         // Check if we've been replaced with a Product (add reciprocal)
-        if (_replacement is Product product)
-            product.Factors.Add(new Division(1, other));
+        if (_replacement is Product replacementProduct)
+        {
+            replacementProduct.Factors.Add(new Division(1, other));
+        }
+        // Check if this is directly a Product (no replacement)
+        else if (_replacement is null && this is Product thisProduct)
+        {
+            thisProduct.Factors.Add(new Division(1, other));
+        }
         // Otherwise create a division
         else
+        {
             ReplaceWith(new Division(Clone(), other));
+        }
     }
 
     public Constraint Between(double lower, double upper) => new Constraint(this, lower, upper);
@@ -932,6 +1013,17 @@ public class LinExpr : Expr
         Weights = [];
     }
     
+    /// <summary>
+    /// Efficiently adds a term to this LinExpr with proper weight extraction.
+    /// Used by += operator for O(1) appending instead of O(n) copying.
+    /// </summary>
+    public void AddTerm(Expr term, double weight = 1.0)
+    {
+        var constantSum = ConstantTerm;
+        ProcessTerm(term, weight, ref constantSum, Terms, Weights);
+        ConstantTerm = constantSum;
+    }
+    
     public LinExpr(List<Expr> terms)
     {
         var constantSum = 0.0;
@@ -1098,6 +1190,17 @@ public class QuadExpr : Expr
         QuadraticTerms2 = [];
         QuadraticWeights = [];
         ConstantTerm = 0.0;
+    }
+
+    /// <summary>
+    /// Efficiently adds a term to this QuadExpr with proper Product expansion.
+    /// Used by += operator for O(1) appending instead of O(n) copying.
+    /// </summary>
+    public void AddTerm(Expr term, double weight = 1.0)
+    {
+        var constantSum = ConstantTerm;
+        ProcessTerm(term, weight, ref constantSum, LinearTerms, LinearWeights, QuadraticTerms1, QuadraticTerms2, QuadraticWeights);
+        ConstantTerm = constantSum;
     }
 
     public QuadExpr(List<Expr> terms)

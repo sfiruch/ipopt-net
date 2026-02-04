@@ -1494,4 +1494,41 @@ public class ExpressionTests
 
         Console.WriteLine($"\n=== Test PASSED - No Products in LinearTerms ===\n");
     }
+
+    [TestMethod]
+    public void CompoundOperators_EfficientOnDirectTypes()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Test LinExpr directly (not via Expr = 0)
+        var linExpr = new LinExpr();
+        linExpr += 2 * x;
+        linExpr += 3 * y;
+        
+        // Verify it worked efficiently (should have 2 terms)
+        Assert.AreEqual(2, linExpr.Terms.Count);
+        Assert.AreEqual(2.0, linExpr.Weights[0]);
+        Assert.AreEqual(3.0, linExpr.Weights[1]);
+
+        // Test QuadExpr directly
+        var quadExpr = new QuadExpr();
+        quadExpr += x * y;
+        quadExpr += x * x;
+        
+        // Should have 2 quadratic terms
+        Assert.AreEqual(2, quadExpr.QuadraticTerms1.Count);
+        Assert.AreEqual(0, quadExpr.LinearTerms.Count);
+
+        // Test Product directly
+        var prod = new Product([new Constant(2)]);
+        prod *= x;
+        prod *= y;
+        
+        // Should have 3 factors
+        Assert.AreEqual(3, prod.Factors.Count);
+
+        Console.WriteLine("Compound operators work efficiently on direct types!");
+    }
 }
