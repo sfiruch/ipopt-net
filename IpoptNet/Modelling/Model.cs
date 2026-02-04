@@ -283,13 +283,12 @@ public sealed class Model : IDisposable
                 {
                     _constraints[row].Expression.AccumulateGradient(x, gradSpan, 1.0);
 
-                    if (rowToEntries.TryGetValue(row, out var entries))
-                        foreach (var (col, idx) in entries)
-                        {
-                            values[idx] = gradSpan[col];
-                            Debug.Assert(IsValidNumber(values[idx]));
-                            gradSpan[col] = 0;  // Clear the sparse entries we used
-                        }
+                    foreach (var (col, idx) in rowToEntries[row])
+                    {
+                        values[idx] = gradSpan[col];
+                        Debug.Assert(IsValidNumber(values[idx]));
+                        gradSpan[col] = 0;  // Clear the sparse entries we used
+                    }
                 }
             }
             return true;
@@ -335,11 +334,11 @@ public sealed class Model : IDisposable
                 var values = new Span<double>(pValues, neleHess);
                 values.Clear();
                 foreach (var (key, value) in hess.GetEntries())
-                    if (indexMap.TryGetValue(key, out var idx))
-                    {
-                        values[idx] = value;
-                        Debug.Assert(IsValidNumber(values[idx]));
-                    }
+                {
+                    var idx = indexMap[key];
+                    values[idx] = value;
+                    Debug.Assert(IsValidNumber(values[idx]));
+                }
             }
             return true;
         };
@@ -391,12 +390,11 @@ public sealed class Model : IDisposable
         {
             Array.Clear(grad);
             _constraints[row].Expression.AccumulateGradient(zeroX, grad, 1.0);
-            if (rowToEntries.TryGetValue(row, out var entries))
-                foreach (var (col, idx) in entries)
-                {
-                    cachedValues[idx] = grad[col];
-                    Debug.Assert(IsValidNumber(cachedValues[idx]));
-                }
+            foreach (var (col, idx) in rowToEntries[row])
+            {
+                cachedValues[idx] = grad[col];
+                Debug.Assert(IsValidNumber(cachedValues[idx]));
+            }
         }
 
         return (int n, double* pVx, bool newX, int m, int neleJac, int* iRow, int* jCol, double* pValues, nint userData) =>
