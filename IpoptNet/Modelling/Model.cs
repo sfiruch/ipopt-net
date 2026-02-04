@@ -207,9 +207,7 @@ public sealed class Model : IDisposable
             var x = new ReadOnlySpan<double>(pX, n);
             *objValue = _objective!.Evaluate(x);
 
-            Debug.Assert(IsValidNumber(*objValue));
-
-            return true;
+            return IsValidNumber(*objValue);
         };
     }
 
@@ -218,11 +216,15 @@ public sealed class Model : IDisposable
         return (int n, double* pX, bool newX, double* pGradF, nint userData) =>
         {
             var x = new ReadOnlySpan<double>(pX, n);
-            var grad = new Span<double>(pGradF, n);
+            var gradF = new Span<double>(pGradF, n);
             grad.Clear();
-            _objective!.AccumulateGradient(x, grad, 1.0);
+            _objective!.AccumulateGradient(x, gradF, 1.0);
 
-            Debug.Assert(grad.ToArray().All(v => IsValidNumber(v)));
+            for (int i = 0; i < n; i++)
+            {
+                if (!IsValidNumber(gradF[i]))
+                    return false;
+            }
 
             return true;
         };
@@ -239,7 +241,8 @@ public sealed class Model : IDisposable
             for (int i = 0; i < m; i++)
             {
                 g[i] = _constraints[i].Expression.Evaluate(x);
-                Debug.Assert(IsValidNumber(g[i]));
+                if (!IsValidNumber(g[i]))
+                    return false;
             }
             return true;
         };
@@ -286,7 +289,8 @@ public sealed class Model : IDisposable
                     foreach (var (col, idx) in rowToEntries[row])
                     {
                         values[idx] = gradSpan[col];
-                        Debug.Assert(IsValidNumber(values[idx]));
+                        if (!IsValidNumber(values[idx]))
+                            return false;
                         gradSpan[col] = 0;  // Clear the sparse entries we used
                     }
                 }
@@ -337,7 +341,8 @@ public sealed class Model : IDisposable
                 {
                     var idx = indexMap[key];
                     values[idx] = value;
-                    Debug.Assert(IsValidNumber(values[idx]));
+                    if (!IsValidNumber(values[idx]))
+                        return false;
                 }
             }
             return true;

@@ -32,6 +32,10 @@ public enum AlgorithmMode
     RestorationPhaseMode = 1
 }
 
+/// <summary>
+/// Callback to evaluate the objective function.
+/// Returns true on success, false if evaluation failed at the given point (e.g. invalid number).
+/// </summary>
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 public unsafe delegate bool EvalFCallback(
     int n,
@@ -40,6 +44,10 @@ public unsafe delegate bool EvalFCallback(
     double* objValue,
     nint userData);
 
+/// <summary>
+/// Callback to evaluate the gradient of the objective function.
+/// Returns true on success, false if evaluation failed.
+/// </summary>
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 public unsafe delegate bool EvalGradFCallback(
     int n,
@@ -48,6 +56,10 @@ public unsafe delegate bool EvalGradFCallback(
     double* gradF,
     nint userData);
 
+/// <summary>
+/// Callback to evaluate the constraint functions.
+/// Returns true on success, false if evaluation failed.
+/// </summary>
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 public unsafe delegate bool EvalGCallback(
     int n,
@@ -57,6 +69,10 @@ public unsafe delegate bool EvalGCallback(
     double* g,
     nint userData);
 
+/// <summary>
+/// Callback to evaluate the Jacobian of the constraints.
+/// Returns true on success, false if evaluation failed.
+/// </summary>
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 public unsafe delegate bool EvalJacGCallback(
     int n,
@@ -69,6 +85,10 @@ public unsafe delegate bool EvalJacGCallback(
     double* values,
     nint userData);
 
+/// <summary>
+/// Callback to evaluate the Hessian of the Lagrangian.
+/// Returns true on success, false if evaluation failed.
+/// </summary>
 [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
 public unsafe delegate bool EvalHCallback(
     int n,

@@ -238,6 +238,10 @@ using IpoptNet;
 EvalFCallback evalF = (n, x, newX, objValue, userData) =>
 {
     *objValue = x[0] * x[3] * (x[0] + x[1] + x[2]) + x[2];
+
+    // Note: If a callback cannot be evaluated at a given point (e.g. division by zero), 
+    // it should return false. IPOPT will then attempt to backtrack to a valid point.
+    // If it cannot recover, the solve will terminate with InvalidNumberDetected.
     return true;
 };
 
