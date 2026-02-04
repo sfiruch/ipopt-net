@@ -90,34 +90,21 @@ public abstract class Expr
 
     public static Expr operator +(Expr a, Expr b)
     {
-        // If left operand is already a Sum, extend it with the right operand
-        if (a is Sum sumA)
+        // Always create a new LinExpr to ensure proper merging
+        // If we try to optimize by extending existing LinExprs, we lose the constant term and weights
+        if (a is LinExpr || b is LinExpr)
         {
-            return new Sum([.. sumA.Terms, b]);
+            return new LinExpr([a, b]);
         }
-        // If right operand is a Sum, prepend the left operand to it
-        else if (b is Sum sumB)
-        {
-            return new Sum([a, .. sumB.Terms]);
-        }
-        // Always use Sum for addition to avoid deep Division trees (Sum is semantically equivalent)
         else
         {
-            return new Sum([a, b]);
+            return new LinExpr([a, b]);
         }
     }
     public static Expr operator -(Expr a, Expr b)
     {
-        // If left operand is already a Sum, extend it with the negated right operand
-        if (a is Sum sumA)
-        {
-            return new Sum([.. sumA.Terms, -b]);
-        }
-        // Create a new Sum with both terms to avoid building deep Division trees
-        else
-        {
-            return new Sum([a, -b]);
-        }
+        // Always create a new LinExpr to ensure proper merging
+        return new LinExpr([a, -b]);
     }
     public static Expr operator *(Expr a, Expr b)
     {
@@ -142,33 +129,21 @@ public abstract class Expr
 
     public static Expr operator +(Expr a, double b)
     {
-        if (a is Sum sumA)
-        {
-            return new Sum([.. sumA.Terms, new Constant(b)]);
-        }
-        return new Sum([a, new Constant(b)]);
+        return new LinExpr([a, new Constant(b)]);
     }
 
     public static Expr operator +(double a, Expr b)
     {
-        if (b is Sum sumB)
-        {
-            return new Sum([new Constant(a), .. sumB.Terms]);
-        }
-        return new Sum([new Constant(a), b]);
+        return new LinExpr([new Constant(a), b]);
     }
     public static Expr operator -(Expr a, double b)
     {
-        if (a is Sum sumA)
-        {
-            return new Sum([.. sumA.Terms, new Constant(-b)]);
-        }
-        return new Sum([a, new Constant(-b)]);
+        return new LinExpr([a, new Constant(-b)]);
     }
 
     public static Expr operator -(double a, Expr b)
     {
-        return new Sum([new Constant(a), -b]);
+        return new LinExpr([new Constant(a), -b]);
     }
     public static Expr operator *(Expr a, double b)
     {
@@ -193,28 +168,34 @@ public abstract class Expr
     // C# 14 compound assignment operators - modify expression in-place for efficiency
     public void operator +=(Expr other)
     {
-        // Check if we've been replaced with a Sum
-        if (_replacement is Sum sum)
-            sum.Terms.Add(other);
+        // Check if we've been replaced with a LinExpr
+        if (_replacement is LinExpr lin)
+        {
+            lin.Terms.Add(other);
+            lin.Weights.Add(1.0);
+        }
         // Check if this is a zero constant with no replacement yet
         else if (_replacement is null && this is Constant { Value: 0 })
             ReplaceWith(other);
-        // Otherwise create a new Sum with current value and new term
+        // Otherwise create a new LinExpr with current value and new term
         else
-            ReplaceWith(new Sum([Clone(), other]));
+            ReplaceWith(new LinExpr([Clone(), other]));
     }
 
     public void operator -=(Expr other)
     {
-        // Check if we've been replaced with a Sum
-        if (_replacement is Sum sum)
-            sum.Terms.Add(-other);
+        // Check if we've been replaced with a LinExpr
+        if (_replacement is LinExpr lin)
+        {
+            lin.Terms.Add(other);
+            lin.Weights.Add(-1.0);
+        }
         // Check if this is a zero constant with no replacement yet
         else if (_replacement is null && this is Constant { Value: 0 })
             ReplaceWith(-other);
-        // Otherwise create a new Sum with current value and negated term
+        // Otherwise create a new LinExpr with current value and negated term
         else
-            ReplaceWith(new Sum([Clone(), -other]));
+            ReplaceWith(new LinExpr([Clone(), -other]));
     }
 
     public void operator *=(Expr other)
@@ -279,6 +260,28 @@ public abstract class Expr
     public static Expr Tan(Expr a) => new Tan(a);
     public static Expr Exp(Expr a) => new Exp(a);
     public static Expr Log(Expr a) => new Log(a);
+
+    /// <summary>
+    /// Prints the expression tree for debugging.
+    /// </summary>
+    /// <param name="writer">The TextWriter to write to. Defaults to Console.Out.</param>
+    /// <param name="indent">The indentation string for formatting.</param>
+    public void Print(TextWriter? writer = null, string indent = "")
+    {
+        writer ??= Console.Out;
+        if (_replacement is not null)
+        {
+            writer.WriteLine($"{indent}[Replaced with:]");
+            _replacement.Print(writer, indent + "  ");
+            return;
+        }
+        PrintCore(writer, indent);
+    }
+
+    protected virtual void PrintCore(TextWriter writer, string indent)
+    {
+        writer.WriteLine($"{indent}{GetType().Name}");
+    }
 }
 
 public sealed class Constant : Expr
@@ -297,6 +300,11 @@ public sealed class Constant : Expr
     protected override bool IsAtMostQuadraticCore() => true;
 
     protected override Expr CloneCore() => new Constant(Value);
+
+    protected override void PrintCore(TextWriter writer, string indent)
+    {
+        writer.WriteLine($"{indent}Constant: {Value}");
+    }
 }
 
 public sealed class Division : Expr
@@ -427,6 +435,15 @@ public sealed class Division : Expr
     }
 
     protected override Expr CloneCore() => new Division(Left, Right);
+
+    protected override void PrintCore(TextWriter writer, string indent)
+    {
+        writer.WriteLine($"{indent}Division:");
+        writer.WriteLine($"{indent}  Left:");
+        Left.Print(writer, indent + "    ");
+        writer.WriteLine($"{indent}  Right:");
+        Right.Print(writer, indent + "    ");
+    }
 }
 
 public sealed class Negation : Expr
@@ -461,6 +478,12 @@ public sealed class Negation : Expr
     protected override bool IsAtMostQuadraticCore() => Operand.IsAtMostQuadratic();
 
     protected override Expr CloneCore() => new Negation(Operand);
+
+    protected override void PrintCore(TextWriter writer, string indent)
+    {
+        writer.WriteLine($"{indent}Negation:");
+        Operand.Print(writer, indent + "  ");
+    }
 }
 
 public sealed class PowerOp : Expr
@@ -543,6 +566,12 @@ public sealed class PowerOp : Expr
     }
 
     protected override Expr CloneCore() => new PowerOp(Base, Exponent);
+
+    protected override void PrintCore(TextWriter writer, string indent)
+    {
+        writer.WriteLine($"{indent}PowerOp: ^{Exponent}");
+        Base.Print(writer, indent + "  ");
+    }
 }
 
 public sealed class Sin : Expr
@@ -815,31 +844,130 @@ public sealed class Log : Expr
     protected override Expr CloneCore() => new Log(Argument);
 }
 
-public sealed class Sum : Expr
+public class LinExpr : Expr
 {
     public List<Expr> Terms { get; set; }
+    public List<double> Weights { get; set; }
+    public double ConstantTerm { get; set; }
 
-    public Sum() => Terms = [];
-    public Sum(List<Expr> terms) => Terms = terms;
+    public LinExpr()
+    {
+        Terms = [];
+        Weights = [];
+    }
+    
+    public LinExpr(List<Expr> terms)
+    {
+        var constantSum = 0.0;
+        var nonConstantTerms = new List<Expr>(terms.Count);
+        var weights = new List<double>(terms.Count);
+
+        foreach (var term in terms)
+        {
+            if (term is Constant c)
+            {
+                constantSum += c.Value;
+            }
+            // Extract weight from Negation
+            else if (term is Negation neg)
+            {
+                // Recursively process the negated operand with weight -1
+                ProcessTerm(neg.Operand, -1.0, ref constantSum, nonConstantTerms, weights);
+            }
+            // Merge nested LinExpr
+            else if (term is LinExpr lin)
+            {
+                constantSum += lin.ConstantTerm;
+                for (int i = 0; i < lin.Terms.Count; i++)
+                {
+                    nonConstantTerms.Add(lin.Terms[i]);
+                    weights.Add(lin.Weights[i]);
+                }
+            }
+            // Extract weight from Product of Constant * Expr
+            else if (term is Product { Factors.Count: 2 } prod 
+                     && prod.Factors[0] is Constant weight 
+                     && prod.Factors[1] is not Constant)
+            {
+                ProcessTerm(prod.Factors[1], weight.Value, ref constantSum, nonConstantTerms, weights);
+            }
+            else if (term is Product { Factors.Count: 2 } prod2 
+                     && prod2.Factors[1] is Constant weight2 
+                     && prod2.Factors[0] is not Constant)
+            {
+                ProcessTerm(prod2.Factors[0], weight2.Value, ref constantSum, nonConstantTerms, weights);
+            }
+            else
+            {
+                nonConstantTerms.Add(term);
+                weights.Add(1.0);
+            }
+        }
+
+        Terms = nonConstantTerms;
+        Weights = weights;
+        ConstantTerm = constantSum;
+    }
+
+    private static void ProcessTerm(Expr term, double weight, ref double constantSum, List<Expr> nonConstantTerms, List<double> weights)
+    {
+        // Handle nested structures
+        if (term is Constant c)
+        {
+            constantSum += weight * c.Value;
+        }
+        else if (term is Negation neg)
+        {
+            // Negate weight and continue
+            ProcessTerm(neg.Operand, -weight, ref constantSum, nonConstantTerms, weights);
+        }
+        else if (term is LinExpr lin)
+        {
+            // Merge LinExpr: add all its terms with weights scaled by our weight
+            constantSum += weight * lin.ConstantTerm;
+            for (int i = 0; i < lin.Terms.Count; i++)
+            {
+                nonConstantTerms.Add(lin.Terms[i]);
+                weights.Add(weight * lin.Weights[i]);
+            }
+        }
+        else if (term is Product { Factors.Count: 2 } prod 
+                 && prod.Factors[0] is Constant innerWeight 
+                 && prod.Factors[1] is not Constant)
+        {
+            ProcessTerm(prod.Factors[1], weight * innerWeight.Value, ref constantSum, nonConstantTerms, weights);
+        }
+        else if (term is Product { Factors.Count: 2 } prod2 
+                 && prod2.Factors[1] is Constant innerWeight2 
+                 && prod2.Factors[0] is not Constant)
+        {
+            ProcessTerm(prod2.Factors[0], weight * innerWeight2.Value, ref constantSum, nonConstantTerms, weights);
+        }
+        else
+        {
+            nonConstantTerms.Add(term);
+            weights.Add(weight);
+        }
+    }
 
     protected override double EvaluateCore(ReadOnlySpan<double> x)
     {
-        var result = 0.0;
-        foreach (var term in Terms)
-            result += term.Evaluate(x);
+        var result = ConstantTerm;
+        for (int i = 0; i < Terms.Count; i++)
+            result += Weights[i] * Terms[i].Evaluate(x);
         return result;
     }
 
     protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
     {
-        foreach (var term in Terms)
-            term.AccumulateGradient(x, grad, multiplier);
+        for (int i = 0; i < Terms.Count; i++)
+            Terms[i].AccumulateGradient(x, grad, multiplier * Weights[i]);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
-        foreach (var term in Terms)
-            term.AccumulateHessian(x, hess, multiplier);
+        for (int i = 0; i < Terms.Count; i++)
+            Terms[i].AccumulateHessian(x, hess, multiplier * Weights[i]);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables)
@@ -858,7 +986,23 @@ public sealed class Sum : Expr
     protected override bool IsLinearCore() => Terms.All(t => t.IsLinear());
     protected override bool IsAtMostQuadraticCore() => Terms.All(t => t.IsAtMostQuadratic());
 
-    protected override Expr CloneCore() => new Sum([.. Terms]);
+    protected override Expr CloneCore()
+    {
+        var clone = new LinExpr([.. Terms]);
+        clone.Weights = [.. Weights];
+        clone.ConstantTerm = ConstantTerm;
+        return clone;
+    }
+
+    protected override void PrintCore(TextWriter writer, string indent)
+    {
+        writer.WriteLine($"{indent}LinExpr: {Terms.Count} terms, constant={ConstantTerm}");
+        for (int i = 0; i < Terms.Count; i++)
+        {
+            writer.WriteLine($"{indent}  [{i}] weight={Weights[i]}:");
+            Terms[i].Print(writer, indent + "    ");
+        }
+    }
 }
 
 public sealed class Product : Expr
@@ -1103,6 +1247,16 @@ public sealed class Product : Expr
     }
 
     protected override Expr CloneCore() => new Product([.. Factors]);
+
+    protected override void PrintCore(TextWriter writer, string indent)
+    {
+        writer.WriteLine($"{indent}Product: {Factors.Count} factors");
+        for (int i = 0; i < Factors.Count; i++)
+        {
+            writer.WriteLine($"{indent}  [{i}]:");
+            Factors[i].Print(writer, indent + "    ");
+        }
+    }
 }
 
 public sealed class HessianAccumulator

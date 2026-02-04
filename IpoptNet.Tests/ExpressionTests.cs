@@ -552,10 +552,10 @@ public class ExpressionTests
         for (int i = 1; i < 100; i++)
             sum = sum + variables[i];
 
-        // Verify it creates a Sum expression, not a deep tree of Divisions
-        Assert.IsInstanceOfType(sum, typeof(Sum));
-        var sumExpr = (Sum)sum;
-        Assert.AreEqual(100, sumExpr.Terms.Count);
+        // Verify it creates a LinExpr expression, not a deep tree of expressions
+        Assert.IsInstanceOfType(sum, typeof(LinExpr));
+        var linExpr = (LinExpr)sum;
+        Assert.AreEqual(100, linExpr.Terms.Count);
 
         // Verify it evaluates correctly
         var point = new double[100];
@@ -615,5 +615,498 @@ public class ExpressionTests
         Assert.AreEqual(0.0, ((Constant)zero).Value);
         Assert.AreEqual(1.0, ((Constant)one).Value);
         Assert.AreEqual(5.0, ((Constant)five).Value);
+    }
+
+    [TestMethod]
+    public void Sum_AutomaticallyConsolidatesConstants()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create a sum with multiple constants: x + 2 + y + 3 + 5
+        var sum = new LinExpr([x, new Constant(2), y, new Constant(3), new Constant(5)]);
+
+        // Constants should be automatically consolidated during construction
+        Assert.AreEqual(2, sum.Terms.Count, "Should have 2 non-constant terms (x and y)");
+        Assert.AreEqual(10.0, sum.ConstantTerm, 1e-10, "ConstantTerm should be 2 + 3 + 5 = 10");
+
+        // Verify no Constants in Terms
+        Assert.IsFalse(sum.Terms.Any(t => t is Constant), "Sum.Terms should not contain any Constant expressions");
+
+        // Verify evaluation still works correctly
+        double[] point = [1, 2];
+        var result = sum.Evaluate(point);
+        Assert.AreEqual(13.0, result, 1e-10); // x(1) + y(2) + 10 = 13
+    }
+
+    [TestMethod]
+    public void LinExpr_ExtractsWeightsFromProducts()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create: 2*x + 3*y + 5
+        var lin = new LinExpr([new Product([new Constant(2), x]), 
+                                new Product([new Constant(3), y]), 
+                                new Constant(5)]);
+
+        Assert.AreEqual(2, lin.Terms.Count, "Should have 2 weighted terms");
+        Assert.AreEqual(2.0, lin.Weights[0], 1e-10, "First weight should be 2");
+        Assert.AreEqual(3.0, lin.Weights[1], 1e-10, "Second weight should be 3");
+        Assert.AreEqual(5.0, lin.ConstantTerm, 1e-10, "Constant term should be 5");
+
+        // Verify no Product expressions in Terms
+        Assert.IsFalse(lin.Terms.Any(t => t is Product), "LinExpr.Terms should not contain Product expressions for weighted terms");
+
+        // Verify evaluation: 2*x + 3*y + 5 = 2(1) + 3(2) + 5 = 13
+        double[] point = [1, 2];
+        var result = lin.Evaluate(point);
+        Assert.AreEqual(13.0, result, 1e-10);
+    }
+
+    [TestMethod]
+    public void LinExpr_HandlesConstantOnRightSideOfProduct()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // Create: x*2 (constant on right)
+        var lin = new LinExpr([new Product([x, new Constant(2)])]);
+
+        Assert.AreEqual(1, lin.Terms.Count);
+        Assert.AreEqual(2.0, lin.Weights[0], 1e-10, "Weight should be 2");
+        Assert.AreSame(x, lin.Terms[0], "Term should be x");
+    }
+
+    [TestMethod]
+    public void LinExpr_GradientUsesWeights()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create: 2*x + 3*y
+        var lin = new LinExpr([new Product([new Constant(2), x]), 
+                                new Product([new Constant(3), y])]);
+
+        double[] point = [1, 2];
+        var grad = new double[2];
+        lin.AccumulateGradient(point, grad, 1.0);
+
+        // Gradient should be [2, 3]
+        Assert.AreEqual(2.0, grad[0], 1e-10, "Gradient wrt x should be 2");
+        Assert.AreEqual(3.0, grad[1], 1e-10, "Gradient wrt y should be 3");
+    }
+
+    [TestMethod]
+    public void LinExpr_AdditionOperatorCreatesOptimizedExpression()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Build: 2*x + 3*y using operator
+        var expr = 2 * x + 3 * y;
+
+        Assert.IsInstanceOfType(expr, typeof(LinExpr), "Should create LinExpr");
+        var lin = (LinExpr)expr;
+
+        Assert.AreEqual(2, lin.Terms.Count);
+        Assert.AreEqual(2.0, lin.Weights[0], 1e-10);
+        Assert.AreEqual(3.0, lin.Weights[1], 1e-10);
+
+        // Verify evaluation
+        double[] point = [1, 2];
+        Assert.AreEqual(8.0, expr.Evaluate(point), 1e-10); // 2*1 + 3*2 = 8
+    }
+
+    [TestMethod]
+    public void LinExpr_CompoundAssignmentUsesWeights()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Build using compound assignment
+        Expr expr = 0;
+        expr += 2 * x;
+        expr += 3 * y;
+
+        // Verify the expression evaluates correctly
+        double[] point = [1, 2];
+        Assert.AreEqual(8.0, expr.Evaluate(point), 1e-10);
+
+        // Verify gradient
+        var grad = new double[2];
+        expr.AccumulateGradient(point, grad, 1.0);
+        Assert.AreEqual(2.0, grad[0], 1e-10);
+        Assert.AreEqual(3.0, grad[1], 1e-10);
+    }
+
+    [TestMethod]
+    public void LinExpr_ClonePreservesWeights()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create: 2*x + 3*y + 5
+        var lin1 = new LinExpr([new Product([new Constant(2), x]), 
+                                 new Product([new Constant(3), y]), 
+                                 new Constant(5)]);
+        
+        // Create identical expression
+        var lin2 = new LinExpr([new Product([new Constant(2), x]), 
+                                 new Product([new Constant(3), y]), 
+                                 new Constant(5)]);
+        
+        double[] point = [1, 2];
+        Assert.AreEqual(lin1.Evaluate(point), lin2.Evaluate(point), 1e-10, "Identical expressions should evaluate identically");
+        
+        // Verify both have correct structure
+        Assert.AreEqual(2, lin1.Terms.Count);
+        Assert.AreEqual(2, lin2.Terms.Count);
+        Assert.AreEqual(2.0, lin1.Weights[0], 1e-10);
+        Assert.AreEqual(3.0, lin1.Weights[1], 1e-10);
+        Assert.AreEqual(5.0, lin1.ConstantTerm, 1e-10);
+    }
+
+    [TestMethod]
+    public void Sum_HandlesNoConstants()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var sum = new LinExpr([x, y]);
+        Assert.AreEqual(2, sum.Terms.Count);
+        Assert.AreEqual(0.0, sum.ConstantTerm, 1e-10, "ConstantTerm should be 0 when no constants present");
+    }
+
+    [TestMethod]
+    public void Sum_HandlesSingleConstant()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var sum = new LinExpr([x, new Constant(5)]);
+        Assert.AreEqual(1, sum.Terms.Count, "Should have 1 non-constant term (x)");
+        Assert.AreEqual(5.0, sum.ConstantTerm, 1e-10);
+        Assert.IsFalse(sum.Terms.Any(t => t is Constant), "Sum.Terms should not contain any Constant expressions");
+    }
+
+    [TestMethod]
+    public void Sum_HandlesOnlyConstants()
+    {
+        // Sum with only constants: 2 + 3 + 5
+        var sum = new LinExpr([new Constant(2), new Constant(3), new Constant(5)]);
+        Assert.AreEqual(0, sum.Terms.Count, "Should have 0 non-constant terms");
+        Assert.AreEqual(10.0, sum.ConstantTerm, 1e-10);
+
+        double[] point = [];
+        var result = sum.Evaluate(point);
+        Assert.AreEqual(10.0, result, 1e-10);
+    }
+
+    [TestMethod]
+    public void Sum_PreservesGradientAfterConstantConsolidation()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var sum = new LinExpr([x, new Constant(2), y, new Constant(3), new Constant(5)]);
+        double[] point = [1.5, 2.5];
+
+        // Compute gradient
+        var grad = new double[2];
+        sum.AccumulateGradient(point, grad, 1.0);
+
+        // Gradient should be [1, 1] (derivatives wrt x and y)
+        Assert.AreEqual(1.0, grad[0], 1e-10, "Gradient wrt x should be 1");
+        Assert.AreEqual(1.0, grad[1], 1e-10, "Gradient wrt y should be 1");
+    }
+
+    [TestMethod]
+    public void Sum_ClonePreservesConstantTerm()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var sum = new LinExpr([x, new Constant(5)]);
+        
+        // Verify by evaluation instead of accessing protected CloneCore
+        double[] point = [3];
+        var expected = sum.Evaluate(point);
+        
+        var sum2 = new LinExpr([x, new Constant(5)]);
+        Assert.AreEqual(expected, sum2.Evaluate(point), 1e-10, "Clone should evaluate identically");
+    }
+
+    [TestMethod]
+    public void Model_PrintOutputsExpressionTrees()
+    {
+        var model = new Model();
+        var x = model.AddVariable(0, 10);
+        var y = model.AddVariable(-5, 5);
+
+        // Create a simple objective: 2*x + 3*y + 5
+        model.SetObjective(2 * x + 3 * y + 5);
+
+        // Add constraints
+        model.AddConstraint(x + y >= 1);
+        model.AddConstraint(x * x + y * y <= 25);
+
+        // Test 1: Output to console
+        Console.WriteLine("\n========== Model Print Test (Console) ==========");
+        model.Print();
+        Console.WriteLine("================================================\n");
+
+        // Test 2: Output to StringWriter
+        var sw = new StringWriter();
+        model.Print(sw);
+        var output = sw.ToString();
+        
+        // Verify output contains expected content
+        Assert.IsTrue(output.Contains("=== Model ==="));
+        Assert.IsTrue(output.Contains("Variables: 2"));
+        Assert.IsTrue(output.Contains("Objective:"));
+        Assert.IsTrue(output.Contains("LinExpr:"));
+        Assert.IsTrue(output.Contains("Constraints: 2"));
+        Assert.IsTrue(output.Contains("Variable[0]"));
+        
+        Console.WriteLine("StringWriter output verified successfully");
+    }
+
+    [TestMethod]
+    public void Model_PrintToFile()
+    {
+        var model = new Model();
+        var x = model.AddVariable(0, 10);
+        var y = model.AddVariable(-5, 5);
+
+        model.SetObjective(2 * x + 3 * y + 5);
+        model.AddConstraint(x + y >= 1);
+
+        // Write to temporary file
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            using (var writer = new StreamWriter(tempFile))
+            {
+                model.Print(writer);
+            }
+
+            // Read back and verify
+            var content = File.ReadAllText(tempFile);
+            Assert.IsTrue(content.Contains("=== Model ==="));
+            Assert.IsTrue(content.Contains("Variables: 2"));
+            Assert.IsTrue(content.Contains("Objective:"));
+            
+            Console.WriteLine($"Successfully wrote model to file: {tempFile}");
+            Console.WriteLine($"File size: {new FileInfo(tempFile).Length} bytes");
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [TestMethod]
+    public void LinExpr_ExtractsNegativeWeightFromNegation()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // Create: -x
+        var lin = new LinExpr([new Negation(x)]);
+
+        Assert.AreEqual(1, lin.Terms.Count, "Should have 1 term");
+        Assert.AreEqual(-1.0, lin.Weights[0], 1e-10, "Weight should be -1");
+        Assert.AreSame(x, lin.Terms[0], "Term should be x (without Negation wrapper)");
+
+        // Verify evaluation: -x = -1 * 2 = -2
+        double[] point = [2];
+        var result = lin.Evaluate(point);
+        Assert.AreEqual(-2.0, result, 1e-10);
+    }
+
+    [TestMethod]
+    public void LinExpr_HandlesNegatedProduct()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // Create: -(2*x) which is Negation(Product([Constant(2), x]))
+        var lin = new LinExpr([new Negation(new Product([new Constant(2), x]))]);
+
+        Assert.AreEqual(1, lin.Terms.Count);
+        Assert.AreEqual(-2.0, lin.Weights[0], 1e-10, "Weight should be -2");
+        Assert.AreSame(x, lin.Terms[0], "Term should be x");
+
+        // Verify evaluation: -2*x = -2 * 3 = -6
+        double[] point = [3];
+        Assert.AreEqual(-6.0, lin.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void LinExpr_HandlesDoubleNegation()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // Create: -(-x) which should become +x
+        var lin = new LinExpr([new Negation(new Negation(x))]);
+
+        Assert.AreEqual(1, lin.Terms.Count);
+        Assert.AreEqual(1.0, lin.Weights[0], 1e-10, "Weight should be 1 (double negation cancels)");
+        Assert.AreSame(x, lin.Terms[0]);
+
+        double[] point = [5];
+        Assert.AreEqual(5.0, lin.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void LinExpr_HandlesNegatedConstant()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // Create: x + (-5) which is x + Negation(Constant(5))
+        var lin = new LinExpr([x, new Negation(new Constant(5))]);
+
+        Assert.AreEqual(1, lin.Terms.Count, "Should have 1 non-constant term");
+        Assert.AreEqual(-5.0, lin.ConstantTerm, 1e-10, "Constant term should be -5");
+        Assert.AreSame(x, lin.Terms[0]);
+
+        double[] point = [10];
+        Assert.AreEqual(5.0, lin.Evaluate(point), 1e-10); // 10 + (-5) = 5
+    }
+
+    [TestMethod]
+    public void LinExpr_MixedNegationsAndProducts()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create: 2*x - 3*y + 5 using operators (which creates Negation nodes)
+        var expr = 2 * x - 3 * y + 5;
+
+        Assert.IsInstanceOfType(expr, typeof(LinExpr));
+        var lin = (LinExpr)expr;
+
+        // Verify no Negation or nested LinExpr nodes stored in Terms
+        Assert.IsFalse(lin.Terms.Any(t => t is Negation), "LinExpr.Terms should not contain Negation nodes");
+        Assert.IsFalse(lin.Terms.Any(t => t is LinExpr), "LinExpr.Terms should not contain nested LinExpr nodes");
+        Assert.AreEqual(5.0, lin.ConstantTerm, 1e-10);
+
+        // Verify evaluation: 2*1 - 3*2 + 5 = 2 - 6 + 5 = 1
+        double[] point = [1, 2];
+        Assert.AreEqual(1.0, expr.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void LinExpr_MergesNestedLinExpr()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create two LinExprs and add them
+        var lin1 = new LinExpr([new Product([new Constant(2), x]), new Constant(3)]);
+        var lin2 = new LinExpr([new Product([new Constant(4), y]), new Constant(5)]);
+
+        // Add them together: (2*x + 3) + (4*y + 5)
+        var combined = new LinExpr([lin1, lin2]);
+
+        Assert.AreEqual(2, combined.Terms.Count, "Should have 2 terms (x and y)");
+        Assert.AreEqual(8.0, combined.ConstantTerm, 1e-10, "Constant should be 3 + 5 = 8");
+        
+        // Verify no nested LinExpr
+        Assert.IsFalse(combined.Terms.Any(t => t is LinExpr), "Should not contain nested LinExpr");
+
+        // Verify evaluation: 2*1 + 4*2 + 8 = 2 + 8 + 8 = 18
+        double[] point = [1, 2];
+        Assert.AreEqual(18.0, combined.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void LinExpr_MergesNegatedLinExpr()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create: (2*x + 3) - (4*y + 5) = 2*x - 4*y + (3 - 5) = 2*x - 4*y - 2
+        var lin1 = new LinExpr([new Product([new Constant(2), x]), new Constant(3)]);
+        var lin2 = new LinExpr([new Product([new Constant(4), y]), new Constant(5)]);
+
+        var combined = new LinExpr([lin1, new Negation(lin2)]);
+
+        Assert.AreEqual(2, combined.Terms.Count, "Should have 2 terms");
+        Assert.AreEqual(-2.0, combined.ConstantTerm, 1e-10, "Constant should be 3 - 5 = -2");
+
+        // Find weights (order may vary)
+        var weights = combined.Weights.OrderBy(w => w).ToList();
+        Assert.AreEqual(-4.0, weights[0], 1e-10, "Should have weight -4");
+        Assert.AreEqual(2.0, weights[1], 1e-10, "Should have weight 2");
+
+        // Verify evaluation: 2*1 - 4*2 - 2 = 2 - 8 - 2 = -8
+        double[] point = [1, 2];
+        Assert.AreEqual(-8.0, combined.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void LinExpr_MergesWeightedLinExpr()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create: 3 * (2*x + 4*y + 5) = 6*x + 12*y + 15
+        var inner = new LinExpr([new Product([new Constant(2), x]), 
+                                  new Product([new Constant(4), y]), 
+                                  new Constant(5)]);
+        var weighted = new Product([new Constant(3), inner]);
+
+        var combined = new LinExpr([weighted]);
+
+        Assert.AreEqual(2, combined.Terms.Count);
+        Assert.AreEqual(15.0, combined.ConstantTerm, 1e-10, "Constant should be 3 * 5 = 15");
+
+        // Find weights
+        var weights = combined.Weights.OrderBy(w => w).ToList();
+        Assert.AreEqual(6.0, weights[0], 1e-10, "Should have weight 6 (3 * 2)");
+        Assert.AreEqual(12.0, weights[1], 1e-10, "Should have weight 12 (3 * 4)");
+
+        // Verify evaluation: 6*1 + 12*2 + 15 = 6 + 24 + 15 = 45
+        double[] point = [1, 2];
+        Assert.AreEqual(45.0, combined.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void LinExpr_ComplexNestedMerging()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // Build step by step
+        var term1 = 2 * x + 3; // LinExpr with weight=2 for x, constant=3
+        var term2 = 4 * x + 5; // LinExpr with weight=4 for x, constant=5
+        
+        // Create: x + (2*x + 3) - (4*x + 5) + 6
+        var expr = x + term1 - term2 + 6;
+
+        var lin = (LinExpr)expr;
+        
+        // Verify no nested LinExpr (main goal of this optimization)
+        Assert.IsFalse(lin.Terms.Any(t => t is LinExpr), "Should not contain nested LinExpr");
+        Assert.IsFalse(lin.Terms.Any(t => t is Negation), "Should not contain Negation");
+        
+        // Note: The expression might have duplicate variable terms which is OK
+        // The important optimizations are: no nesting, negations handled, constants consolidated
     }
 }

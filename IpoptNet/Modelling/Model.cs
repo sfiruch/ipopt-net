@@ -34,6 +34,62 @@ public sealed class Model : IDisposable
     public void AddConstraint(Expr expression, double lowerBound, double upperBound) =>
         _constraints.Add(new Constraint(expression, lowerBound, upperBound));
 
+    /// <summary>
+    /// Prints all expression trees in the model for debugging.
+    /// </summary>
+    /// <param name="writer">The TextWriter to write to. Defaults to Console.Out if null.</param>
+    public void Print(TextWriter? writer = null)
+    {
+        writer ??= Console.Out;
+        
+        writer.WriteLine("=== Model ===");
+        writer.WriteLine($"Variables: {_variables.Count}");
+        for (int i = 0; i < _variables.Count; i++)
+        {
+            var v = _variables[i];
+            var bounds = "";
+            if (v.LowerBound > double.NegativeInfinity && v.UpperBound < double.PositiveInfinity)
+                bounds = $" in [{v.LowerBound}, {v.UpperBound}]";
+            else if (v.LowerBound > double.NegativeInfinity)
+                bounds = $" >= {v.LowerBound}";
+            else if (v.UpperBound < double.PositiveInfinity)
+                bounds = $" <= {v.UpperBound}";
+            
+            writer.WriteLine($"  x[{i}]{bounds}, start={v.Start}");
+        }
+
+        writer.WriteLine();
+        writer.WriteLine("Objective:");
+        if (_objective is not null)
+        {
+            _objective.Print(writer, "  ");
+        }
+        else
+        {
+            writer.WriteLine("  (not set)");
+        }
+
+        writer.WriteLine();
+        writer.WriteLine($"Constraints: {_constraints.Count}");
+        for (int i = 0; i < _constraints.Count; i++)
+        {
+            var c = _constraints[i];
+            var boundsStr = "";
+            if (Math.Abs(c.LowerBound - c.UpperBound) < 1e-15)
+                boundsStr = $" == {c.LowerBound}";
+            else if (c.LowerBound > double.NegativeInfinity && c.UpperBound < double.PositiveInfinity)
+                boundsStr = $" in [{c.LowerBound}, {c.UpperBound}]";
+            else if (c.LowerBound > double.NegativeInfinity)
+                boundsStr = $" >= {c.LowerBound}";
+            else if (c.UpperBound < double.PositiveInfinity)
+                boundsStr = $" <= {c.UpperBound}";
+
+            writer.WriteLine($"  Constraint[{i}]{boundsStr}:");
+            c.Expression.Print(writer, "    ");
+        }
+        writer.WriteLine("=============");
+    }
+
     public ModelResult Solve(bool updateStartValues = true)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
