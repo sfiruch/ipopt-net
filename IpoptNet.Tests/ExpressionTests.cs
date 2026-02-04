@@ -1109,4 +1109,389 @@ public class ExpressionTests
         // Note: The expression might have duplicate variable terms which is OK
         // The important optimizations are: no nesting, negations handled, constants consolidated
     }
+
+    [TestMethod]
+    public void QuadExpr_SimpleQuadratic()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // x^2
+        var expr = Expr.Pow(x, 2);
+
+        Assert.IsInstanceOfType(expr, typeof(PowerOp)); // Pow itself is not QuadExpr
+        
+        // But wrapping in QuadExpr should recognize it
+        var quad = new QuadExpr([expr]);
+        Assert.AreEqual(1, quad.QuadraticTerms1.Count);
+        Assert.AreEqual(0, quad.LinearTerms.Count);
+        Assert.AreEqual(0.0, quad.ConstantTerm);
+        Assert.AreEqual(1.0, quad.QuadraticWeights[0]);
+
+        // Evaluate: x=3 → 3^2 = 9
+        double[] point = [3];
+        Assert.AreEqual(9.0, quad.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_WeightedQuadratic()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // 3*x^2
+        var expr = new QuadExpr([3 * Expr.Pow(x, 2)]);
+
+        Assert.AreEqual(1, expr.QuadraticTerms1.Count);
+        Assert.AreEqual(3.0, expr.QuadraticWeights[0]);
+
+        // Evaluate: x=2 → 3*4 = 12
+        double[] point = [2];
+        Assert.AreEqual(12.0, expr.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_Bilinear()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // x*y
+        var expr = new QuadExpr([x * y]);
+
+        Assert.AreEqual(1, expr.QuadraticTerms1.Count);
+        Assert.AreEqual(0, expr.LinearTerms.Count);
+        Assert.AreEqual(1.0, expr.QuadraticWeights[0]);
+
+        // Evaluate: x=3, y=4 → 12
+        double[] point = [3, 4];
+        Assert.AreEqual(12.0, expr.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_MixedExpression()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // 2*x^2 + 3*x*y + 4*x + 5
+        var expr = new QuadExpr([2 * Expr.Pow(x, 2), 3 * x * y, 4 * x, new Constant(5)]);
+
+        Assert.AreEqual(2, expr.QuadraticTerms1.Count); // x^2 and x*y
+        Assert.AreEqual(1, expr.LinearTerms.Count); // x
+        Assert.AreEqual(5.0, expr.ConstantTerm);
+
+        // Evaluate: x=2, y=3 → 2*4 + 3*2*3 + 4*2 + 5 = 8 + 18 + 8 + 5 = 39
+        double[] point = [2, 3];
+        Assert.AreEqual(39.0, expr.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_LinExprTimesLinExpr()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // (2*x + 3) * (4*y + 5)
+        var lin1 = new LinExpr([2 * x, new Constant(3)]);
+        var lin2 = new LinExpr([4 * y, new Constant(5)]);
+        var expr = new QuadExpr([lin1 * lin2]);
+
+        // Expansion: 2*x*4*y + 2*x*5 + 3*4*y + 3*5 = 8*x*y + 10*x + 12*y + 15
+        Assert.AreEqual(1, expr.QuadraticTerms1.Count); // x*y
+        Assert.AreEqual(2, expr.LinearTerms.Count); // x and y
+        Assert.AreEqual(15.0, expr.ConstantTerm);
+
+        // Evaluate: x=1, y=2 → (2+3)*(8+5) = 5*13 = 65
+        double[] point = [1, 2];
+        Assert.AreEqual(65.0, expr.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_VariableSquaredAsProduct()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // x*x (should be recognized as x^2)
+        var expr = new QuadExpr([x * x]);
+
+        Assert.AreEqual(1, expr.QuadraticTerms1.Count);
+        Assert.AreSame(expr.QuadraticTerms1[0], expr.QuadraticTerms2[0]); // Same variable
+
+        // Evaluate: x=5 → 25
+        double[] point = [5];
+        Assert.AreEqual(25.0, expr.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_MergesNestedQuadExpr()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var quad1 = new QuadExpr([x * x, 2 * x]);
+        var quad2 = new QuadExpr([y * y, 3 * y]);
+        
+        // Combine them
+        var combined = new QuadExpr([quad1, quad2, new Constant(5)]);
+
+        Assert.AreEqual(2, combined.QuadraticTerms1.Count); // x^2 and y^2
+        Assert.AreEqual(2, combined.LinearTerms.Count); // x and y
+        Assert.AreEqual(5.0, combined.ConstantTerm);
+
+        // Verify no nested QuadExprs
+        Assert.IsFalse(combined.LinearTerms.Any(t => t is QuadExpr));
+        Assert.IsFalse(combined.QuadraticTerms1.Any(t => t is QuadExpr));
+        Assert.IsFalse(combined.QuadraticTerms2.Any(t => t is QuadExpr));
+    }
+
+    [TestMethod]
+    public void QuadExpr_Negation()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // -(x^2)
+        var expr = new QuadExpr([-Expr.Pow(x, 2)]);
+
+        Assert.AreEqual(1, expr.QuadraticTerms1.Count);
+        Assert.AreEqual(-1.0, expr.QuadraticWeights[0]);
+
+        // Evaluate: x=3 → -9
+        double[] point = [3];
+        Assert.AreEqual(-9.0, expr.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_ComplexExpansion()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+        var z = model.AddVariable();
+
+        // (x + y) * (y + z) = x*y + x*z + y*y + y*z
+        var lin1 = new LinExpr([x, y]);
+        var lin2 = new LinExpr([y, z]);
+        var expr = new QuadExpr([lin1 * lin2]);
+
+        // Should have 4 quadratic terms
+        Assert.AreEqual(4, expr.QuadraticTerms1.Count);
+        Assert.AreEqual(0.0, expr.ConstantTerm);
+
+        // Evaluate: x=1, y=2, z=3 → (1+2)*(2+3) = 3*5 = 15
+        double[] point = [1, 2, 3];
+        Assert.AreEqual(15.0, expr.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_Print()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create a quadratic expression
+        var expr = new QuadExpr([x*x, 2*x*y, 3*x, new Constant(4)]);
+
+        // Test Print to StringWriter
+        var sw = new StringWriter();
+        expr.Print(sw);
+        var output = sw.ToString();
+
+        Assert.IsTrue(output.Contains("QuadExpr"));
+        Assert.IsTrue(output.Contains("linear"));
+        Assert.IsTrue(output.Contains("quadratic"));
+        Assert.IsTrue(output.Contains("constant=4"));
+    }
+
+    [TestMethod]
+    public void Operators_AutoCreateQuadExpr()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // x * y creates Product
+        var xy = x * y;
+        Assert.IsInstanceOfType(xy, typeof(Product), "x*y alone is Product");
+
+        // x * y + 5 should be QuadExpr (Product with 2 non-constants triggers QuadExpr)
+        var expr1 = x * y + 5;
+        Assert.IsInstanceOfType(expr1, typeof(QuadExpr), "x*y + 5 should be QuadExpr");
+
+        // 2*x + 3*y should be LinExpr
+        var expr2 = 2*x + 3*y;
+        Assert.IsInstanceOfType(expr2, typeof(LinExpr), "2*x + 3*y should be LinExpr");
+
+        // x*x + 2*x + 1 should be QuadExpr
+        var expr3 = x*x + 2*x + 1;
+        Assert.IsInstanceOfType(expr3, typeof(QuadExpr), "x*x + 2*x + 1 should be QuadExpr");
+        
+        // Pow(x, 2) + 1 should be QuadExpr
+        var expr4 = Expr.Pow(x, 2) + 1;
+        Assert.IsInstanceOfType(expr4, typeof(QuadExpr), "x^2 + 1 should be QuadExpr");
+    }
+
+    [TestMethod]
+    public void QuadExpr_CleanupLinExprWithProducts()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Manually create a LinExpr with Product terms (simulating old code path)
+        var linWithProducts = new LinExpr();
+        linWithProducts.Terms.Add(x * y);  // Product
+        linWithProducts.Weights.Add(1.0);
+        linWithProducts.ConstantTerm = 5.0;
+
+        // Create QuadExpr from this LinExpr - should extract the Product into quadratic terms
+        var quad = new QuadExpr([linWithProducts]);
+
+        // The Product should have been moved to quadratic terms, not left in linear terms
+        Assert.AreEqual(0, quad.LinearTerms.Count, "Should have no linear terms");
+        Assert.AreEqual(1, quad.QuadraticTerms1.Count, "Should have 1 quadratic term");
+        Assert.AreEqual(5.0, quad.ConstantTerm);
+
+        // Verify no nested Products in linear terms
+        foreach (var term in quad.LinearTerms)
+        {
+            Assert.IsFalse(term is Product, "LinearTerms should not contain Product nodes");
+        }
+
+        // Verify evaluation: x*y + 5 at [2, 3] = 6 + 5 = 11
+        double[] point = [2, 3];
+        Assert.AreEqual(11.0, quad.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_ResidualSquared()
+    {
+        var model = new Model();
+        var variable = model.AddVariable();
+
+        // Simulate: obj += (variable - 5)^2
+        Expr obj = new Constant(0);
+        var residual = variable - 5.0;
+        
+        Console.WriteLine("residual type: " + residual.GetType().Name);
+        if (residual is LinExpr lin)
+        {
+            Console.WriteLine("  LinExpr with " + lin.Terms.Count + " terms");
+            for (int i = 0; i < lin.Terms.Count; i++)
+            {
+                Console.WriteLine("    Term[" + i + "]: " + lin.Terms[i].GetType().Name + " weight=" + lin.Weights[i]);
+            }
+            Console.WriteLine("  ConstantTerm: " + lin.ConstantTerm);
+        }
+        
+        obj += residual * residual;
+        
+        Console.WriteLine("\nobj type after +=: " + obj.GetType().Name);
+        if (obj is QuadExpr quad)
+        {
+            Console.WriteLine("QuadExpr details:");
+            Console.WriteLine("  LinearTerms: " + quad.LinearTerms.Count);
+            for (int i = 0; i < quad.LinearTerms.Count; i++)
+            {
+                Console.WriteLine("    LinearTerm[" + i + "]: " + quad.LinearTerms[i].GetType().Name);
+            }
+            Console.WriteLine("  QuadraticTerms: " + quad.QuadraticTerms1.Count);
+            Console.WriteLine("  ConstantTerm: " + quad.ConstantTerm);
+            
+            // Should have NO Product nodes in LinearTerms
+            foreach (var term in quad.LinearTerms)
+            {
+                Assert.IsFalse(term is Product, "LinearTerms should not contain Product nodes");
+            }
+            
+            // Should have 1 quadratic term (variable * variable)
+            Assert.AreEqual(1, quad.QuadraticTerms1.Count, "Should have 1 quadratic term");
+            
+            // Verify evaluation: (x - 5)^2 at x=3 → (-2)^2 = 4
+            double[] point = [3];
+            Assert.AreEqual(4.0, quad.Evaluate(point), 1e-10);
+        }
+    }
+
+    [TestMethod]
+    public void QuadExpr_AccumulateResidualSquared()
+    {
+        var model = new Model();
+        var v = new Variable[50];
+        for (int i = 0; i < 50; i++)
+        {
+            v[i] = model.AddVariable();
+        }
+
+        // Accumulate 50 residual squared terms - exactly as user does it
+        Expr obj = 0;
+        for (int i = 0; i < 50; i++)
+        {
+            var residual = v[i] - 5;
+            obj += residual * residual;
+        }
+
+        // Get the actual expression (might be behind _replacement)
+        var actualExpr = obj.GetActual();
+
+        // MUST be QuadExpr
+        Assert.IsInstanceOfType(actualExpr, typeof(QuadExpr), $"Expected QuadExpr but got {actualExpr.GetType().Name}");
+        var quad = (QuadExpr)actualExpr;
+
+        // CRITICAL: Verify NO Product nodes anywhere in LinearTerms
+        Console.WriteLine($"\n=== QuadExpr Structure ===");
+        Console.WriteLine($"ConstantTerm: {quad.ConstantTerm}");
+        Console.WriteLine($"LinearTerms: {quad.LinearTerms.Count}");
+        Console.WriteLine($"QuadraticTerms: {quad.QuadraticTerms1.Count}");
+        
+        for (int i = 0; i < quad.LinearTerms.Count; i++)
+        {
+            var term = quad.LinearTerms[i];
+            var weight = quad.LinearWeights[i];
+            Console.WriteLine($"  Linear[{i}]: {term.GetType().Name} (weight={weight})");
+            
+            // FAIL if we find a Product
+            if (term is Product prod)
+            {
+                Console.WriteLine($"    ERROR: Product found with {prod.Factors.Count} factors:");
+                for (int j = 0; j < prod.Factors.Count; j++)
+                {
+                    Console.WriteLine($"      Factor[{j}]: {prod.Factors[j].GetType().Name}");
+                    if (prod.Factors[j] is LinExpr linExpr)
+                    {
+                        Console.WriteLine($"        LinExpr with {linExpr.Terms.Count} terms, constant={linExpr.ConstantTerm}");
+                    }
+                }
+                Assert.Fail($"LinearTerms[{i}] is a Product - should have been expanded to quadratic terms!");
+            }
+            
+            // Linear terms should only be Variable or similar simple expressions
+            Assert.IsTrue(term is Variable || term is Negation, 
+                $"Linear term should be Variable or Negation, not {term.GetType().Name}");
+        }
+
+        // Verify quadratic structure: (v[i] - 5)^2 = v[i]^2 - 10*v[i] + 25
+        // Should have exactly 50 quadratic terms (one v[i]^2 per variable)
+        Assert.AreEqual(50, quad.QuadraticTerms1.Count, "Should have 50 quadratic terms");
+        
+        // All quadratic terms should be v[i] * v[i] (same variable squared)
+        for (int i = 0; i < quad.QuadraticTerms1.Count; i++)
+        {
+            Assert.IsInstanceOfType(quad.QuadraticTerms1[i], typeof(Variable), 
+                $"QuadraticTerm1[{i}] should be Variable");
+            Assert.IsInstanceOfType(quad.QuadraticTerms2[i], typeof(Variable), 
+                $"QuadraticTerm2[{i}] should be Variable");
+            Assert.AreEqual(quad.QuadraticTerms1[i], quad.QuadraticTerms2[i], 
+                $"QuadraticTerm {i} should be same variable squared");
+        }
+
+        Console.WriteLine($"\n=== Test PASSED - No Products in LinearTerms ===\n");
+    }
 }
