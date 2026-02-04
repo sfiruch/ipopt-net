@@ -24,7 +24,7 @@ public sealed class Variable : Expr
         grad[Index] += multiplier;
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         // Variable has no second derivative contribution
     }

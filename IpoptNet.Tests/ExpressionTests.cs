@@ -233,9 +233,8 @@ public class ExpressionTests
         double[] point = [3.0, 5.0];
 
         var n = point.Length;
-        var grad = new double[n];
         var hess = new HessianAccumulator(n);
-        expr.AccumulateHessian(point, grad, hess, 1.0);
+        expr.AccumulateHessian(point, hess, 1.0);
 
         // Analytical Hessian for f(x,y) = x*y:
         // H[0,0] = ∂²f/∂x² = 0
@@ -279,9 +278,8 @@ public class ExpressionTests
         Assert.IsInstanceOfType(expr, typeof(Product), "x*y*z should create a Product");
 
         var n = point.Length;
-        var grad = new double[n];
         var hess = new HessianAccumulator(n);
-        expr.AccumulateHessian(point, grad, hess, 1.0);
+        expr.AccumulateHessian(point, hess, 1.0);
 
         // Analytical values:
         // ∂²f/∂x∂y = z = 5.0
@@ -320,9 +318,8 @@ public class ExpressionTests
     private static void AssertHessianMatchesFiniteDifference(Expr expr, double[] point)
     {
         var n = point.Length;
-        var grad = new double[n];
         var hess = new HessianAccumulator(n);
-        expr.AccumulateHessian(point, grad, hess, 1.0);
+        expr.AccumulateHessian(point, hess, 1.0);
 
         var fdHess = ComputeFiniteDifferenceHessian(expr, point);
 

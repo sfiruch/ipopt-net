@@ -11,12 +11,36 @@ public abstract class Expr
     public double Evaluate(ReadOnlySpan<double> x) => _replacement?.Evaluate(x) ?? EvaluateCore(x);
     public void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad, double multiplier) =>
         (_replacement ?? this).AccumulateGradientCore(x, grad, multiplier);
-    public void AccumulateHessian(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier) =>
-        (_replacement ?? this).AccumulateHessianCore(x, grad, hess, multiplier);
+    public void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) =>
+        (_replacement ?? this).AccumulateHessianCore(x, hess, multiplier);
     public void CollectVariables(HashSet<Variable> variables) =>
         (_replacement ?? this).CollectVariablesCore(variables);
     public void CollectHessianSparsity(HashSet<(int row, int col)> entries) =>
         (_replacement ?? this).CollectHessianSparsityCore(entries);
+
+    protected void AccumulateOuterHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double coeff, HashSet<Variable> vars, double[] rentedGrad)
+    {
+        if (Math.Abs(coeff) < 1e-18) return;
+
+        // Only iterate over non-zero entries
+        var nonZeros = new List<int>(vars.Count);
+        foreach (var v in vars)
+            if (Math.Abs(rentedGrad[v.Index]) > 1e-18)
+                nonZeros.Add(v.Index);
+
+        nonZeros.Sort();
+
+        for (int i = 0; i < nonZeros.Count; i++)
+        {
+            int row = nonZeros[i];
+            double valI = rentedGrad[row];
+            for (int j = 0; j <= i; j++)
+            {
+                int col = nonZeros[j];
+                hess.Add(row, col, coeff * valI * rentedGrad[col]);
+            }
+        }
+    }
 
     /// <summary>
     /// Returns true if this expression contains no variables (is a constant value).
@@ -37,7 +61,7 @@ public abstract class Expr
 
     protected abstract double EvaluateCore(ReadOnlySpan<double> x);
     protected abstract void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier);
-    protected abstract void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier);
+    protected abstract void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier);
     protected abstract void CollectVariablesCore(HashSet<Variable> variables);
     protected abstract void CollectHessianSparsityCore(HashSet<(int row, int col)> entries);
     protected abstract bool IsConstantWrtXCore();
@@ -295,7 +319,7 @@ public sealed class Constant : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => Value;
     protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier) { }
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier) { }
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) { }
     protected override void CollectVariablesCore(HashSet<Variable> variables) { }
     protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries) { }
     protected override bool IsConstantWrtXCore() => true;
@@ -332,29 +356,70 @@ public sealed class Division : Expr
         Right.AccumulateGradient(x, grad, -multiplier * lVal / (rVal * rVal));
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
-        // d(L/R)/dx = (dL/dx * R - L * dR/dx) / R²
-        // d²(L/R)/dx² = d²L/dx²/R - L*d²R/dx²/R² - 2*dL/dx*dR/dx/R² + 2*L*(dR/dx)²/R³
-        var rVal = Right.Evaluate(x);
+        // f = l / r
+        // df/dx = (l'r - lr') / r²
+        // d²f/dx² = ((l''r + l'r' - l'r' - lr'')r² - (l'r - lr')2rr') / r⁴
+        //         = ((l''r - lr'')r² - 2rr'(l'r - lr')) / r⁴
+        //         = (l''r - lr'')/r² - 2r'(l'r - lr')/r³
+        //         = l''/r - lr''/r² - 2l'r'/r² + 2lr'²/r³
         var lVal = Left.Evaluate(x);
+        var rVal = Right.Evaluate(x);
         var r2 = rVal * rVal;
         var r3 = r2 * rVal;
-        Left.AccumulateHessian(x, grad, hess, multiplier / rVal);
-        Right.AccumulateHessian(x, grad, hess, -multiplier * lVal / r2);
-        var n = grad.Length;
-        Span<double> gradL = new double[n];
-        Span<double> gradR = new double[n];
+
+        if (Math.Abs(multiplier) < 1e-18) return;
+
+        Left.AccumulateHessian(x, hess, multiplier / rVal);
+        Right.AccumulateHessian(x, hess, -multiplier * lVal / r2);
+
+        var n = x.Length;
+        var gradL = ArrayPool<double>.Shared.Rent(n);
+        var gradR = ArrayPool<double>.Shared.Rent(n);
+
+        var varsL = new HashSet<Variable>();
+        var varsR = new HashSet<Variable>();
+        Left.CollectVariables(varsL);
+        Right.CollectVariables(varsR);
+
+        if (varsL.Count < n / 32) foreach (var v in varsL) gradL[v.Index] = 0; else Array.Clear(gradL);
+        if (varsR.Count < n / 32) foreach (var v in varsR) gradR[v.Index] = 0; else Array.Clear(gradR);
+
         Left.AccumulateGradient(x, gradL, 1.0);
         Right.AccumulateGradient(x, gradR, 1.0);
-        for (int i = 0; i < n; i++)
-            for (int j = 0; j <= i; j++)
+
+        // Add 2lr'²/r³ (outer product of r' with itself)
+        AccumulateOuterHessian(x, hess, multiplier * 2 * lVal / r3, varsR, gradR);
+
+        // Add -l'r'/r² (outer products between l' and r')
+        // Cross derivative term is -(l'_x r'_y + l'_y r'_x) / r²
+        var coeff = -multiplier / r2;
+        var nonZerosL = new List<int>(varsL.Count);
+        foreach (var v in varsL) if (Math.Abs(gradL[v.Index]) > 1e-18) nonZerosL.Add(v.Index);
+        var nonZerosR = new List<int>(varsR.Count);
+        foreach (var v in varsR) if (Math.Abs(gradR[v.Index]) > 1e-18) nonZerosR.Add(v.Index);
+
+        foreach (var i in nonZerosL)
+        {
+            var valLi = gradL[i];
+            foreach (var j in nonZerosR)
             {
-                var cross = -multiplier / r2 * (gradL[i] * gradR[j] + gradL[j] * gradR[i]);
-                var rr = multiplier * 2 * lVal / r3 * gradR[i] * gradR[j];
-                hess.Add(i, j, cross + rr);
+                // Symmetric contribution: -(l'_i * r'_j + l'_j * r'_i) / r²
+                // We add both directions to ensure symmetry if the index sets overlap.
+                // For x/y, l'=[1,0], r'=[0,1]:
+                // i=0, j=1: Adds coeff * l'[0] * r'[1] = coeff * 1 * 1
+                //           Adds coeff * l'[1] * r'[0] = coeff * 0 * 0
+                // Total H[1,0] = coeff
+                hess.Add(i, j, coeff * valLi * gradR[j]);
+                hess.Add(j, i, coeff * gradL[j] * gradR[i]);
             }
+        }
+
+        ArrayPool<double>.Shared.Return(gradL);
+        ArrayPool<double>.Shared.Return(gradR);
     }
+
 
     protected override void CollectVariablesCore(HashSet<Variable> variables)
     {
@@ -414,9 +479,9 @@ public sealed class Negation : Expr
         Operand.AccumulateGradient(x, grad, -multiplier);
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
-        Operand.AccumulateHessian(x, grad, hess, -multiplier);
+        Operand.AccumulateHessian(x, hess, -multiplier);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Operand.CollectVariables(variables);
@@ -449,19 +514,29 @@ public sealed class PowerOp : Expr
         Base.AccumulateGradient(x, grad, multiplier * deriv);
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         // d²(b^n)/dx² = n*(n-1)*b^(n-2)*(db/dx)² + n*b^(n-1)*d²b/dx²
         var bVal = Base.Evaluate(x);
         var firstDerivCoeff = Exponent * Math.Pow(bVal, Exponent - 1);
         var secondDerivCoeff = Exponent * (Exponent - 1) * Math.Pow(bVal, Exponent - 2);
-        Base.AccumulateHessian(x, grad, hess, multiplier * firstDerivCoeff);
-        var n = grad.Length;
-        Span<double> gradB = new double[n];
+        Base.AccumulateHessian(x, hess, multiplier * firstDerivCoeff);
+
+        var n = x.Length;
+        var gradB = ArrayPool<double>.Shared.Rent(n);
+        
+        var vars = new HashSet<Variable>();
+        Base.CollectVariables(vars);
+
+        if (vars.Count < n / 32)
+            foreach (var v in vars) gradB[v.Index] = 0;
+        else
+            Array.Clear(gradB);
+
         Base.AccumulateGradient(x, gradB, 1.0);
-        for (int i = 0; i < n; i++)
-            for (int j = 0; j <= i; j++)
-                hess.Add(i, j, multiplier * secondDerivCoeff * gradB[i] * gradB[j]);
+        AccumulateOuterHessian(x, hess, multiplier * secondDerivCoeff, vars, gradB);
+
+        ArrayPool<double>.Shared.Return(gradB);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Base.CollectVariables(variables);
@@ -514,16 +589,26 @@ public sealed class Sin : Expr
         Argument.AccumulateGradient(x, grad, multiplier * Math.Cos(arg));
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         var arg = Argument.Evaluate(x);
-        Argument.AccumulateHessian(x, grad, hess, multiplier * Math.Cos(arg));
-        var n = grad.Length;
-        Span<double> gradArg = new double[n];
+        Argument.AccumulateHessian(x, hess, multiplier * Math.Cos(arg));
+
+        var n = x.Length;
+        var gradArg = ArrayPool<double>.Shared.Rent(n);
+        
+        var vars = new HashSet<Variable>();
+        Argument.CollectVariables(vars);
+
+        if (vars.Count < n / 32)
+            foreach (var v in vars) gradArg[v.Index] = 0;
+        else
+            Array.Clear(gradArg);
+
         Argument.AccumulateGradient(x, gradArg, 1.0);
-        for (int i = 0; i < n; i++)
-            for (int j = 0; j <= i; j++)
-                hess.Add(i, j, multiplier * -Math.Sin(arg) * gradArg[i] * gradArg[j]);
+        AccumulateOuterHessian(x, hess, multiplier * -Math.Sin(arg), vars, gradArg);
+
+        ArrayPool<double>.Shared.Return(gradArg);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
@@ -557,16 +642,26 @@ public sealed class Cos : Expr
         Argument.AccumulateGradient(x, grad, multiplier * -Math.Sin(arg));
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         var arg = Argument.Evaluate(x);
-        Argument.AccumulateHessian(x, grad, hess, multiplier * -Math.Sin(arg));
-        var n = grad.Length;
-        Span<double> gradArg = new double[n];
+        Argument.AccumulateHessian(x, hess, multiplier * -Math.Sin(arg));
+
+        var n = x.Length;
+        var gradArg = ArrayPool<double>.Shared.Rent(n);
+        
+        var vars = new HashSet<Variable>();
+        Argument.CollectVariables(vars);
+
+        if (vars.Count < n / 32)
+            foreach (var v in vars) gradArg[v.Index] = 0;
+        else
+            Array.Clear(gradArg);
+
         Argument.AccumulateGradient(x, gradArg, 1.0);
-        for (int i = 0; i < n; i++)
-            for (int j = 0; j <= i; j++)
-                hess.Add(i, j, multiplier * -Math.Cos(arg) * gradArg[i] * gradArg[j]);
+        AccumulateOuterHessian(x, hess, multiplier * -Math.Cos(arg), vars, gradArg);
+
+        ArrayPool<double>.Shared.Return(gradArg);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
@@ -601,18 +696,28 @@ public sealed class Tan : Expr
         Argument.AccumulateGradient(x, grad, multiplier / (cos * cos));
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         var arg = Argument.Evaluate(x);
         var cos = Math.Cos(arg);
-        Argument.AccumulateHessian(x, grad, hess, multiplier / (cos * cos));
-        var n = grad.Length;
-        Span<double> gradArg = new double[n];
+        Argument.AccumulateHessian(x, hess, multiplier / (cos * cos));
+
+        var n = x.Length;
+        var gradArg = ArrayPool<double>.Shared.Rent(n);
+        
+        var vars = new HashSet<Variable>();
+        Argument.CollectVariables(vars);
+
+        if (vars.Count < n / 32)
+            foreach (var v in vars) gradArg[v.Index] = 0;
+        else
+            Array.Clear(gradArg);
+
         Argument.AccumulateGradient(x, gradArg, 1.0);
         var secondDeriv = 2 * Math.Tan(arg) / (cos * cos);
-        for (int i = 0; i < n; i++)
-            for (int j = 0; j <= i; j++)
-                hess.Add(i, j, multiplier * secondDeriv * gradArg[i] * gradArg[j]);
+        AccumulateOuterHessian(x, hess, multiplier * secondDeriv, vars, gradArg);
+
+        ArrayPool<double>.Shared.Return(gradArg);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
@@ -646,17 +751,27 @@ public sealed class Exp : Expr
         Argument.AccumulateGradient(x, grad, multiplier * Math.Exp(arg));
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         var arg = Argument.Evaluate(x);
         var expVal = Math.Exp(arg);
-        Argument.AccumulateHessian(x, grad, hess, multiplier * expVal);
-        var n = grad.Length;
-        Span<double> gradArg = new double[n];
+        Argument.AccumulateHessian(x, hess, multiplier * expVal);
+
+        var n = x.Length;
+        var gradArg = ArrayPool<double>.Shared.Rent(n);
+        
+        var vars = new HashSet<Variable>();
+        Argument.CollectVariables(vars);
+
+        if (vars.Count < n / 32)
+            foreach (var v in vars) gradArg[v.Index] = 0;
+        else
+            Array.Clear(gradArg);
+
         Argument.AccumulateGradient(x, gradArg, 1.0);
-        for (int i = 0; i < n; i++)
-            for (int j = 0; j <= i; j++)
-                hess.Add(i, j, multiplier * expVal * gradArg[i] * gradArg[j]);
+        AccumulateOuterHessian(x, hess, multiplier * expVal, vars, gradArg);
+
+        ArrayPool<double>.Shared.Return(gradArg);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
@@ -690,17 +805,27 @@ public sealed class Log : Expr
         Argument.AccumulateGradient(x, grad, multiplier / arg);
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         var arg = Argument.Evaluate(x);
-        Argument.AccumulateHessian(x, grad, hess, multiplier / arg);
-        var n = grad.Length;
-        Span<double> gradArg = new double[n];
+        Argument.AccumulateHessian(x, hess, multiplier / arg);
+
+        var n = x.Length;
+        var gradArg = ArrayPool<double>.Shared.Rent(n);
+        
+        var vars = new HashSet<Variable>();
+        Argument.CollectVariables(vars);
+
+        if (vars.Count < n / 32)
+            foreach (var v in vars) gradArg[v.Index] = 0;
+        else
+            Array.Clear(gradArg);
+
         Argument.AccumulateGradient(x, gradArg, 1.0);
         var secondDeriv = -1.0 / (arg * arg);
-        for (int i = 0; i < n; i++)
-            for (int j = 0; j <= i; j++)
-                hess.Add(i, j, multiplier * secondDeriv * gradArg[i] * gradArg[j]);
+        AccumulateOuterHessian(x, hess, multiplier * secondDeriv, vars, gradArg);
+
+        ArrayPool<double>.Shared.Return(gradArg);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
@@ -741,10 +866,10 @@ public sealed class Sum : Expr
             term.AccumulateGradient(x, grad, multiplier);
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         foreach (var term in Terms)
-            term.AccumulateHessian(x, grad, hess, multiplier);
+            term.AccumulateHessian(x, hess, multiplier);
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables)
@@ -796,17 +921,17 @@ public sealed class Product : Expr
         }
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, Span<double> grad, HessianAccumulator hess, double multiplier)
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         if (Factors.Count == 0)
             return;
         if (Factors.Count == 1)
         {
-            Factors[0].AccumulateHessian(x, grad, hess, multiplier);
+            Factors[0].AccumulateHessian(x, hess, multiplier);
             return;
         }
 
-        var n = grad.Length;
+        var n = x.Length;
 
         // Evaluate all factors once
         var factorValues = new double[Factors.Count];
@@ -839,7 +964,7 @@ public sealed class Product : Expr
             }
             else
             {
-                Array.Clear(rented, 0, n);
+                Array.Clear(rented);
             }
 
             factorGradients[i] = rented;
@@ -869,7 +994,7 @@ public sealed class Product : Expr
             }
 
             if (Math.Abs(otherProduct) > 1e-18)
-                Factors[k].AccumulateHessian(x, grad, hess, multiplier * otherProduct);
+                Factors[k].AccumulateHessian(x, hess, multiplier * otherProduct);
         }
 
         // 2. Add cross terms between pairs of factors
@@ -1026,10 +1151,26 @@ public sealed class HessianAccumulator
         entry += value;
     }
 
+    public void Clear() => _entries.Clear();
+
+    public int Count => _entries.Count;
+
+    public bool TryGetValue(int i, int j, out double value)
+    {
+        long key = i >= j ? ((long)i << 32) | (uint)j : ((long)j << 32) | (uint)i;
+        return _entries.TryGetValue(key, out value);
+    }
+
     public IReadOnlyDictionary<(int row, int col), double> Entries =>
         _entries.ToDictionary(kvp => ((int)(kvp.Key >> 32), (int)(kvp.Key & 0xFFFFFFFF)), kvp => kvp.Value);
 
-    public void Clear() => _entries.Clear();
+    public IEnumerable<((int row, int col) key, double value)> GetEntries()
+    {
+        foreach (var kvp in _entries)
+        {
+            yield return (((int)(kvp.Key >> 32), (int)(kvp.Key & 0xFFFFFFFF)), kvp.Value);
+        }
+    }
 
     public int GetNonZeroCount()
     {

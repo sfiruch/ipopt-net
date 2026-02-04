@@ -295,6 +295,8 @@ public sealed class Model : IDisposable
         for (int i = 0; i < structRows.Length; i++)
             indexMap[(structRows[i], structCols[i])] = i;
 
+        var hess = new HessianAccumulator(_variables.Count);
+
         return (int n, double* x, bool newX, double objFactor, int m, double* lambda, bool newLambda,
                 int neleHess, int* iRow, int* jCol, double* values, nint userData) =>
         {
@@ -311,7 +313,7 @@ public sealed class Model : IDisposable
             {
                 var xSpan = new ReadOnlySpan<double>(x, n);
                 Span<double> gradSpan = grad;
-                var hess = new HessianAccumulator(n);
+                hess.Clear();
 
                 // Clear values
                 for (int i = 0; i < neleHess; i++)
@@ -319,17 +321,17 @@ public sealed class Model : IDisposable
 
                 // Objective contribution
                 if (Math.Abs(objFactor) > 1e-15)
-                    _objective!.AccumulateHessian(xSpan, gradSpan, hess, objFactor);
+                    _objective!.AccumulateHessian(xSpan, hess, objFactor);
 
                 // Constraint contributions
                 for (int row = 0; row < m; row++)
                 {
                     if (Math.Abs(lambda[row]) > 1e-15)
-                        _constraints[row].Expression.AccumulateHessian(xSpan, gradSpan, hess, lambda[row]);
+                        _constraints[row].Expression.AccumulateHessian(xSpan, hess, lambda[row]);
                 }
 
-                // Copy to output
-                foreach (var (key, value) in hess.Entries)
+                // Copy to values array
+                foreach (var (key, value) in hess.GetEntries())
                 {
                     if (indexMap.TryGetValue(key, out var idx))
                         values[idx] = value;
@@ -422,6 +424,8 @@ public sealed class Model : IDisposable
         var n = _variables.Count;
         var m = _constraints.Count;
         var zeroX = new double[n];
+        var grad = new double[n];
+        var hess = new HessianAccumulator(n);
 
         // Build a map from (row, col) to index once
         var indexMap = new Dictionary<(int, int), int>();
@@ -431,11 +435,9 @@ public sealed class Model : IDisposable
         // Pre-compute objective Hessian contribution (sparse: only non-zero entries)
         var objectiveHessEntries = new List<(int idx, double value)>();
         {
-            var grad = new double[n];
-            var hess = new HessianAccumulator(n);
-            _objective!.AccumulateHessian(zeroX, grad, hess, 1.0);
+            _objective!.AccumulateHessian(zeroX, hess, 1.0);
 
-            foreach (var (key, value) in hess.Entries)
+            foreach (var (key, value) in hess.GetEntries())
                 objectiveHessEntries.Add((indexMap[key], value));
         }
 
@@ -446,14 +448,13 @@ public sealed class Model : IDisposable
         var constraintHessEntries = new List<(int idx, double value)>[m];
         for (int c = 0; c < m; c++)
         {
-            var grad = new double[n];
-            var hess = new HessianAccumulator(n);
-            _constraints[c].Expression.AccumulateHessian(zeroX, grad, hess, 1.0);
+            hess.Clear();
+            _constraints[c].Expression.AccumulateHessian(zeroX, hess, 1.0);
 
-            if (hess.Entries.Count > 0)
+            if (hess.Count > 0)
             {
-                constraintHessEntries[c] = new List<(int, double)>(hess.Entries.Count);
-                foreach (var (key, value) in hess.Entries)
+                constraintHessEntries[c] = new List<(int, double)>(hess.Count);
+                foreach (var (key, value) in hess.GetEntries())
                     constraintHessEntries[c].Add((indexMap[key], value));
             }
         }
