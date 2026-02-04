@@ -291,6 +291,12 @@ public sealed class IpoptOptions
     public double? WarmStartSlackBoundFrac { get => GetDouble("warm_start_slack_bound_frac"); set => SetDouble("warm_start_slack_bound_frac", value); }
     public double? WarmStartMultiplierInitMax { get => GetDouble("warm_start_mult_init_max"); set => SetDouble("warm_start_mult_init_max", value); }
 
+    // Derivative options
+    public bool? GradFConstant { get => GetBool("grad_f_constant"); set => SetBool("grad_f_constant", value); }
+    public bool? JacCConstant { get => GetBool("jac_c_constant"); set => SetBool("jac_c_constant", value); }
+    public bool? JacDConstant { get => GetBool("jac_d_constant"); set => SetBool("jac_d_constant", value); }
+    public bool? HessianConstant { get => GetBool("hessian_constant"); set => SetBool("hessian_constant", value); }
+
     // Line search options
     public double? AlphaReductionFactor { get => GetDouble("alpha_red_factor"); set => SetDouble("alpha_red_factor", value); }
     public bool? AcceptEveryTrialStep { get => GetBool("accept_every_trial_step"); set => SetBool("accept_every_trial_step", value); }

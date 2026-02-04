@@ -69,13 +69,12 @@ public sealed class Model : IDisposable
         var useLimitedMemory = Options.HessianApproximation == HessianApproximation.LimitedMemory;
         var (hessRows, hessCols) = useLimitedMemory ? (Array.Empty<int>(), Array.Empty<int>()) : AnalyzeHessianSparsity();
 
-        // Create callbacks with automatic constant matrix detection
+        // Create callbacks
         var evalF = CreateEvalFCallback();
-        var evalGradF = _objective.IsLinear() ? CreateCachedEvalGradFCallback() : CreateEvalGradFCallback();
+        var evalGradF = CreateEvalGradFCallback();
         var evalG = CreateEvalGCallback();
-        var evalJacG = _constraints.All(c => c.Expression.IsLinear()) ? CreateCachedEvalJacGCallback(jacRows, jacCols) : CreateEvalJacGCallback(jacRows, jacCols);
-        var evalH = useLimitedMemory ? CreateDummyEvalHCallback() :
-                    (_objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsAtMostQuadratic()) ? CreateCachedEvalHCallback(hessRows, hessCols) : CreateEvalHCallback(hessRows, hessCols));
+        var evalJacG = CreateEvalJacGCallback(jacRows, jacCols);
+        var evalH = useLimitedMemory ? CreateDummyEvalHCallback() : CreateEvalHCallback(hessRows, hessCols);
 
         using var solver = new IpoptSolver(
             n, xL, xU,
@@ -89,6 +88,33 @@ public sealed class Model : IDisposable
              _constraints.Any(c => c.DualStart != 0)))
         {
             Options.WarmStartInitPoint = true;
+        }
+
+        // Auto-enable grad_f_constant if objective has constant gradients and user hasn't explicitly set it
+        if (Options.GradFConstant is null && _objective.IsLinear())
+        {
+            Options.GradFConstant = true;
+        }
+
+        // Auto-enable jac_c_constant if all equality constraints have constant Jacobians
+        var equalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) < 1e-15).ToList();
+        if (Options.JacCConstant is null && equalityConstraints.All(c => c.Expression.IsLinear()))
+        {
+            Options.JacCConstant = true;
+        }
+
+        // Auto-enable jac_d_constant if all inequality constraints have constant Jacobians
+        var inequalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) >= 1e-15).ToList();
+        if (Options.JacDConstant is null && inequalityConstraints.All(c => c.Expression.IsLinear()))
+        {
+            Options.JacDConstant = true;
+        }
+
+        // Auto-enable hessian_constant if objective and all constraints are at most quadratic
+        if (Options.HessianConstant is null && !useLimitedMemory && 
+            _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsAtMostQuadratic()))
+        {
+            Options.HessianConstant = true;
         }
 
         // Apply user-specified options
@@ -353,148 +379,6 @@ public sealed class Model : IDisposable
     {
         return (int n, double* pX, bool newX, double objFactor, int m, double* lambda, bool newLambda,
                 int neleHess, int* iRow, int* jCol, double* pValues, nint userData) => false;
-    }
-
-    private unsafe EvalGradFCallback CreateCachedEvalGradFCallback()
-    {
-        // Objective must be linear when this callback is used
-        Debug.Assert(_objective!.IsLinear());
-
-        // Pre-compute constant objective gradient
-        var cachedGrad = new double[_variables.Count];
-        _objective.AccumulateGradient(new double[_variables.Count], cachedGrad, 1.0);
-        Debug.Assert(cachedGrad.All(v => IsValidNumber(v)));
-
-        return (int n, double* pX, bool newX, double* pGradF, nint userData) =>
-        {
-            var gradF = new Span<double>(pGradF, n);
-            for (int i = 0; i < n; i++)
-                gradF[i] = cachedGrad[i];
-            return true;
-        };
-    }
-
-    private unsafe EvalJacGCallback CreateCachedEvalJacGCallback(int[] structRows, int[] structCols)
-    {
-        // All constraints must be linear when this callback is used
-        Debug.Assert(_constraints.All(c => c.Expression.IsLinear()));
-
-        var rowToEntries = new Dictionary<int, List<(int col, int idx)>>();
-        for (int i = 0; i < structRows.Length; i++)
-        {
-            if (!rowToEntries.ContainsKey(structRows[i]))
-                rowToEntries[structRows[i]] = new List<(int, int)>();
-            rowToEntries[structRows[i]].Add((structCols[i], i));
-        }
-
-        // Pre-compute constant Jacobian values
-        var cachedValues = new double[structRows.Length];
-        var zeroX = new double[_variables.Count];
-        var grad = new double[_variables.Count];
-        for (int row = 0; row < _constraints.Count; row++)
-        {
-            Array.Clear(grad);
-            _constraints[row].Expression.AccumulateGradient(zeroX, grad, 1.0);
-            foreach (var (col, idx) in rowToEntries[row])
-            {
-                cachedValues[idx] = grad[col];
-                Debug.Assert(IsValidNumber(cachedValues[idx]));
-            }
-        }
-
-        return (int n, double* pVx, bool newX, int m, int neleJac, int* iRow, int* jCol, double* pValues, nint userData) =>
-        {
-            if (pValues == null)
-            {
-                // Return sparsity structure
-                for (int i = 0; i < structRows.Length; i++)
-                {
-                    iRow[i] = structRows[i];
-                    jCol[i] = structCols[i];
-                }
-            }
-            else
-            {
-                var values = new Span<double>(pValues, neleJac);
-                for (int i = 0; i < neleJac; i++)
-                    values[i] = cachedValues[i];
-            }
-            return true;
-        };
-    }
-
-    private unsafe EvalHCallback CreateCachedEvalHCallback(int[] structRows, int[] structCols)
-    {
-        // All constraints are at most quadratic when this callback is used
-        Debug.Assert(_constraints.All(c => c.Expression.IsAtMostQuadratic()));
-
-        // Build a map from (row, col) to index once
-        var indexMap = new Dictionary<(int, int), int>();
-        for (int i = 0; i < structRows.Length; i++)
-            indexMap[(structRows[i], structCols[i])] = i;
-
-        // Pre-compute objective Hessian contribution (sparse: only non-zero entries)
-        var zeroX = new double[_variables.Count];
-        var hess = new HessianAccumulator(_variables.Count);
-        var objectiveHessEntries = new List<(int idx, double value)>();
-        {
-            _objective!.AccumulateHessian(zeroX, hess, 1.0);
-
-            foreach (var (key, value) in hess.GetEntries())
-                objectiveHessEntries.Add((indexMap[key], value));
-        }
-
-        // Pre-compute constraint Hessian contributions (sparse: only store non-zero entries per constraint)
-        var constraintHessEntries = new List<(int idx, double value)>[_constraints.Count];
-        for (int c = 0; c < _constraints.Count; c++)
-        {
-            hess.Clear();
-            _constraints[c].Expression.AccumulateHessian(zeroX, hess, 1.0);
-
-            if (hess.Count > 0)
-            {
-                constraintHessEntries[c] = new List<(int, double)>(hess.Count);
-                foreach (var (key, value) in hess.GetEntries())
-                    constraintHessEntries[c].Add((indexMap[key], value));
-            }
-        }
-
-        return (int n, double* pX, bool newX, double objFactor, int m, double* lambda, bool newLambda,
-                int neleHess, int* iRow, int* jCol, double* pValues, nint userData) =>
-        {
-            if (pValues == null)
-            {
-                // Return sparsity structure
-                for (int i = 0; i < structRows.Length; i++)
-                {
-                    iRow[i] = structRows[i];
-                    jCol[i] = structCols[i];
-                }
-            }
-            else
-            {
-                Debug.Assert(IsValidNumber(objFactor));
-
-                var values = new Span<double>(pValues, neleHess);
-
-                values.Clear();
-                foreach (var (idx, value) in objectiveHessEntries)
-                {
-                    values[idx] += objFactor * value;
-                    Debug.Assert(IsValidNumber(values[idx]));
-                }
-
-                // Add constraint contributions (only iterate over non-zero entries)
-                for (int c = 0; c < m; c++)
-                    if (constraintHessEntries[c] != null && Math.Abs(lambda[c]) > 1e-15)
-                        foreach (var (idx, value) in constraintHessEntries[c])
-                        {
-                            values[idx] += lambda[c] * value;
-                            Debug.Assert(IsValidNumber(values[idx]));
-                        }
-            }
-            return true;
-        };
     }
 
     public void Dispose()
