@@ -1780,11 +1780,7 @@ public class QuadExpr : Expr
         {
             if (QuadraticTerms1[i] is Variable v1 && QuadraticTerms2[i] is Variable v2)
             {
-                int idx1 = v1.Index;
-                int idx2 = v2.Index;
-                int row = Math.Min(idx1, idx2);
-                int col = Math.Max(idx1, idx2);
-                entries.Add((row, col));
+                AddSparsityEntry(entries, v1.Index, v2.Index);
             }
             else
             {
