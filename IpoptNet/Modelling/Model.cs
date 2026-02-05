@@ -132,14 +132,6 @@ public sealed class Model : IDisposable
         var evalJacG = CreateEvalJacGCallback(jacRows, jacCols);
         var evalH = useLimitedMemory ? CreateDummyEvalHCallback() : CreateEvalHCallback(hessRows, hessCols);
 
-        // If derivative test is enabled, redirect output to a temp file to capture results
-        string? tempOutputFile = null;
-        bool captureDerivativeTest = Options.DerivativeTest is not null && Options.DerivativeTest != DerivativeTest.None;
-        if (captureDerivativeTest && Options.OutputFile is null)
-        {
-            tempOutputFile = Path.GetTempFileName();
-        }
-
         ApplicationReturnStatus status;
         double objValue;
         SolveStatistics statistics;
@@ -149,13 +141,12 @@ public sealed class Model : IDisposable
         var lowerBoundMultipliers = new double[n];
         var upperBoundMultipliers = new double[n];
 
-        // Run solver in its own scope so it disposes before we read the output file
+        using (var solver = new IpoptSolver(
+            n, xL, xU,
+            m, gL, gU,
+            jacRows.Length, hessRows.Length,
+            evalF, evalGradF, evalG, evalJacG, evalH))
         {
-            using var solver = new IpoptSolver(
-                n, xL, xU,
-                m, gL, gU,
-                jacRows.Length, hessRows.Length,
-                evalF, evalGradF, evalG, evalJacG, evalH);
 
             // Apply user-specified options
             foreach (var (name, value) in Options.Options)
@@ -172,13 +163,6 @@ public sealed class Model : IDisposable
                         solver.SetOption(name, dblValue);
                         break;
                 }
-            }
-
-            // If derivative test is enabled, redirect output to a temp file to capture results
-            if (tempOutputFile is not null)
-            {
-                solver.SetOption("output_file", tempOutputFile);
-                solver.SetOption("file_print_level", 5); // Ensure derivative checker output is captured
             }
 
             // Auto-set constant derivative options if user hasn't explicitly set them
@@ -240,21 +224,6 @@ public sealed class Model : IDisposable
             // Build solution
             for (int i = 0; i < n; i++)
                 solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]);
-        } // solver disposed here
-
-        // Parse derivative test results if we captured output (must be after solver disposal)
-        DerivativeTestResult? derivativeTestResult = null;
-        if (tempOutputFile is not null)
-        {
-            try
-            {
-                derivativeTestResult = ParseDerivativeTestResults(tempOutputFile);
-            }
-            finally
-            {
-                // Clean up temp file
-                try { File.Delete(tempOutputFile); } catch { }
-            }
         }
 
         // Update variable Start values and dual variables if requested and solution is usable
@@ -278,7 +247,7 @@ public sealed class Model : IDisposable
                 _constraints[i].DualStart = constraintMultipliers[i];
         }
 
-        return new ModelResult(status, solution, objValue, statistics, derivativeTestResult);
+        return new ModelResult(status, solution, objValue, statistics);
     }
 
     private (int[] rows, int[] cols) AnalyzeJacobianSparsity()
@@ -486,49 +455,6 @@ public sealed class Model : IDisposable
                 int neleHess, int* iRow, int* jCol, double* pValues, nint userData) => false;
     }
 
-    private static DerivativeTestResult ParseDerivativeTestResults(string outputFile)
-    {
-        var content = File.ReadAllText(outputFile);
-        var lines = content.Split('\n');
-
-        int errorCount = 0;
-        var errorDetails = new List<string>();
-        bool foundDerivativeChecker = false;
-
-        for (int i = 0; i < lines.Length; i++)
-        {
-            var line = lines[i];
-
-            // Look for derivative checker starting
-            if (line.Contains("Starting derivative checker"))
-            {
-                foundDerivativeChecker = true;
-            }
-
-            // Look for "Derivative checker detected X error(s)"
-            if (line.Contains("Derivative checker detected"))
-            {
-                var match = System.Text.RegularExpressions.Regex.Match(line, @"detected (\d+) error");
-                if (match.Success && int.TryParse(match.Groups[1].Value, out int count))
-                {
-                    errorCount += count;
-                }
-            }
-
-            // Capture error lines (marked with *)
-            if (foundDerivativeChecker && line.TrimStart().StartsWith("*"))
-            {
-                errorDetails.Add(line.Trim());
-            }
-        }
-
-        var details = errorDetails.Count > 0
-            ? string.Join(Environment.NewLine, errorDetails)
-            : foundDerivativeChecker ? "All derivative checks passed" : "No derivative checker output found";
-
-        return new DerivativeTestResult(errorCount == 0 && foundDerivativeChecker, errorCount, details);
-    }
-
     public void Dispose()
     {
         _disposed = true;
@@ -539,13 +465,4 @@ public sealed record ModelResult(
     ApplicationReturnStatus Status,
     IReadOnlyDictionary<Variable, double> Solution,
     double ObjectiveValue,
-    SolveStatistics Statistics,
-    DerivativeTestResult? DerivativeTestResult = null);
-
-/// <summary>
-/// Results from IPOPT's derivative checker, if DerivativeTest option was enabled.
-/// </summary>
-public sealed record DerivativeTestResult(
-    bool Passed,
-    int ErrorCount,
-    string Details);
+    SolveStatistics Statistics);

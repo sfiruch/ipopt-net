@@ -28,8 +28,9 @@ public class ModellingTests
         model.AddConstraint(x1 * x2 * x3 * x4 >= 25);
         model.AddConstraint(x1 * x1 + x2 * x2 + x3 * x3 + x4 * x4 == 40);
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
         Assert.AreEqual(1.0, result.Solution[x1], 0.01);
@@ -52,8 +53,9 @@ public class ModellingTests
         // f(x,y) = (1-x)^2 + 100*(y-x^2)^2
         model.SetObjective(Expr.Pow(1 - x, 2) + 100 * Expr.Pow(y - x * x, 2));
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(0.0, result.ObjectiveValue, 0.001);
         Assert.AreEqual(1.0, result.Solution[x], 0.001);
@@ -74,18 +76,13 @@ public class ModellingTests
         // minimize (x-3)^2 + (y-4)^2
         model.SetObjective(Expr.Pow(x - 3, 2) + Expr.Pow(y - 4, 2));
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(0.0, result.ObjectiveValue, 0.001);
         Assert.AreEqual(3.0, result.Solution[x], 0.001);
         Assert.AreEqual(4.0, result.Solution[y], 0.001);
-        
-        // Verify derivative test passed
-        Assert.IsNotNull(result.DerivativeTestResult, "Derivative test should have been captured");
-        Assert.IsTrue(result.DerivativeTestResult.Passed, 
-            $"Derivative test should pass. Errors: {result.DerivativeTestResult.ErrorCount}. Details:\n{result.DerivativeTestResult.Details}");
-        Assert.AreEqual(0, result.DerivativeTestResult.ErrorCount, "Should have no derivative errors");
     }
 
     [TestMethod]
@@ -104,8 +101,9 @@ public class ModellingTests
         model.SetObjective(x * x + y * y);
         model.AddConstraint(x + y == 4);
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(2.0, result.Solution[x], 0.001);
         Assert.AreEqual(2.0, result.Solution[y], 0.001);
@@ -125,8 +123,9 @@ public class ModellingTests
         // optimal at x = pi/2
         model.SetObjective(-Expr.Sin(x));
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(Math.PI / 2, result.Solution[x], 0.01);
         Assert.AreEqual(-1.0, result.ObjectiveValue, 0.001);
@@ -145,8 +144,9 @@ public class ModellingTests
         // derivative: exp(x) - 2 = 0 => x = ln(2)
         model.SetObjective(Expr.Exp(x) - 2 * x);
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(Math.Log(2), result.Solution[x], 0.001);
     }
@@ -164,8 +164,9 @@ public class ModellingTests
         // derivative: 1 - 1/x^2 = 0 => x = 1
         model.SetObjective(x + 1 / x);
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(1.0, result.Solution[x], 0.001);
         Assert.AreEqual(2.0, result.ObjectiveValue, 0.001);
@@ -198,8 +199,9 @@ public class ModellingTests
         model.Options.MaxIterations = 100;
         model.Options.PrintLevel = 0;
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
     }
@@ -222,8 +224,9 @@ public class ModellingTests
         model.Options.SetCustomOption("bound_push", 0.01);
         model.Options.SetCustomOption("bound_frac", 0.01);
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(2.0, result.Solution[x], 0.001);
         Assert.AreEqual(2.0, result.Solution[y], 0.001);
@@ -251,8 +254,9 @@ public class ModellingTests
         // Explicitly use Mumps linear solver (default)
         model.Options.LinearSolver = LinearSolver.Mumps;
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
         Assert.AreEqual(1.0, result.Solution[x1], 0.01);
@@ -283,8 +287,9 @@ public class ModellingTests
         // Use Pardiso MKL linear solver
         model.Options.LinearSolver = LinearSolver.PardisoMkl;
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
         Assert.AreEqual(1.0, result.Solution[x1], 0.01);
@@ -312,8 +317,9 @@ public class ModellingTests
         // and x + y == 4 (using Expr-to-Expr comparison)
         model.AddConstraint(x + y == 4);
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         // Expected solution: x=2, y=2 (closest point to (2,3) with x>=y and x+y=4)
         Assert.AreEqual(2.0, result.Solution[x], 0.01);
@@ -349,8 +355,9 @@ public class ModellingTests
         model.Options.DerivativeTestTolerance = 1e-4;
         model.Options.PrintLevel = 5;
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         // If derivatives are incorrect, IPOPT would report errors and likely fail to converge
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
     }
@@ -395,8 +402,9 @@ public class ModellingTests
         model.Options.DerivativeTestTolerance = 5e-4;
         model.Options.PrintLevel = 5;
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         // If second derivatives (Hessian) are incorrect, IPOPT would report errors
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
     }
@@ -427,7 +435,8 @@ public class ModellingTests
         model.Options.DerivativeTestPerturbation = 1e-8;
         model.Options.DerivativeTestTolerance = 1e-4;
 
-        var result1 = model.Solve();
+        var result1 = SolveWithDerivativeTest(model);
+        AssertDerivativeTestPassed(result1.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
         Assert.AreEqual(17.014, result1.ObjectiveValue, 0.01);
 
@@ -443,7 +452,8 @@ public class ModellingTests
         model.Options.DerivativeTestPerturbation = 1e-7;
         model.Options.DerivativeTestTolerance = 5e-4;
 
-        var result2 = model.Solve();
+        var result2 = SolveWithDerivativeTest(model);
+        AssertDerivativeTestPassed(result2.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result2.Status);
         Assert.AreEqual(17.014, result2.ObjectiveValue, 0.01);
     }
@@ -484,8 +494,9 @@ public class ModellingTests
         model.Options.PrintLevel = 5;
         model.Options.MaxIterations = 200;
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         // Verify IPOPT successfully validates all derivatives
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
     }
@@ -507,8 +518,9 @@ public class ModellingTests
         model.AddConstraint(x + y == 4);
 
         // Solve with default behavior (updateStartValues = true)
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(2.0, result.Solution[x], 0.001);
         Assert.AreEqual(2.0, result.Solution[y], 0.001);
@@ -533,8 +545,9 @@ public class ModellingTests
         model.SetObjective(Expr.Pow(x - 3, 2) + Expr.Pow(y - 4, 2));
 
         // Solve with explicit updateStartValues = true
-        var result = model.Solve(updateStartValues: true);
+        var result = SolveWithDerivativeTest(model, true);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
 
         // Verify Start values were updated to solution
@@ -560,8 +573,9 @@ public class ModellingTests
         model.SetObjective(Expr.Pow(x - 3, 2) + Expr.Pow(y - 4, 2));
 
         // Solve with updateStartValues = false
-        var result = model.Solve(updateStartValues: false);
+        var result = SolveWithDerivativeTest(model, false);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(3.0, result.Solution[x], 0.001);
         Assert.AreEqual(4.0, result.Solution[y], 0.001);
@@ -586,13 +600,15 @@ public class ModellingTests
         model.SetObjective(x * x + y * y);
         model.AddConstraint(x + y == 4);
 
-        var result1 = model.Solve();
+        var result1 = SolveWithDerivativeTest(model);
+        AssertDerivativeTestPassed(result1.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
         Assert.AreEqual(2.0, x.Start, 0.001);
         Assert.AreEqual(2.0, y.Start, 0.001);
 
         // Second optimization: same problem, should start from previous solution
-        var result2 = model.Solve();
+        var result2 = SolveWithDerivativeTest(model);
+        AssertDerivativeTestPassed(result2.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result2.Status);
 
         // Start values should still be at the solution
@@ -622,8 +638,9 @@ public class ModellingTests
         const double originalXStart = -5;
         const double originalYStart = -5;
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         // Should hit iteration limit (Rosenbrock won't converge in 1 iteration from (-5,-5))
         Assert.AreEqual(ApplicationReturnStatus.MaximumIterationsExceeded, result.Status);
 
@@ -654,7 +671,7 @@ public class ModellingTests
         model.Options.HessianApproximation = HessianApproximation.LimitedMemory;
         model.Options.PrintLevel = 0;
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         // Should still converge with limited memory approximation
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
@@ -690,8 +707,9 @@ public class ModellingTests
         Assert.AreEqual(0.0, y.LowerBoundDualStart);
         Assert.AreEqual(0.0, y.UpperBoundDualStart);
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
 
         // After solving, dual variables should be updated
@@ -721,8 +739,9 @@ public class ModellingTests
         model1.AddConstraint(c2);
 
         model1.Options.PrintLevel = 0;
-        var result1 = model1.Solve(updateStartValues: true);
+        var result1 = SolveWithDerivativeTest(model1, true);
 
+        AssertDerivativeTestPassed(result1.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
 
         // Second solve with warm start: should converge in very few iterations
@@ -761,8 +780,9 @@ public class ModellingTests
         model2.Options.WarmStartInitPoint = true;
         model2.Options.MaxIterations = 5;
         model2.Options.PrintLevel = 0;
-        var result2 = model2.Solve();
+        var result2 = SolveWithDerivativeTest(model2);
 
+        AssertDerivativeTestPassed(result2.DerivativeTestResult);
         // With warm start, should converge in few iterations
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result2.Status);
         Assert.AreEqual(result1.ObjectiveValue, result2.ObjectiveValue, 0.001);
@@ -786,7 +806,7 @@ public class ModellingTests
 
         model3.Options.MaxIterations = 5;
         model3.Options.PrintLevel = 0;
-        var result3 = model3.Solve();
+        var result3 = SolveWithDerivativeTest(model3);
 
         // Cold start should not converge in 5 iterations
         Assert.AreNotEqual(ApplicationReturnStatus.SolveSucceeded, result3.Status);
@@ -815,8 +835,9 @@ public class ModellingTests
         model.AddConstraint(c2);
 
         model.Options.PrintLevel = 0;
-        var result1 = model.Solve(updateStartValues: true);
+        var result1 = SolveWithDerivativeTest(model, true);
 
+        AssertDerivativeTestPassed(result1.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
 
         // Solve perturbed problem with warm start and limited iterations
@@ -855,8 +876,9 @@ public class ModellingTests
         // Enable warm start - should converge quickly
         modelWarm.Options.WarmStartInitPoint = true;
         modelWarm.Options.PrintLevel = 0;
-        var resultWarm = modelWarm.Solve();
+        var resultWarm = SolveWithDerivativeTest(modelWarm);
 
+        AssertDerivativeTestPassed(resultWarm.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultWarm.Status);
 
         // Solve same perturbed problem cold
@@ -877,8 +899,9 @@ public class ModellingTests
         modelCold.AddConstraint(z1 * z1 + z2 * z2 + z3 * z3 + z4 * z4 == 40);
 
         modelCold.Options.PrintLevel = 0;
-        var resultCold = modelCold.Solve();
+        var resultCold = SolveWithDerivativeTest(modelCold);
 
+        AssertDerivativeTestPassed(resultCold.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultCold.Status);
 
         // Warm start should use fewer iterations than cold start
@@ -903,8 +926,9 @@ public class ModellingTests
         model.Options.PrintLevel = 0;
 
         // Solve without updating start values
-        var result = model.Solve(updateStartValues: false);
+        var result = SolveWithDerivativeTest(model, false);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
 
         // Dual variables should remain at zero
@@ -931,8 +955,9 @@ public class ModellingTests
         model.SetObjective(Expr.Pow(x - 5, 2) + Expr.Pow(y - 5, 2));
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
 
         // Solution should be at bounds
@@ -962,8 +987,9 @@ public class ModellingTests
         // Don't explicitly set WarmStartInitPoint
         model.Options.PrintLevel = 0;
 
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(2.0, result.Solution[x], 0.001);
         Assert.AreEqual(2.0, result.Solution[y], 0.001);
@@ -984,8 +1010,9 @@ public class ModellingTests
         model.AddConstraint(x + y >= 6);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.IsNotNull(result.Statistics);
         Assert.IsTrue(result.Statistics.IterationCount > 0);
@@ -1007,8 +1034,9 @@ public class ModellingTests
         model.AddConstraint(x + y == 4);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.IsTrue(result.Statistics.PrimalInfeasibility < 1e-6);
         Assert.IsTrue(result.Statistics.DualInfeasibility < 1e-6);
@@ -1037,7 +1065,8 @@ public class ModellingTests
         model1.AddConstraint(c2);
 
         model1.Options.PrintLevel = 0;
-        var result1 = model1.Solve(updateStartValues: true);
+        var result1 = SolveWithDerivativeTest(model1, true);
+        AssertDerivativeTestPassed(result1.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
 
         // Warm start solve
@@ -1074,8 +1103,9 @@ public class ModellingTests
 
         modelWarm.Options.WarmStartInitPoint = true;
         modelWarm.Options.PrintLevel = 0;
-        var resultWarm = modelWarm.Solve();
+        var resultWarm = SolveWithDerivativeTest(modelWarm);
 
+        AssertDerivativeTestPassed(resultWarm.DerivativeTestResult);
         // Cold start solve
         var modelCold = new Model();
         modelCold.Options.DerivativeTest = DerivativeTest.SecondOrder;
@@ -1094,8 +1124,9 @@ public class ModellingTests
         modelCold.AddConstraint(z1 * z1 + z2 * z2 + z3 * z3 + z4 * z4 == 40);
 
         modelCold.Options.PrintLevel = 0;
-        var resultCold = modelCold.Solve();
+        var resultCold = SolveWithDerivativeTest(modelCold);
 
+        AssertDerivativeTestPassed(resultCold.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultWarm.Status);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultCold.Status);
 
@@ -1127,7 +1158,8 @@ public class ModellingTests
         model1.AddConstraint(c2);
 
         model1.Options.PrintLevel = 0;
-        var result1 = model1.Solve(updateStartValues: true);
+        var result1 = SolveWithDerivativeTest(model1, true);
+        AssertDerivativeTestPassed(result1.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
 
         // Auto warm start solve (has dual values but WarmStartInitPoint not explicitly set)
@@ -1164,8 +1196,9 @@ public class ModellingTests
 
         // Don't set WarmStartInitPoint - let it auto-detect
         modelAuto.Options.PrintLevel = 0;
-        var resultAuto = modelAuto.Solve();
+        var resultAuto = SolveWithDerivativeTest(modelAuto);
 
+        AssertDerivativeTestPassed(resultAuto.DerivativeTestResult);
         // Manual warm start solve (explicitly set WarmStartInitPoint)
         var modelManual = new Model();
         modelManual.Options.DerivativeTest = DerivativeTest.SecondOrder;
@@ -1200,8 +1233,9 @@ public class ModellingTests
 
         modelManual.Options.WarmStartInitPoint = true;
         modelManual.Options.PrintLevel = 0;
-        var resultManual = modelManual.Solve();
+        var resultManual = SolveWithDerivativeTest(modelManual);
 
+        AssertDerivativeTestPassed(resultManual.DerivativeTestResult);
         // Cold start solve (no dual values)
         var modelCold = new Model();
         modelCold.Options.DerivativeTest = DerivativeTest.SecondOrder;
@@ -1220,8 +1254,9 @@ public class ModellingTests
         modelCold.AddConstraint(z1 * z1 + z2 * z2 + z3 * z3 + z4 * z4 == 40);
 
         modelCold.Options.PrintLevel = 0;
-        var resultCold = modelCold.Solve();
+        var resultCold = SolveWithDerivativeTest(modelCold);
 
+        AssertDerivativeTestPassed(resultCold.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultAuto.Status);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultManual.Status);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, resultCold.Status);
@@ -1258,8 +1293,9 @@ public class ModellingTests
         model.AddConstraint(x + y >= 3);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         // Optimal solution minimizes objective on the constraint line x + y = 3
         // Since objective is x + 2*y and constraint is x + y = 3 (so x = 3 - y)
@@ -1287,8 +1323,9 @@ public class ModellingTests
         model.AddConstraint(x + y <= 5);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         // Unconstrained optimum would be at (2, 3) with objective -13
         // Constrained optimum is at (2, 3) since 2+3=5 satisfies the constraint
@@ -1313,8 +1350,9 @@ public class ModellingTests
         model.AddConstraint(Expr.Pow(x - 2, 2) + Expr.Pow(y - 2, 2) <= 1);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         // Solution is on the circle closest to origin
         var expectedVal = 2.0 - 1.0 / Math.Sqrt(2);
@@ -1340,8 +1378,9 @@ public class ModellingTests
         model.AddConstraint(x * x + y * y <= 4);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         // Minimum is approximately at x=pi/2, y=pi (or nearby on constraint boundary)
         Assert.IsTrue(result.ObjectiveValue < 0, "Objective should be negative at optimum");
@@ -1425,7 +1464,7 @@ public class ModellingTests
         model.AddConstraint(x + y == 4);
 
         model.Options.PrintLevel = 0;
-        var result1 = model.Solve();
+        var result1 = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
         
@@ -1437,7 +1476,7 @@ public class ModellingTests
         // Second solve: Add a nonlinear constraint (changes problem structure)
         model.AddConstraint(x * y >= 2);
 
-        var result2 = model.Solve();
+        var result2 = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result2.Status);
         
@@ -1459,7 +1498,7 @@ public class ModellingTests
         model.AddConstraint(x + y >= 3);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1483,7 +1522,7 @@ public class ModellingTests
         model.AddConstraint(x - z <= 2);
 
         model.Options.PrintLevel = 5; // Verbose output to see evaluation counts
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1507,7 +1546,7 @@ public class ModellingTests
         model.AddConstraint(x - y <= 5);
 
         model.Options.PrintLevel = 5; // Verbose to see evaluation counts
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1531,7 +1570,7 @@ public class ModellingTests
         model.AddConstraint(x + 2 * y >= 3);
 
         model.Options.PrintLevel = 5;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1554,7 +1593,7 @@ public class ModellingTests
         model.AddConstraint(Expr.Log(x) + y >= 1);
 
         model.Options.PrintLevel = 5;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1578,7 +1617,7 @@ public class ModellingTests
         Assert.IsNull(model.Options.GradFConstant);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1600,7 +1639,7 @@ public class ModellingTests
         Assert.IsNull(model.Options.GradFConstant);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1623,7 +1662,7 @@ public class ModellingTests
         model.Options.GradFConstant = false;
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1647,7 +1686,7 @@ public class ModellingTests
         Assert.IsNull(model.Options.JacCConstant);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1671,7 +1710,7 @@ public class ModellingTests
         Assert.IsNull(model.Options.JacCConstant);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1695,7 +1734,7 @@ public class ModellingTests
         Assert.IsNull(model.Options.JacDConstant);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1719,7 +1758,7 @@ public class ModellingTests
         Assert.IsNull(model.Options.JacDConstant);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1740,7 +1779,7 @@ public class ModellingTests
         model.AddConstraint(x + y >= 3);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1761,7 +1800,7 @@ public class ModellingTests
         model.AddConstraint(x + y == 4);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1786,7 +1825,7 @@ public class ModellingTests
         Assert.IsNull(model.Options.HessianConstant);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1810,7 +1849,7 @@ public class ModellingTests
         Assert.IsNull(model.Options.HessianConstant);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1834,7 +1873,7 @@ public class ModellingTests
         Assert.IsNull(model.Options.HessianConstant);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1858,7 +1897,7 @@ public class ModellingTests
         Assert.IsNull(model.Options.HessianConstant);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1883,7 +1922,7 @@ public class ModellingTests
         model.Options.HessianApproximation = HessianApproximation.LimitedMemory;
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1906,7 +1945,7 @@ public class ModellingTests
         model.AddConstraint(2 * x - y >= 1);
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1936,7 +1975,7 @@ public class ModellingTests
         model.Options.HessianConstant = false;
 
         model.Options.PrintLevel = 0;
-        var result = model.Solve();
+        var result = SolveWithDerivativeTest(model);
 
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         
@@ -1946,4 +1985,129 @@ public class ModellingTests
         Assert.IsFalse(model.Options.JacDConstant == true);
         Assert.IsFalse(model.Options.HessianConstant == true);
     }
+
+    /// <summary>
+    /// Helper method to solve a model and capture derivative test output.
+    /// Use this for tests that enable DerivativeTest or CheckDerivativesForNanInf.
+    /// </summary>
+    internal static ModelResultWithDerivativeTest SolveWithDerivativeTest(Model model, bool updateStartValues = true)
+    {
+        // If derivative test is enabled, redirect output to a temp file to capture results
+        string? tempOutputFile = null;
+        string? originalOutputFile = model.Options.OutputFile;
+        int? originalPrintLevel = model.Options.FilePrintLevel;
+        
+        bool captureDerivativeTest = model.Options.DerivativeTest is not null && 
+                                     model.Options.DerivativeTest != DerivativeTest.None;
+        
+        if (captureDerivativeTest && originalOutputFile is null)
+        {
+            tempOutputFile = Path.GetTempFileName();
+            model.Options.OutputFile = tempOutputFile;
+            model.Options.FilePrintLevel = 5; // Ensure derivative checker output is captured
+        }
+
+        // Solve the model
+        var result = model.Solve(updateStartValues);
+
+        // Parse derivative test results if we captured output
+        DerivativeTestResult? derivativeTestResult = null;
+        if (tempOutputFile is not null)
+        {
+            try
+            {
+                derivativeTestResult = ParseDerivativeTestResults(tempOutputFile);
+            }
+            finally
+            {
+                // Restore original options
+                model.Options.OutputFile = originalOutputFile;
+                if (originalPrintLevel.HasValue)
+                    model.Options.FilePrintLevel = originalPrintLevel.Value;
+                
+                // Clean up temp file
+                try { File.Delete(tempOutputFile); } catch { }
+            }
+        }
+
+        return new ModelResultWithDerivativeTest(result, derivativeTestResult);
+    }
+
+    private static DerivativeTestResult ParseDerivativeTestResults(string outputFile)
+    {
+        var content = File.ReadAllText(outputFile);
+        var lines = content.Split('\n');
+
+        int errorCount = 0;
+        var errorDetails = new List<string>();
+        bool foundDerivativeChecker = false;
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+
+            // Look for derivative checker starting
+            if (line.Contains("Starting derivative checker"))
+            {
+                foundDerivativeChecker = true;
+            }
+
+            // Look for "Derivative checker detected X error(s)"
+            if (line.Contains("Derivative checker detected"))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(line, @"detected (\d+) error");
+                if (match.Success && int.TryParse(match.Groups[1].Value, out int count))
+                {
+                    errorCount += count;
+                }
+            }
+
+            // Capture error lines (marked with *)
+            if (foundDerivativeChecker && line.TrimStart().StartsWith("*"))
+            {
+                errorDetails.Add(line.Trim());
+            }
+        }
+
+        var details = errorDetails.Count > 0
+            ? string.Join(Environment.NewLine, errorDetails)
+            : foundDerivativeChecker ? "All derivative checks passed" : "No derivative checker output found";
+
+        return new DerivativeTestResult(errorCount == 0 && foundDerivativeChecker, errorCount, details);
+    }
+
+    /// <summary>
+    /// Helper method to assert that derivative test passed.
+    /// </summary>
+    internal static void AssertDerivativeTestPassed(DerivativeTestResult? derivativeTestResult)
+    {
+        Assert.IsNotNull(derivativeTestResult, "Derivative test should have been captured");
+        Assert.IsTrue(derivativeTestResult.Passed, 
+            $"Derivative test should pass. Errors: {derivativeTestResult.ErrorCount}. Details:\n{derivativeTestResult.Details}");
+        Assert.AreEqual(0, derivativeTestResult.ErrorCount, "Should have no derivative errors");
+    }
 }
+
+/// <summary>
+/// Results from IPOPT's derivative checker, if DerivativeTest option was enabled.
+/// </summary>
+internal sealed record DerivativeTestResult(
+    bool Passed,
+    int ErrorCount,
+    string Details);
+
+/// <summary>
+/// Wrapper for ModelResult that includes derivative test results.
+/// </summary>
+internal sealed record ModelResultWithDerivativeTest(
+    ModelResult Result,
+    DerivativeTestResult? DerivativeTestResult)
+{
+    // Forward properties from ModelResult for convenience
+    public ApplicationReturnStatus Status => Result.Status;
+    public IReadOnlyDictionary<Variable, double> Solution => Result.Solution;
+    public double ObjectiveValue => Result.ObjectiveValue;
+    public SolveStatistics Statistics => Result.Statistics;
+}
+
+

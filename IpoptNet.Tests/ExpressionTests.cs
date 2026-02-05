@@ -1573,4 +1573,138 @@ public class ExpressionTests
             Assert.Fail("Expected QuadExpr, got " + actualObj.GetType().Name);
         }
     }
+
+    [TestMethod]
+    public void DerivativeTest_DetectsWrongGradient()
+    {
+        // Test that the derivative test actually catches incorrect derivatives
+        var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.FirstOrder;
+        model.Options.CheckDerivativesForNanInf = true;
+        model.Options.PrintLevel = 0;
+        
+        var x = model.AddVariable(0, 10);
+        x.Start = 2.0;
+        
+        // Use a custom expression with intentionally wrong gradient
+        var wrongExpr = new WrongGradientExpr(x);
+        model.SetObjective(wrongExpr);
+        
+        var result = ModellingTests.SolveWithDerivativeTest(model);
+        
+        // Derivative test should have detected errors
+        Assert.IsNotNull(result.DerivativeTestResult);
+        Assert.IsFalse(result.DerivativeTestResult.Passed, "Derivative test should fail for wrong gradient");
+        Assert.IsTrue(result.DerivativeTestResult.ErrorCount > 0, "Should report gradient errors");
+    }
+
+    [TestMethod]
+    public void DerivativeTest_DetectsWrongHessian()
+    {
+        // Test that the derivative test actually catches incorrect Hessian
+        var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
+        model.Options.CheckDerivativesForNanInf = true;
+        model.Options.PrintLevel = 0;
+        
+        var x = model.AddVariable(0, 10);
+        x.Start = 2.0;
+        
+        // Use a custom expression with correct gradient but wrong Hessian
+        var wrongExpr = new WrongHessianExpr(x);
+        model.SetObjective(wrongExpr);
+        
+        var result = ModellingTests.SolveWithDerivativeTest(model);
+        
+        // Derivative test should have detected errors
+        Assert.IsNotNull(result.DerivativeTestResult);
+        Assert.IsFalse(result.DerivativeTestResult.Passed, "Derivative test should fail for wrong Hessian");
+        Assert.IsTrue(result.DerivativeTestResult.ErrorCount > 0, "Should report Hessian errors");
+    }
+}
+
+/// <summary>
+/// Custom expression that returns x^2 but claims gradient is 3*x (wrong - should be 2*x)
+/// </summary>
+internal class WrongGradientExpr : Expr
+{
+    private readonly Variable _x;
+
+    public WrongGradientExpr(Variable x)
+    {
+        _x = x;
+    }
+
+    protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
+
+    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    {
+        // Correct would be: grad[_x.Index] += multiplier * 2 * x[_x.Index];
+        // But we intentionally return wrong derivative:
+        grad[_x.Index] += multiplier * 3 * x[_x.Index]; // WRONG!
+    }
+
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
+    {
+        hess.Add(_x.Index, _x.Index, multiplier * 2.0);
+    }
+
+    protected override void CollectVariablesCore(HashSet<Variable> variables)
+    {
+        variables.Add(_x);
+    }
+
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        entries.Add((_x.Index, _x.Index));
+    }
+
+    protected override bool IsConstantWrtXCore() => false;
+    protected override bool IsLinearCore() => false;
+    protected override bool IsAtMostQuadraticCore() => true;
+
+    protected override Expr CloneCore() => new WrongGradientExpr(_x);
+}
+
+/// <summary>
+/// Custom expression that returns x^2 with correct gradient 2*x but claims Hessian is 5 (wrong - should be 2)
+/// </summary>
+internal class WrongHessianExpr : Expr
+{
+    private readonly Variable _x;
+
+    public WrongHessianExpr(Variable x)
+    {
+        _x = x;
+    }
+
+    protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
+
+    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    {
+        grad[_x.Index] += multiplier * 2 * x[_x.Index]; // Correct
+    }
+
+    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
+    {
+        // Correct would be: hess.Add(_x.Index, _x.Index, multiplier * 2.0);
+        // But we intentionally return wrong second derivative:
+        hess.Add(_x.Index, _x.Index, multiplier * 5.0); // WRONG!
+    }
+
+    protected override void CollectVariablesCore(HashSet<Variable> variables)
+    {
+        variables.Add(_x);
+    }
+
+    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    {
+        entries.Add((_x.Index, _x.Index));
+    }
+
+    protected override bool IsConstantWrtXCore() => false;
+    protected override bool IsLinearCore() => false;
+    protected override bool IsAtMostQuadraticCore() => true;
+
+    protected override Expr CloneCore() => new WrongHessianExpr(_x);
 }
