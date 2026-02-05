@@ -198,7 +198,7 @@ public sealed class Model : IDisposable
 
             // Auto-enable hessian_constant if objective and all constraints are at most quadratic
             if (Options.HessianConstant is null && !useLimitedMemory &&
-                _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsAtMostQuadratic()))
+                _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsLinear()))
             {
                 solver.SetOption("hessian_constant", "yes");
             }
