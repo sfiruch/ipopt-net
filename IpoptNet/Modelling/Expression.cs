@@ -157,7 +157,11 @@ public abstract class Expr
         {
             return new Product([a, .. prodB.Factors]);
         }
-        // Always use Product for multiplication to avoid building deep Division trees
+        else if (ReferenceEquals(a,b))
+        {
+            return new PowerOp(a, 2);
+        }
+        // Always use Product for multiplication to avoid building deep trees
         else
         {
             return new Product([a, b]);
@@ -1425,9 +1429,47 @@ public class QuadExpr : Expr
         }
         else if (term is PowerOp { Exponent: 2 } pow)
         {
-            quadTerms1.Add(pow.Base);
-            quadTerms2.Add(pow.Base);
-            quadWeights.Add(weight);
+            // x^2 → quadratic term
+            // But if base is a LinExpr, we need to expand it: (a*x + b*y + c)^2
+            if (pow.Base is LinExpr linBase)
+            {
+                // Expand (LinExpr)^2 into quadratic and linear terms
+                // (a1*t1 + a2*t2 + ... + c)^2 = sum(ai*aj*ti*tj) + 2*sum(ai*ti*c) + c^2
+                
+                // Quadratic cross terms: ai * aj * ti * tj for all i,j pairs
+                for (int i = 0; i < linBase.Terms.Count; i++)
+                {
+                    for (int j = i; j < linBase.Terms.Count; j++)
+                    {
+                        double termWeight = weight * linBase.Weights[i] * linBase.Weights[j];
+                        if (i != j) termWeight *= 2.0; // Cross terms appear twice
+                        
+                        quadTerms1.Add(linBase.Terms[i]);
+                        quadTerms2.Add(linBase.Terms[j]);
+                        quadWeights.Add(termWeight);
+                    }
+                }
+                
+                // Linear terms from 2 * c * sum(ai*ti)
+                if (linBase.ConstantTerm != 0.0)
+                {
+                    for (int i = 0; i < linBase.Terms.Count; i++)
+                    {
+                        linearTerms.Add(linBase.Terms[i]);
+                        linearWeights.Add(weight * 2.0 * linBase.ConstantTerm * linBase.Weights[i]);
+                    }
+                }
+                
+                // Constant term: c^2
+                constantSum += weight * linBase.ConstantTerm * linBase.ConstantTerm;
+            }
+            else
+            {
+                // Simple case: just a variable or other expression squared
+                quadTerms1.Add(pow.Base);
+                quadTerms2.Add(pow.Base);
+                quadWeights.Add(weight);
+            }
         }
         else
         {
