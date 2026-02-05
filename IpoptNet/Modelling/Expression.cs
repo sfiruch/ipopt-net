@@ -2090,7 +2090,7 @@ public sealed class Product : Expr
 
 public sealed class HessianAccumulator
 {
-    private readonly Dictionary<long, double> _entries = new();
+    private readonly Dictionary<(int, int), double> _entries = new();
     private readonly int _n;
 
     public HessianAccumulator(int n) => _n = n;
@@ -2099,7 +2099,7 @@ public sealed class HessianAccumulator
     {
         if (Math.Abs(value) < 1e-18) return;
 
-        long key = i >= j ? ((long)i << 32) | (uint)j : ((long)j << 32) | (uint)i;
+        var key = i >= j ? (i, j) : (j, i);
         ref var entry = ref CollectionsMarshal.GetValueRefOrAddDefault(_entries, key, out _);
         entry += value;
     }
@@ -2110,18 +2110,18 @@ public sealed class HessianAccumulator
 
     public bool TryGetValue(int i, int j, out double value)
     {
-        long key = i >= j ? ((long)i << 32) | (uint)j : ((long)j << 32) | (uint)i;
+        var key = i >= j ? (i, j) : (j, i);
         return _entries.TryGetValue(key, out value);
     }
 
     public IReadOnlyDictionary<(int row, int col), double> Entries =>
-        _entries.ToDictionary(kvp => ((int)(kvp.Key >> 32), (int)(kvp.Key & 0xFFFFFFFF)), kvp => kvp.Value);
+        _entries.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
     public IEnumerable<((int row, int col) key, double value)> GetEntries()
     {
         foreach (var kvp in _entries)
         {
-            yield return (((int)(kvp.Key >> 32), (int)(kvp.Key & 0xFFFFFFFF)), kvp.Value);
+            yield return (kvp.Key, kvp.Value);
         }
     }
 
