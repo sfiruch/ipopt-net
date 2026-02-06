@@ -27,6 +27,33 @@ public sealed class Model : IDisposable
         return variable;
     }
 
+    public Variable[] AddVariables(int x, double lowerBound = double.NegativeInfinity, double upperBound = double.PositiveInfinity)
+    {
+        var res = new Variable[x];
+        for (int i = 0; i < x; i++)
+            res[i] = AddVariable(lowerBound, upperBound);
+        return res;
+    }
+
+    public Variable[,] AddVariables(int x, int y, double lowerBound = double.NegativeInfinity, double upperBound = double.PositiveInfinity)
+    {
+        var res = new Variable[x, y];
+        for (int i = 0; i < x; i++)
+            for (int j = 0; j < y; j++)
+                res[i, j] = AddVariable(lowerBound, upperBound);
+        return res;
+    }
+
+    public Variable[,,] AddVariables(int x, int y, int z, double lowerBound = double.NegativeInfinity, double upperBound = double.PositiveInfinity)
+    {
+        var res = new Variable[x, y, z];
+        for (int i = 0; i < x; i++)
+            for (int j = 0; j < y; j++)
+                for (int k = 0; k < z; k++)
+                    res[i, j, k] = AddVariable(lowerBound, upperBound);
+        return res;
+    }
+
     public void SetObjective(Expr objective) => _objective = objective;
 
     public void AddConstraint(Constraint constraint) => _constraints.Add(constraint);
@@ -41,7 +68,7 @@ public sealed class Model : IDisposable
     public void Print(TextWriter? writer = null)
     {
         writer ??= Console.Out;
-        
+
         writer.WriteLine("=== Model ===");
         writer.WriteLine($"Variables: {_variables.Count}");
         for (int i = 0; i < _variables.Count; i++)
@@ -54,7 +81,7 @@ public sealed class Model : IDisposable
                 bounds = $" >= {v.LowerBound}";
             else if (v.UpperBound < double.PositiveInfinity)
                 bounds = $" <= {v.UpperBound}";
-            
+
             writer.WriteLine($"  x[{i}]{bounds}, start={v.Start}");
         }
 
