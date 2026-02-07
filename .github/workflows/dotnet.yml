@@ -22,7 +22,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest]
+        os: [windows-latest, ubuntu-latest]
 
     steps:
     - uses: actions/checkout@v4
@@ -30,6 +30,10 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: 10.0.x
+
+    - name: Install native dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libgfortran5 liblapack3 libblas3 libgomp1
 
     - name: Get Version
       id: get_version
