@@ -32,6 +32,7 @@
     <None Include="..\README.md" Pack="true" Link="README.md" PackagePath="\" />
     <!-- Pack DLLs in standard NuGet runtime location -->
     <None Include="runtimes\win-x64\native\*.dll" Pack="true" PackagePath="runtimes\win-x64\native" />
+    <None Include="runtimes\linux\native\libipopt-3.so" Pack="true" PackagePath="runtimes\linux-x64\native" />
   </ItemGroup>
 
   <!-- Copy native DLLs directly to output directory (not in subdirectory) -->
@@ -42,6 +43,12 @@
     <None Include="runtimes\win-x64\native\libiomp5md.dll" Link="libiomp5md.dll" CopyToOutputDirectory="PreserveNewest" />
     <None Include="runtimes\win-x64\native\libmmd.dll" Link="libmmd.dll" CopyToOutputDirectory="PreserveNewest" />
     <None Include="runtimes\win-x64\native\svml_dispmd.dll" Link="svml_dispmd.dll" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
+		<None Include="runtimes\linux\native\libipopt-3.so" Link="libipopt-3.so" CopyToOutputDirectory="PreserveNewest" />
+		<!--<None Include="runtimes\linux\native\libmkl_gams.so" Link="libmkl_gams.so" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="runtimes\linux\native\libgfortran.so.5" Link="libgfortran.so.5" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="runtimes\linux\native\libquadmath.so.0" Link="libquadmath.so.0" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="runtimes\linux\native\libgomp.so.1" Link="libgomp.so.1" CopyToOutputDirectory="PreserveNewest" />
+		<None Include="runtimes\linux\native\libiomp5.so" Link="libiomp5.so" CopyToOutputDirectory="PreserveNewest" />-->
+	</ItemGroup>
 
 </Project>

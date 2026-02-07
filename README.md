@@ -15,6 +15,7 @@ dotnet add package ipopt-net
 
 The package includes native binaries for:
 - **Windows** (x64)
+- **Linux** (x64, requires `libgfortran5 liblapack3 libblas3 libgomp1`)
 
 ## Features
 
@@ -128,7 +129,7 @@ model.AddConstraint(x + y <= 5);
 var result = model.Solve();
 ```
 
-This optimization is completely automatic - no code changes required. The solver analyzes the expression structure and applies the appropriate caching strategy.
+This optimization is completely automatic - no code changes required. The solver analyzes the expression structure and applies the appropriate strategy.
 
 ## More Examples
 
@@ -194,7 +195,7 @@ model.Options.MaxIterations = 100;
 model.Options.MaxWallTime = 60.0;  // seconds
 
 // Configure output verbosity
-model.Options.PrintLevel = 5;  // 0=no output, 5=detailed
+model.Options.PrintLevel = 5;  // 0=no output, 5=default, 12=verbose
 model.Options.OutputFile = "ipopt.log";
 
 // Configure NLP scaling
@@ -205,8 +206,7 @@ model.Options.SetCustomOption("bound_push", 0.01);
 model.Options.SetCustomOption("acceptable_tol", 1e-5);
 
 // Define and solve your problem...
-var x = model.AddVariable(1, 5) { Start = 1 };
-// ... rest of model setup ...
+// ...
 var result = model.Solve();
 ```
 
