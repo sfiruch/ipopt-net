@@ -27,29 +27,29 @@ public sealed class Model : IDisposable
         return variable;
     }
 
-    public Variable[] AddVariables(int x, double lowerBound = double.NegativeInfinity, double upperBound = double.PositiveInfinity)
+    public Variable[] AddVariables(int x, double lowerBound, double upperBound)
     {
         var res = new Variable[x];
-        for (int i = 0; i < x; i++)
+        for (var i = 0; i < x; i++)
             res[i] = AddVariable(lowerBound, upperBound);
         return res;
     }
 
-    public Variable[,] AddVariables(int x, int y, double lowerBound = double.NegativeInfinity, double upperBound = double.PositiveInfinity)
+    public Variable[,] AddVariables(int x, int y, double lowerBound, double upperBound)
     {
         var res = new Variable[x, y];
-        for (int i = 0; i < x; i++)
-            for (int j = 0; j < y; j++)
+        for (var i = 0; i < x; i++)
+            for (var j = 0; j < y; j++)
                 res[i, j] = AddVariable(lowerBound, upperBound);
         return res;
     }
 
-    public Variable[,,] AddVariables(int x, int y, int z, double lowerBound = double.NegativeInfinity, double upperBound = double.PositiveInfinity)
+    public Variable[,,] AddVariables(int x, int y, int z, double lowerBound, double upperBound)
     {
         var res = new Variable[x, y, z];
-        for (int i = 0; i < x; i++)
-            for (int j = 0; j < y; j++)
-                for (int k = 0; k < z; k++)
+        for (var i = 0; i < x; i++)
+            for (var j = 0; j < y; j++)
+                for (var k = 0; k < z; k++)
                     res[i, j, k] = AddVariable(lowerBound, upperBound);
         return res;
     }
