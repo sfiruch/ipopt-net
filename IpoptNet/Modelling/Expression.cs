@@ -2214,22 +2214,46 @@ public sealed class Product : Expr
             return;
         }
 
+        // Fast path for 2-factor products (most common case)
+        if (Factors.Count == 2)
+        {
+            AccumulateHessian2Factors(x, hess, scaledMultiplier);
+            return;
+        }
+
+        // Fast path for 3-factor products
+        if (Factors.Count == 3)
+        {
+            AccumulateHessian3Factors(x, hess, scaledMultiplier);
+            return;
+        }
+
         var n = x.Length;
 
         // Evaluate all factors once
-        var factorValues = new double[Factors.Count];
+        var factorValues = ArrayPool<double>.Shared.Rent(Factors.Count);
         for (int i = 0; i < Factors.Count; i++)
             factorValues[i] = Factors[i].Evaluate(x);
 
+        // Pre-compute product excluding each factor
+        var excludingFactor = ArrayPool<double>.Shared.Rent(Factors.Count);
+        var totalProduct = 1.0;
+        for (int i = 0; i < Factors.Count; i++)
+            totalProduct *= factorValues[i];
+        for (int i = 0; i < Factors.Count; i++)
+            excludingFactor[i] = totalProduct / factorValues[i];
+
         // Compute gradients of all factors once and keep track of non-zeros
         var factorGradients = new double[Factors.Count][];
-        var nonZeroIndices = new List<int>[Factors.Count];
+        var nonZeroIndices = new int[Factors.Count][];
+        var nonZeroCounts = new int[Factors.Count];
 
         for (int i = 0; i < Factors.Count; i++)
         {
             if (Factors[i].IsConstantWrtX())
             {
-                nonZeroIndices[i] = [];
+                nonZeroIndices[i] = Array.Empty<int>();
+                nonZeroCounts[i] = 0;
                 continue;
             }
 
@@ -2253,28 +2277,21 @@ public sealed class Product : Expr
             Factors[i].AccumulateGradient(x, rented, 1.0);
 
             // 3. Identify non-zeros
-            var nonZeros = new List<int>(vars.Count);
+            var nonZerosList = new List<int>(vars.Count);
             foreach (var v in vars)
             {
                 if (Math.Abs(rented[v.Index]) > 1e-18)
-                    nonZeros.Add(v.Index);
+                    nonZerosList.Add(v.Index);
             }
-            nonZeroIndices[i] = nonZeros;
+            nonZeroIndices[i] = nonZerosList.ToArray();
+            nonZeroCounts[i] = nonZerosList.Count;
         }
 
         // 1. Accumulate Hessian from each factor's second derivative
+        // Use pre-computed excludingFactor
         for (int k = 0; k < Factors.Count; k++)
         {
-            var otherProduct = 1.0;
-            for (int l = 0; l < Factors.Count; l++)
-            {
-                if (l != k)
-                {
-                    otherProduct *= factorValues[l];
-                    if (Math.Abs(otherProduct) < 1e-100) break;
-                }
-            }
-
+            var otherProduct = excludingFactor[k];
             if (Math.Abs(otherProduct) > 1e-18)
                 Factors[k].AccumulateHessian(x, hess, scaledMultiplier * otherProduct);
         }
@@ -2283,30 +2300,23 @@ public sealed class Product : Expr
         for (int k = 0; k < Factors.Count; k++)
         {
             var idxK = nonZeroIndices[k];
-            if (idxK.Count == 0) continue;
+            if (idxK == null || nonZeroCounts[k] == 0) continue;
             var gradK = factorGradients[k];
-            var spanK = CollectionsMarshal.AsSpan(idxK);
+            var spanK = idxK.AsSpan(0, nonZeroCounts[k]);
 
             for (int m = k + 1; m < Factors.Count; m++)
             {
                 var idxM = nonZeroIndices[m];
-                if (idxM.Count == 0) continue;
+                if (idxM == null || nonZeroCounts[m] == 0) continue;
 
-                var otherProduct = 1.0;
-                for (int l = 0; l < Factors.Count; l++)
-                {
-                    if (l != k && l != m)
-                    {
-                        otherProduct *= factorValues[l];
-                        if (Math.Abs(otherProduct) < 1e-100) break;
-                    }
-                }
+                // Use pre-computed product
+                var otherProduct = excludingFactor[k] / factorValues[m];
 
                 if (Math.Abs(otherProduct) > 1e-18)
                 {
                     var coeff = scaledMultiplier * otherProduct;
                     var gradM = factorGradients[m];
-                    var spanM = CollectionsMarshal.AsSpan(idxM);
+                    var spanM = idxM.AsSpan(0, nonZeroCounts[m]);
 
                     // CROSS-TERM HESSIAN COMPUTATION (Product Rule)
                     // =============================================
@@ -2357,6 +2367,163 @@ public sealed class Product : Expr
         for (int i = 0; i < Factors.Count; i++)
             if (factorGradients[i] != null)
                 ArrayPool<double>.Shared.Return(factorGradients[i]);
+
+        ArrayPool<double>.Shared.Return(factorValues);
+        ArrayPool<double>.Shared.Return(excludingFactor);
+    }
+
+    private void AccumulateHessian2Factors(ReadOnlySpan<double> x, HessianAccumulator hess, double scaledMultiplier)
+    {
+        // Optimized fast path for 2-factor products: f = F0 * F1
+
+        var val0 = Factors[0].Evaluate(x);
+        var val1 = Factors[1].Evaluate(x);
+
+        // Hessian contributions from each factor's second derivative
+        if (!Factors[0].IsConstantWrtX() && Math.Abs(val1) > 1e-18)
+            Factors[0].AccumulateHessian(x, hess, scaledMultiplier * val1);
+        if (!Factors[1].IsConstantWrtX() && Math.Abs(val0) > 1e-18)
+            Factors[1].AccumulateHessian(x, hess, scaledMultiplier * val0);
+
+        // Cross term: outer product of gradients
+        if (!Factors[0].IsConstantWrtX() && !Factors[1].IsConstantWrtX())
+        {
+            var vars0 = Factors[0]._cachedVariables!;
+            var vars1 = Factors[1]._cachedVariables!;
+            var n = x.Length;
+
+            var grad0 = ArrayPool<double>.Shared.Rent(n);
+            var grad1 = ArrayPool<double>.Shared.Rent(n);
+
+            if (vars0.Count < n / 32)
+                foreach (var v in vars0)
+                    grad0[v.Index] = 0.0;
+            else
+                Array.Clear(grad0, 0, n);
+
+            if (vars1.Count < n / 32)
+                foreach (var v in vars1)
+                    grad1[v.Index] = 0.0;
+            else
+                Array.Clear(grad1, 0, n);
+
+            Factors[0].AccumulateGradient(x, grad0, 1.0);
+            Factors[1].AccumulateGradient(x, grad1, 1.0);
+
+            AddCrossTerm(hess, grad0, grad1, vars0, vars1, scaledMultiplier);
+
+            ArrayPool<double>.Shared.Return(grad0);
+            ArrayPool<double>.Shared.Return(grad1);
+        }
+    }
+
+    private void AccumulateHessian3Factors(ReadOnlySpan<double> x, HessianAccumulator hess, double scaledMultiplier)
+    {
+        // Optimized fast path for 3-factor products: f = F0 * F1 * F2
+
+        var val0 = Factors[0].Evaluate(x);
+        var val1 = Factors[1].Evaluate(x);
+        var val2 = Factors[2].Evaluate(x);
+
+        // Hessian contributions from each factor's second derivative
+        var product012 = val0 * val1 * val2;
+        if (!Factors[0].IsConstantWrtX() && Math.Abs(product012 / val0) > 1e-18)
+            Factors[0].AccumulateHessian(x, hess, scaledMultiplier * val1 * val2);
+        if (!Factors[1].IsConstantWrtX() && Math.Abs(product012 / val1) > 1e-18)
+            Factors[1].AccumulateHessian(x, hess, scaledMultiplier * val0 * val2);
+        if (!Factors[2].IsConstantWrtX() && Math.Abs(product012 / val2) > 1e-18)
+            Factors[2].AccumulateHessian(x, hess, scaledMultiplier * val0 * val1);
+
+        // Compute gradients for non-constant factors
+        var n = x.Length;
+        var grad0 = !Factors[0].IsConstantWrtX() ? ArrayPool<double>.Shared.Rent(n) : null;
+        var grad1 = !Factors[1].IsConstantWrtX() ? ArrayPool<double>.Shared.Rent(n) : null;
+        var grad2 = !Factors[2].IsConstantWrtX() ? ArrayPool<double>.Shared.Rent(n) : null;
+
+        if (grad0 != null)
+        {
+            var vars0 = Factors[0]._cachedVariables!;
+            if (vars0.Count < n / 32)
+                foreach (var v in vars0)
+                    grad0[v.Index] = 0.0;
+            else
+                Array.Clear(grad0, 0, n);
+            Factors[0].AccumulateGradient(x, grad0, 1.0);
+        }
+
+        if (grad1 != null)
+        {
+            var vars1 = Factors[1]._cachedVariables!;
+            if (vars1.Count < n / 32)
+                foreach (var v in vars1)
+                    grad1[v.Index] = 0.0;
+            else
+                Array.Clear(grad1, 0, n);
+            Factors[1].AccumulateGradient(x, grad1, 1.0);
+        }
+
+        if (grad2 != null)
+        {
+            var vars2 = Factors[2]._cachedVariables!;
+            if (vars2.Count < n / 32)
+                foreach (var v in vars2)
+                    grad2[v.Index] = 0.0;
+            else
+                Array.Clear(grad2, 0, n);
+            Factors[2].AccumulateGradient(x, grad2, 1.0);
+        }
+
+        // Cross terms between pairs of factors
+        // Cross term 0-1
+        if (grad0 != null && grad1 != null)
+        {
+            var coeff = scaledMultiplier * val2;
+            if (Math.Abs(coeff) > 1e-18)
+                AddCrossTerm(hess, grad0, grad1, Factors[0]._cachedVariables!, Factors[1]._cachedVariables!, coeff);
+        }
+
+        // Cross term 0-2
+        if (grad0 != null && grad2 != null)
+        {
+            var coeff = scaledMultiplier * val1;
+            if (Math.Abs(coeff) > 1e-18)
+                AddCrossTerm(hess, grad0, grad2, Factors[0]._cachedVariables!, Factors[2]._cachedVariables!, coeff);
+        }
+
+        // Cross term 1-2
+        if (grad1 != null && grad2 != null)
+        {
+            var coeff = scaledMultiplier * val0;
+            if (Math.Abs(coeff) > 1e-18)
+                AddCrossTerm(hess, grad1, grad2, Factors[1]._cachedVariables!, Factors[2]._cachedVariables!, coeff);
+        }
+
+        // Return rented arrays
+        if (grad0 != null) ArrayPool<double>.Shared.Return(grad0);
+        if (grad1 != null) ArrayPool<double>.Shared.Return(grad1);
+        if (grad2 != null) ArrayPool<double>.Shared.Return(grad2);
+    }
+
+    private static void AddCrossTerm(HessianAccumulator hess, double[] gradA, double[] gradB,
+        HashSet<Variable> varsA, HashSet<Variable> varsB, double coeff)
+    {
+        foreach (var vA in varsA)
+        {
+            var gAi = gradA[vA.Index];
+            var gBi = gradB[vA.Index];
+            var c_gAi = coeff * gAi;
+            var c_gBi = coeff * gBi;
+
+            foreach (var vB in varsB)
+            {
+                var gBj = gradB[vB.Index];
+                var gAj = gradA[vB.Index];
+
+                // Add both parts of symmetric outer product
+                hess.Add(vA.Index, vB.Index, c_gAi * gBj);
+                hess.Add(vB.Index, vA.Index, c_gBi * gAj);
+            }
+        }
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables)
