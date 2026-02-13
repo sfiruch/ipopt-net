@@ -232,6 +232,9 @@ public class ExpressionTests
         var expr = x * y;
         double[] point = [3.0, 5.0];
 
+        // Cache variables before computing Hessian
+        expr.CacheVariables();
+
         var n = point.Length;
         var hess = new HessianAccumulator();
         expr.AccumulateHessian(point, hess, 1.0);
@@ -277,6 +280,9 @@ public class ExpressionTests
         // First verify this is actually creating a Product
         Assert.IsInstanceOfType(expr, typeof(Product), "x*y*z should create a Product");
 
+        // Cache variables before computing Hessian
+        expr.CacheVariables();
+
         var n = point.Length;
         var hess = new HessianAccumulator();
         expr.AccumulateHessian(point, hess, 1.0);
@@ -317,6 +323,9 @@ public class ExpressionTests
 
     private static void AssertHessianMatchesFiniteDifference(Expr expr, double[] point)
     {
+        // Cache variables before computing Hessian
+        expr.CacheVariables();
+
         var n = point.Length;
         var hess = new HessianAccumulator();
         expr.AccumulateHessian(point, hess, 1.0);
@@ -1499,6 +1508,174 @@ public class ExpressionTests
         Assert.AreEqual(4.0, quad.LinearWeights[0], 1e-10, "Linear weight should be 2*2=4");
         Assert.AreEqual(2.0, quad.QuadraticWeights[0], 1e-10, "Quadratic weight should be 1*2=2");
         Assert.AreEqual(8.0, quad.ConstantTerm, 1e-10, "Constant should be 4*2=8");
+    }
+
+    [TestMethod]
+    public void BuildComplexObjectiveWithCompoundOperators_ShouldWork()
+    {
+        // Reproduces issue where building objective with += and then dividing
+        // would cause NullReferenceException in CollectHessianSparsity
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        Expr obj = 0;
+        for (int i = 0; i < 3; i++)
+        {
+            obj += x * y + Expr.Pow(x - i, 2);
+        }
+
+        model.SetObjective(obj / 3.0);
+
+        // This should not throw
+        var result = model.Solve();
+
+        Assert.IsNotNull(result);
+    }
+
+    [TestMethod]
+    public void ExprDividedByConstantExpr_ScalesCoefficients()
+    {
+        // When dividing an expression by a Constant (not a double),
+        // it should still scale coefficients instead of creating Division
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var expr = new LinExpr([2 * x, 4 * y]);
+        Expr divisor = 2.0; // Implicitly converts to Constant
+
+        var result = expr / divisor;
+
+        Assert.IsInstanceOfType<LinExpr>(result);
+        var lin = (LinExpr)result;
+        Assert.AreEqual(1.0, lin.Weights[0], 1e-10);
+        Assert.AreEqual(2.0, lin.Weights[1], 1e-10);
+    }
+
+    [TestMethod]
+    public void ExprMultipliedByConstantExpr_ScalesCoefficients()
+    {
+        // When multiplying an expression by a Constant (not a double),
+        // it should still scale coefficients instead of creating Product
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var expr = new LinExpr([2 * x, 4 * y]);
+        Expr multiplier = 3.0; // Implicitly converts to Constant
+
+        var result = expr * multiplier;
+
+        Assert.IsInstanceOfType<LinExpr>(result);
+        var lin = (LinExpr)result;
+        Assert.AreEqual(6.0, lin.Weights[0], 1e-10);
+        Assert.AreEqual(12.0, lin.Weights[1], 1e-10);
+    }
+
+    [TestMethod]
+    public void ConstantExprMultipliedByExpr_ScalesCoefficients()
+    {
+        // When multiplying a Constant by an expression,
+        // it should scale coefficients instead of creating Product
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        Expr multiplier = 3.0; // Implicitly converts to Constant
+        var expr = new LinExpr([2 * x, 4 * y]);
+
+        var result = multiplier * expr;
+
+        Assert.IsInstanceOfType<LinExpr>(result);
+        var lin = (LinExpr)result;
+        Assert.AreEqual(6.0, lin.Weights[0], 1e-10);
+        Assert.AreEqual(12.0, lin.Weights[1], 1e-10);
+    }
+
+    [TestMethod]
+    public void IntImplicitlyConvertedToDivision_ScalesCoefficients()
+    {
+        // When dividing by an int (which implicitly converts to Constant),
+        // it should scale coefficients instead of creating Division
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var expr = new LinExpr([4 * x, 8 * y]);
+        int divisor = 2;
+
+        var result = expr / divisor;
+
+        Assert.IsInstanceOfType<LinExpr>(result);
+        var lin = (LinExpr)result;
+        Assert.AreEqual(2.0, lin.Weights[0], 1e-10);
+        Assert.AreEqual(4.0, lin.Weights[1], 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExprDividedByConstantExpr_ScalesCoefficients()
+    {
+        // When dividing a QuadExpr by a Constant, it should scale coefficients
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var quad = new QuadExpr([6 * x * y, 4 * x]);
+
+        Expr divisor = 2.0;
+        var result = quad / divisor;
+
+        Assert.IsInstanceOfType<QuadExpr>(result);
+        var resultQuad = (QuadExpr)result;
+        Assert.AreEqual(3.0, resultQuad.QuadraticWeights[0], 1e-10);
+        Assert.AreEqual(2.0, resultQuad.LinearWeights[0], 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExprMultipliedByConstantExpr_ScalesCoefficients()
+    {
+        // When multiplying a QuadExpr by a Constant, it should scale coefficients
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var quad = new QuadExpr([2 * x * y, 3 * x]);
+
+        Expr multiplier = 3.0;
+        var result = quad * multiplier;
+
+        Assert.IsInstanceOfType<QuadExpr>(result);
+        var resultQuad = (QuadExpr)result;
+        Assert.AreEqual(6.0, resultQuad.QuadraticWeights[0], 1e-10);
+        Assert.AreEqual(9.0, resultQuad.LinearWeights[0], 1e-10);
+    }
+
+    [TestMethod]
+    public void CompoundOperatorFollowedByIntDivision_WorksCorrectly()
+    {
+        // Reproduces the real-world pattern: obj += expr in loop, then obj / count
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        Expr obj = 0;
+        for (int i = 0; i < 3; i++)
+        {
+            obj += x * y;
+        }
+
+        int count = 3;
+        var result = obj / count;
+
+        // Should create a QuadExpr (or LinExpr if optimized), not a Division
+        Assert.IsTrue(result is QuadExpr || result is LinExpr,
+            $"Expected QuadExpr or LinExpr but got {result.GetType().Name}");
+
+        // Verify it evaluates correctly
+        double[] point = [2.0, 3.0];
+        double expected = (2.0 * 3.0 + 2.0 * 3.0 + 2.0 * 3.0) / 3.0;
+        Assert.AreEqual(expected, result.Evaluate(point), 1e-10);
     }
 
     [TestMethod]

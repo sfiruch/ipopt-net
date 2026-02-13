@@ -147,6 +147,11 @@ public sealed class Model : IDisposable
             gU[i] = _constraints[i].UpperBound;
         }
 
+        // Cache variables upfront to eliminate allocations during optimization
+        _objective.CacheVariables();
+        foreach (var constraint in _constraints)
+            constraint.Expression.CacheVariables();
+
         // Analyze sparsity
         var (jacRows, jacCols) = AnalyzeJacobianSparsity();
 
@@ -288,6 +293,11 @@ public sealed class Model : IDisposable
                     _constraints[i].DualStart = constraintMultipliers[i];
             }
         }
+
+        // Clear cached variables to free memory after optimization
+        _objective.ClearCachedVariables();
+        foreach (var constraint in _constraints)
+            constraint.Expression.ClearCachedVariables();
 
         return new ModelResult(status, solution, objValue, statistics);
     }

@@ -7,7 +7,8 @@ namespace IpoptNet.Modelling;
 public abstract class Expr
 {
     protected Expr? _replacement;
-    
+    internal HashSet<Variable>? _cachedVariables;
+
     /// <summary>
     /// Gets the actual expression, following any replacements. For testing purposes.
     /// </summary>
@@ -147,6 +148,12 @@ public abstract class Expr
     }
     public static Expr operator *(Expr a, Expr b)
     {
+        // If multiplying by a constant, use the optimized scalar multiplication
+        if (b is Constant c)
+            return a * c.Value;
+        if (a is Constant c2)
+            return c2.Value * b;
+
         // If left operand is already a Product, extend it with the right operand
         if (a is Product prodA)
         {
@@ -167,7 +174,13 @@ public abstract class Expr
             return new Product([a, b]);
         }
     }
-    public static Expr operator /(Expr a, Expr b) => new Division(a, b);
+    public static Expr operator /(Expr a, Expr b)
+    {
+        // If dividing by a constant, use the optimized scalar division
+        if (b is Constant c)
+            return a / c.Value;
+        return new Division(a, b);
+    }
     public static Expr operator -(Expr a) => new Negation(a);
 
     public static Expr operator +(Expr a, double b)
@@ -230,6 +243,10 @@ public abstract class Expr
     }
     public static Expr operator *(Expr a, double b)
     {
+        // Unwrap replacement to operate on the actual expression
+        if (a._replacement is not null)
+            a = a._replacement;
+
         if (a is LinExpr linA)
         {
             var result = new LinExpr();
@@ -258,6 +275,10 @@ public abstract class Expr
 
     public static Expr operator *(double a, Expr b)
     {
+        // Unwrap replacement to operate on the actual expression
+        if (b._replacement is not null)
+            b = b._replacement;
+
         if (b is LinExpr linB)
         {
             var result = new LinExpr();
@@ -285,6 +306,10 @@ public abstract class Expr
     }
     public static Expr operator /(Expr a, double b)
     {
+        // Unwrap replacement to operate on the actual expression
+        if (a._replacement is not null)
+            a = a._replacement;
+
         if (a is LinExpr linA)
         {
             var result = new LinExpr();
@@ -532,6 +557,52 @@ public abstract class Expr
         _replacement = other;
     }
 
+    /// <summary>
+    /// Caches variables for this expression and all children to optimize repeated Hessian evaluations.
+    /// Called once during model finalization before optimization.
+    /// </summary>
+    internal void CacheVariables()
+    {
+        if (_replacement is not null)
+        {
+            _replacement.CacheVariables();
+            return;
+        }
+
+        if (_cachedVariables is not null)
+            return; // Already cached
+
+        _cachedVariables = new HashSet<Variable>();
+        CollectVariablesCore(_cachedVariables);
+
+        // Recursively cache for children
+        CacheVariablesForChildren();
+    }
+
+    /// <summary>
+    /// Clears cached variables to free memory after optimization completes.
+    /// </summary>
+    internal void ClearCachedVariables()
+    {
+        if (_replacement is not null)
+        {
+            _replacement.ClearCachedVariables();
+        }
+
+        _cachedVariables = null;
+        ClearCachedVariablesForChildren();
+    }
+
+    /// <summary>
+    /// Override in derived classes to recursively cache variables for child expressions.
+    /// </summary>
+    protected virtual void CacheVariablesForChildren() { }
+
+    /// <summary>
+    /// Override in derived classes to recursively clear cached variables for child expressions.
+    /// </summary>
+    protected virtual void ClearCachedVariablesForChildren() { }
+
     public static Constraint operator >=(Expr expr, double value) => new(expr, value, double.PositiveInfinity);
     public static Constraint operator <=(Expr expr, double value) => new(expr, double.NegativeInfinity, value);
     public static Constraint operator ==(Expr expr, double value) => new(expr, value, value);
@@ -651,10 +722,8 @@ public sealed class Division : Expr
         var gradL = ArrayPool<double>.Shared.Rent(n);
         var gradR = ArrayPool<double>.Shared.Rent(n);
 
-        var varsL = new HashSet<Variable>();
-        var varsR = new HashSet<Variable>();
-        Left.CollectVariables(varsL);
-        Right.CollectVariables(varsR);
+        var varsL = Left._cachedVariables!;
+        var varsR = Right._cachedVariables!;
 
         if (varsL.Count < n / 32) foreach (var v in varsL) gradL[v.Index] = 0; else Array.Clear(gradL);
         if (varsR.Count < n / 32) foreach (var v in varsR) gradR[v.Index] = 0; else Array.Clear(gradR);
@@ -709,8 +778,10 @@ public sealed class Division : Expr
         else
         {
             var vars = new HashSet<Variable>();
-            Left.CollectVariables(vars);
-            Right.CollectVariables(vars);
+            foreach (var v in Left._cachedVariables!)
+                vars.Add(v);
+            foreach (var v in Right._cachedVariables!)
+                vars.Add(v);
             AddClique(entries, vars);
         }
     }
@@ -730,6 +801,18 @@ public sealed class Division : Expr
     }
 
     protected override Expr CloneCore() => new Division(Left, Right);
+
+    protected override void CacheVariablesForChildren()
+    {
+        Left.CacheVariables();
+        Right.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        Left.ClearCachedVariables();
+        Right.ClearCachedVariables();
+    }
 
     protected override void PrintCore(TextWriter writer, string indent)
     {
@@ -774,6 +857,16 @@ public sealed class Negation : Expr
 
     protected override Expr CloneCore() => new Negation(Operand);
 
+    protected override void CacheVariablesForChildren()
+    {
+        Operand.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        Operand.ClearCachedVariables();
+    }
+
     protected override void PrintCore(TextWriter writer, string indent)
     {
         writer.WriteLine($"{indent}Negation:");
@@ -813,8 +906,7 @@ public sealed class PowerOp : Expr
         var n = x.Length;
         var gradB = ArrayPool<double>.Shared.Rent(n);
 
-        var vars = new HashSet<Variable>();
-        Base.CollectVariables(vars);
+        var vars = Base._cachedVariables!;
 
         if (vars.Count < n / 32)
             foreach (var v in vars) gradB[v.Index] = 0;
@@ -837,9 +929,7 @@ public sealed class PowerOp : Expr
         }
         else if (!Base.IsConstantWrtX())
         {
-            var vars = new HashSet<Variable>();
-            Base.CollectVariables(vars);
-            AddClique(entries, vars);
+            AddClique(entries, Base._cachedVariables!);
         }
     }
 
@@ -861,6 +951,16 @@ public sealed class PowerOp : Expr
     }
 
     protected override Expr CloneCore() => new PowerOp(Base, Exponent);
+
+    protected override void CacheVariablesForChildren()
+    {
+        Base.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        Base.ClearCachedVariables();
+    }
 
     protected override void PrintCore(TextWriter writer, string indent)
     {
@@ -891,8 +991,7 @@ public sealed class Sin : Expr
         var n = x.Length;
         var gradArg = ArrayPool<double>.Shared.Rent(n);
 
-        var vars = new HashSet<Variable>();
-        Argument.CollectVariables(vars);
+        var vars = Argument._cachedVariables!;
 
         if (vars.Count < n / 32)
             foreach (var v in vars) gradArg[v.Index] = 0;
@@ -910,9 +1009,7 @@ public sealed class Sin : Expr
     {
         if (!Argument.IsConstantWrtX())
         {
-            var vars = new HashSet<Variable>();
-            Argument.CollectVariables(vars);
-            AddClique(entries, vars);
+            AddClique(entries, Argument._cachedVariables!);
         }
     }
     protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
@@ -920,6 +1017,16 @@ public sealed class Sin : Expr
     protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
 
     protected override Expr CloneCore() => new Sin(Argument);
+
+    protected override void CacheVariablesForChildren()
+    {
+        Argument.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        Argument.ClearCachedVariables();
+    }
 }
 
 public sealed class Cos : Expr
@@ -944,8 +1051,7 @@ public sealed class Cos : Expr
         var n = x.Length;
         var gradArg = ArrayPool<double>.Shared.Rent(n);
 
-        var vars = new HashSet<Variable>();
-        Argument.CollectVariables(vars);
+        var vars = Argument._cachedVariables!;
 
         if (vars.Count < n / 32)
             foreach (var v in vars) gradArg[v.Index] = 0;
@@ -963,9 +1069,7 @@ public sealed class Cos : Expr
     {
         if (!Argument.IsConstantWrtX())
         {
-            var vars = new HashSet<Variable>();
-            Argument.CollectVariables(vars);
-            AddClique(entries, vars);
+            AddClique(entries, Argument._cachedVariables!);
         }
     }
     protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
@@ -973,6 +1077,16 @@ public sealed class Cos : Expr
     protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
 
     protected override Expr CloneCore() => new Cos(Argument);
+
+    protected override void CacheVariablesForChildren()
+    {
+        Argument.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        Argument.ClearCachedVariables();
+    }
 }
 
 public sealed class Tan : Expr
@@ -999,8 +1113,7 @@ public sealed class Tan : Expr
         var n = x.Length;
         var gradArg = ArrayPool<double>.Shared.Rent(n);
 
-        var vars = new HashSet<Variable>();
-        Argument.CollectVariables(vars);
+        var vars = Argument._cachedVariables!;
 
         if (vars.Count < n / 32)
             foreach (var v in vars) gradArg[v.Index] = 0;
@@ -1019,9 +1132,7 @@ public sealed class Tan : Expr
     {
         if (!Argument.IsConstantWrtX())
         {
-            var vars = new HashSet<Variable>();
-            Argument.CollectVariables(vars);
-            AddClique(entries, vars);
+            AddClique(entries, Argument._cachedVariables!);
         }
     }
     protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
@@ -1029,6 +1140,16 @@ public sealed class Tan : Expr
     protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
 
     protected override Expr CloneCore() => new Tan(Argument);
+
+    protected override void CacheVariablesForChildren()
+    {
+        Argument.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        Argument.ClearCachedVariables();
+    }
 }
 
 public sealed class Exp : Expr
@@ -1054,8 +1175,7 @@ public sealed class Exp : Expr
         var n = x.Length;
         var gradArg = ArrayPool<double>.Shared.Rent(n);
 
-        var vars = new HashSet<Variable>();
-        Argument.CollectVariables(vars);
+        var vars = Argument._cachedVariables!;
 
         if (vars.Count < n / 32)
             foreach (var v in vars) gradArg[v.Index] = 0;
@@ -1073,9 +1193,7 @@ public sealed class Exp : Expr
     {
         if (!Argument.IsConstantWrtX())
         {
-            var vars = new HashSet<Variable>();
-            Argument.CollectVariables(vars);
-            AddClique(entries, vars);
+            AddClique(entries, Argument._cachedVariables!);
         }
     }
     protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
@@ -1083,6 +1201,16 @@ public sealed class Exp : Expr
     protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
 
     protected override Expr CloneCore() => new Exp(Argument);
+
+    protected override void CacheVariablesForChildren()
+    {
+        Argument.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        Argument.ClearCachedVariables();
+    }
 }
 
 public sealed class Log : Expr
@@ -1107,8 +1235,7 @@ public sealed class Log : Expr
         var n = x.Length;
         var gradArg = ArrayPool<double>.Shared.Rent(n);
 
-        var vars = new HashSet<Variable>();
-        Argument.CollectVariables(vars);
+        var vars = Argument._cachedVariables!;
 
         if (vars.Count < n / 32)
             foreach (var v in vars) gradArg[v.Index] = 0;
@@ -1127,9 +1254,7 @@ public sealed class Log : Expr
     {
         if (!Argument.IsConstantWrtX())
         {
-            var vars = new HashSet<Variable>();
-            Argument.CollectVariables(vars);
-            AddClique(entries, vars);
+            AddClique(entries, Argument._cachedVariables!);
         }
     }
     protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
@@ -1137,6 +1262,16 @@ public sealed class Log : Expr
     protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
 
     protected override Expr CloneCore() => new Log(Argument);
+
+    protected override void CacheVariablesForChildren()
+    {
+        Argument.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        Argument.ClearCachedVariables();
+    }
 }
 
 public class LinExpr : Expr
@@ -1298,6 +1433,18 @@ public class LinExpr : Expr
         clone.Weights = [.. Weights];
         clone.ConstantTerm = ConstantTerm;
         return clone;
+    }
+
+    protected override void CacheVariablesForChildren()
+    {
+        foreach (var term in Terms)
+            term.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        foreach (var term in Terms)
+            term.ClearCachedVariables();
     }
 
     protected override void PrintCore(TextWriter writer, string indent)
@@ -1947,16 +2094,36 @@ public class QuadExpr : Expr
         return clone;
     }
 
+    protected override void CacheVariablesForChildren()
+    {
+        foreach (var term in LinearTerms)
+            term.CacheVariables();
+        foreach (var term in QuadraticTerms1)
+            term.CacheVariables();
+        foreach (var term in QuadraticTerms2)
+            term.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        foreach (var term in LinearTerms)
+            term.ClearCachedVariables();
+        foreach (var term in QuadraticTerms1)
+            term.ClearCachedVariables();
+        foreach (var term in QuadraticTerms2)
+            term.ClearCachedVariables();
+    }
+
     protected override void PrintCore(TextWriter writer, string indent)
     {
         writer.WriteLine($"{indent}QuadExpr: {LinearTerms.Count} linear, {QuadraticTerms1.Count} quadratic, constant={ConstantTerm}");
-        
+
         for (int i = 0; i < LinearTerms.Count; i++)
         {
             writer.WriteLine($"{indent}  Linear [{i}] weight={LinearWeights[i]}:");
             LinearTerms[i].Print(writer, indent + "    ");
         }
-        
+
         for (int i = 0; i < QuadraticTerms1.Count; i++)
         {
             writer.WriteLine($"{indent}  Quadratic [{i}] weight={QuadraticWeights[i]}:");
@@ -2027,9 +2194,8 @@ public sealed class Product : Expr
                 continue;
             }
 
-            // 1. Identify variables involved first
-            var vars = new HashSet<Variable>();
-            Factors[i].CollectVariables(vars);
+            // 1. Use cached variables
+            var vars = Factors[i]._cachedVariables!;
 
             var rented = ArrayPool<double>.Shared.Rent(n);
 
@@ -2165,19 +2331,12 @@ public sealed class Product : Expr
         foreach (var factor in Factors)
             factor.CollectHessianSparsity(entries);
 
-        var factorVars = new HashSet<Variable>[Factors.Count];
-        for (int i = 0; i < Factors.Count; i++)
-        {
-            factorVars[i] = new HashSet<Variable>();
-            Factors[i].CollectVariables(factorVars[i]);
-        }
-
         for (int i = 0; i < Factors.Count; i++)
         {
             for (int j = i + 1; j < Factors.Count; j++)
             {
-                foreach (var v1 in factorVars[i])
-                    foreach (var v2 in factorVars[j])
+                foreach (var v1 in Factors[i]._cachedVariables!)
+                    foreach (var v2 in Factors[j]._cachedVariables!)
                         AddSparsityEntry(entries, v1.Index, v2.Index);
             }
         }
@@ -2210,6 +2369,18 @@ public sealed class Product : Expr
     }
 
     protected override Expr CloneCore() => new Product([.. Factors]);
+
+    protected override void CacheVariablesForChildren()
+    {
+        foreach (var factor in Factors)
+            factor.CacheVariables();
+    }
+
+    protected override void ClearCachedVariablesForChildren()
+    {
+        foreach (var factor in Factors)
+            factor.ClearCachedVariables();
+    }
 
     protected override void PrintCore(TextWriter writer, string indent)
     {
