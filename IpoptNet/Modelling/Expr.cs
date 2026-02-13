@@ -1,0 +1,658 @@
+using System.Runtime.CompilerServices;
+using System.Buffers;
+
+namespace IpoptNet.Modelling;
+
+public abstract class Expr
+{
+    protected Expr? _replacement;
+    internal HashSet<Variable>? _cachedVariables;
+
+    /// <summary>
+    /// Gets the actual expression, following any replacements. For testing purposes.
+    /// </summary>
+    public Expr GetActual() => _replacement ?? this;
+
+    public double Evaluate(ReadOnlySpan<double> x) => _replacement?.Evaluate(x) ?? EvaluateCore(x);
+    public void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad, double multiplier) =>
+        (_replacement ?? this).AccumulateGradientCore(x, grad, multiplier);
+    public void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) =>
+        (_replacement ?? this).AccumulateHessianCore(x, hess, multiplier);
+    public void CollectVariables(HashSet<Variable> variables) =>
+        (_replacement ?? this).CollectVariablesCore(variables);
+    public void CollectHessianSparsity(HashSet<(int row, int col)> entries) =>
+        (_replacement ?? this).CollectHessianSparsityCore(entries);
+
+    protected void AccumulateOuterHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double coeff, HashSet<Variable> vars, double[] rentedGrad)
+    {
+        if (Math.Abs(coeff) < 1e-18) return;
+
+        // Only iterate over non-zero entries
+        var nonZeros = new List<int>(vars.Count);
+        foreach (var v in vars)
+            if (Math.Abs(rentedGrad[v.Index]) > 1e-18)
+                nonZeros.Add(v.Index);
+
+        nonZeros.Sort();
+
+        for (int i = 0; i < nonZeros.Count; i++)
+        {
+            int row = nonZeros[i];
+            double valI = rentedGrad[row];
+            for (int j = 0; j <= i; j++)
+            {
+                int col = nonZeros[j];
+                hess.Add(row, col, coeff * valI * rentedGrad[col]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns true if this expression contains no variables (is a constant value).
+    /// </summary>
+    public bool IsConstantWrtX() => (_replacement ?? this).IsConstantWrtXCore();
+
+    /// <summary>
+    /// Returns true if this expression is linear (constant gradient, zero Hessian).
+    /// Examples: 2*x + 3*y - 5, x, Constant
+    /// </summary>
+    public bool IsLinear() => (_replacement ?? this).IsLinearCore();
+
+    /// <summary>
+    /// Returns true if this expression is at most quadratic (constant Hessian).
+    /// Examples: x*y, x^2, 2*x + 3*y - 5
+    /// </summary>
+    public bool IsAtMostQuadratic() => (_replacement ?? this).IsAtMostQuadraticCore();
+
+    protected abstract double EvaluateCore(ReadOnlySpan<double> x);
+    protected abstract void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier);
+    protected abstract void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier);
+    protected abstract void CollectVariablesCore(HashSet<Variable> variables);
+    protected abstract void CollectHessianSparsityCore(HashSet<(int row, int col)> entries);
+    protected abstract bool IsConstantWrtXCore();
+    protected abstract bool IsLinearCore();
+    protected abstract bool IsAtMostQuadraticCore();
+
+    protected static void AddSparsityEntry(HashSet<(int row, int col)> entries, int i, int j)
+    {
+        if (i < j) (i, j) = (j, i);
+        entries.Add((i, j));
+    }
+
+    protected static void AddClique(HashSet<(int row, int col)> entries, HashSet<Variable> variables)
+    {
+        var vars = variables.ToArray();
+        for (int i = 0; i < vars.Length; i++)
+            for (int j = 0; j <= i; j++)
+                AddSparsityEntry(entries, vars[i].Index, vars[j].Index);
+    }
+
+    public override bool Equals(object? obj) => ReferenceEquals(this, obj);
+    public override int GetHashCode() => RuntimeHelpers.GetHashCode(this);
+
+    public static implicit operator Expr(int value) => new Constant(value);
+    public static implicit operator Expr(double value) => new Constant(value);
+
+    public static Expr operator +(Expr a, Expr b)
+    {
+        // If either operand is QuadExpr, result should be QuadExpr
+        // BUT only if the other operand is also at most quadratic
+        if (a is QuadExpr && b.IsAtMostQuadratic())
+        {
+            return new QuadExpr([a, b]);
+        }
+        if (b is QuadExpr && a.IsAtMostQuadratic())
+        {
+            return new QuadExpr([a, b]);
+        }
+        
+        // Auto-create QuadExpr if BOTH operands are at most quadratic
+        // and at least one is actually quadratic (non-linear)
+        bool aIsQuadratic = !a.IsLinear() && a.IsAtMostQuadratic();
+        bool bIsQuadratic = !b.IsLinear() && b.IsAtMostQuadratic();
+        
+        if ((aIsQuadratic || bIsQuadratic) && a.IsAtMostQuadratic() && b.IsAtMostQuadratic())
+        {
+            return new QuadExpr([a, b]);
+        }
+        
+        // Always create a new LinExpr to ensure proper merging
+        return new LinExpr([a, b]);
+    }
+    
+    public static Expr operator -(Expr a, Expr b)
+    {
+        // If either operand is QuadExpr, result should be QuadExpr
+        // BUT only if the other operand is also at most quadratic
+        if (a is QuadExpr && b.IsAtMostQuadratic())
+        {
+            return new QuadExpr([a, -b]);
+        }
+        if (b is QuadExpr && a.IsAtMostQuadratic())
+        {
+            return new QuadExpr([a, -b]);
+        }
+        
+        // Auto-create QuadExpr if BOTH operands are at most quadratic
+        bool aIsQuadratic = !a.IsLinear() && a.IsAtMostQuadratic();
+        bool bIsQuadratic = !b.IsLinear() && b.IsAtMostQuadratic();
+        
+        if ((aIsQuadratic || bIsQuadratic) && a.IsAtMostQuadratic() && b.IsAtMostQuadratic())
+        {
+            return new QuadExpr([a, -b]);
+        }
+        
+        // Always create a new LinExpr to ensure proper merging
+        return new LinExpr([a, -b]);
+    }
+    public static Expr operator *(Expr a, Expr b)
+    {
+        // If multiplying by a constant, use the optimized scalar multiplication
+        if (b is Constant c)
+            return a * c.Value;
+        if (a is Constant c2)
+            return c2.Value * b;
+
+        // If left operand is already a Product, extend it with the right operand
+        if (a is Product prodA)
+        {
+            var result = new Product([.. prodA.Factors, b]);
+            result.Factor = prodA.Factor;
+            return result;
+        }
+        // If right operand is a Product, prepend the left operand to it
+        else if (b is Product prodB)
+        {
+            var result = new Product([a, .. prodB.Factors]);
+            result.Factor = prodB.Factor;
+            return result;
+        }
+        else if (ReferenceEquals(a,b))
+        {
+            return new PowerOp(a, 2);
+        }
+        // Always use Product for multiplication to avoid building deep trees
+        else
+        {
+            return new Product([a, b]);
+        }
+    }
+    public static Expr operator /(Expr a, Expr b)
+    {
+        // If dividing by a constant, use the optimized scalar division
+        if (b is Constant c)
+            return a / c.Value;
+        return new Division(a, b);
+    }
+    public static Expr operator -(Expr a) => new Negation(a);
+
+    public static Expr operator +(Expr a, double b)
+    {
+        // Preserve QuadExpr if present
+        if (a is QuadExpr)
+        {
+            return new QuadExpr([a, new Constant(b)]);
+        }
+        // Auto-create QuadExpr for quadratic expressions
+        if (!a.IsLinear() && a.IsAtMostQuadratic())
+        {
+            return new QuadExpr([a, new Constant(b)]);
+        }
+        return new LinExpr([a, new Constant(b)]);
+    }
+
+    public static Expr operator +(double a, Expr b)
+    {
+        // Preserve QuadExpr if present
+        if (b is QuadExpr)
+        {
+            return new QuadExpr([new Constant(a), b]);
+        }
+        // Auto-create QuadExpr for quadratic expressions
+        if (!b.IsLinear() && b.IsAtMostQuadratic())
+        {
+            return new QuadExpr([new Constant(a), b]);
+        }
+        return new LinExpr([new Constant(a), b]);
+    }
+    public static Expr operator -(Expr a, double b)
+    {
+        // Preserve QuadExpr if present
+        if (a is QuadExpr)
+        {
+            return new QuadExpr([a, new Constant(-b)]);
+        }
+        // Auto-create QuadExpr for quadratic expressions
+        if (!a.IsLinear() && a.IsAtMostQuadratic())
+        {
+            return new QuadExpr([a, new Constant(-b)]);
+        }
+        return new LinExpr([a, new Constant(-b)]);
+    }
+
+    public static Expr operator -(double a, Expr b)
+    {
+        // Preserve QuadExpr if present
+        if (b is QuadExpr)
+        {
+            return new QuadExpr([new Constant(a), -b]);
+        }
+        // Auto-create QuadExpr for quadratic expressions
+        if (!b.IsLinear() && b.IsAtMostQuadratic())
+        {
+            return new QuadExpr([new Constant(a), -b]);
+        }
+        return new LinExpr([new Constant(a), -b]);
+    }
+    public static Expr operator *(Expr a, double b)
+    {
+        // Unwrap replacement to operate on the actual expression
+        if (a._replacement is not null)
+            a = a._replacement;
+
+        if (a is LinExpr linA)
+        {
+            var result = new LinExpr();
+            result.Terms = [.. linA.Terms];
+            result.Weights = linA.Weights.Select(w => w * b).ToList();
+            result.ConstantTerm = linA.ConstantTerm * b;
+            return result;
+        }
+        if (a is QuadExpr quadA)
+        {
+            var result = new QuadExpr();
+            result.LinearTerms = [.. quadA.LinearTerms];
+            result.LinearWeights = quadA.LinearWeights.Select(w => w * b).ToList();
+            result.QuadraticTerms1 = [.. quadA.QuadraticTerms1];
+            result.QuadraticTerms2 = [.. quadA.QuadraticTerms2];
+            result.QuadraticWeights = quadA.QuadraticWeights.Select(w => w * b).ToList();
+            result.ConstantTerm = quadA.ConstantTerm * b;
+            return result;
+        }
+        if (a is Product prodA)
+        {
+            var result = new Product([.. prodA.Factors]);
+            result.Factor = prodA.Factor * b;
+            return result;
+        }
+        return new Product([a, new Constant(b)]);
+    }
+
+    public static Expr operator *(double a, Expr b)
+    {
+        // Unwrap replacement to operate on the actual expression
+        if (b._replacement is not null)
+            b = b._replacement;
+
+        if (b is LinExpr linB)
+        {
+            var result = new LinExpr();
+            result.Terms = [.. linB.Terms];
+            result.Weights = linB.Weights.Select(w => w * a).ToList();
+            result.ConstantTerm = linB.ConstantTerm * a;
+            return result;
+        }
+        if (b is QuadExpr quadB)
+        {
+            var result = new QuadExpr();
+            result.LinearTerms = [.. quadB.LinearTerms];
+            result.LinearWeights = quadB.LinearWeights.Select(w => w * a).ToList();
+            result.QuadraticTerms1 = [.. quadB.QuadraticTerms1];
+            result.QuadraticTerms2 = [.. quadB.QuadraticTerms2];
+            result.QuadraticWeights = quadB.QuadraticWeights.Select(w => w * a).ToList();
+            result.ConstantTerm = quadB.ConstantTerm * a;
+            return result;
+        }
+        if (b is Product prodB)
+        {
+            var result = new Product([.. prodB.Factors]);
+            result.Factor = prodB.Factor * a;
+            return result;
+        }
+        return new Product([new Constant(a), b]);
+    }
+    public static Expr operator /(Expr a, double b)
+    {
+        // Unwrap replacement to operate on the actual expression
+        if (a._replacement is not null)
+            a = a._replacement;
+
+        if (a is LinExpr linA)
+        {
+            var result = new LinExpr();
+            result.Terms = [.. linA.Terms];
+            result.Weights = linA.Weights.Select(w => w / b).ToList();
+            result.ConstantTerm = linA.ConstantTerm / b;
+            return result;
+        }
+        if (a is QuadExpr quadA)
+        {
+            var result = new QuadExpr();
+            result.LinearTerms = [.. quadA.LinearTerms];
+            result.LinearWeights = quadA.LinearWeights.Select(w => w / b).ToList();
+            result.QuadraticTerms1 = [.. quadA.QuadraticTerms1];
+            result.QuadraticTerms2 = [.. quadA.QuadraticTerms2];
+            result.QuadraticWeights = quadA.QuadraticWeights.Select(w => w / b).ToList();
+            result.ConstantTerm = quadA.ConstantTerm / b;
+            return result;
+        }
+        return a * (1.0 / b);
+    }
+    public static Expr operator /(double a, Expr b) => new Division(new Constant(a), b);
+
+    // C# 14 compound assignment operators - modify expression in-place for efficiency
+    public void operator +=(Expr other)
+    {
+        // Check if we've been replaced with a QuadExpr - use efficient AddTerm
+        if (_replacement is QuadExpr quad)
+        {
+            quad.AddTerm(other, 1.0);
+        }
+        // Check if we've been replaced with a LinExpr - use efficient AddTerm
+        else if (_replacement is LinExpr lin)
+        {
+            lin.AddTerm(other, 1.0);
+        }
+        // Check if this is directly a QuadExpr (no replacement) - use efficient AddTerm
+        else if (_replacement is null && this is QuadExpr thisQuad)
+        {
+            thisQuad.AddTerm(other, 1.0);
+        }
+        // Check if this is directly a LinExpr (no replacement) - use efficient AddTerm
+        else if (_replacement is null && this is LinExpr thisLin)
+        {
+            thisLin.AddTerm(other, 1.0);
+        }
+        // Check if this is a zero constant with no replacement yet
+        else if (_replacement is null && this is Constant { Value: 0 })
+        {
+            ReplaceWith(other);
+        }
+        // Otherwise create appropriate expression type
+        else
+        {
+            var current = Clone();
+            // Use QuadExpr if either operand is quadratic
+            if ((!current.IsLinear() && current.IsAtMostQuadratic()) || 
+                (!other.IsLinear() && other.IsAtMostQuadratic()) ||
+                current is QuadExpr || other is QuadExpr)
+            {
+                ReplaceWith(new QuadExpr([current, other]));
+            }
+            else
+            {
+                ReplaceWith(new LinExpr([current, other]));
+            }
+        }
+    }
+
+    public void operator -=(Expr other)
+    {
+        // Check if we've been replaced with a QuadExpr - use efficient AddTerm
+        if (_replacement is QuadExpr quad)
+        {
+            quad.AddTerm(other, -1.0);
+        }
+        // Check if we've been replaced with a LinExpr - use efficient AddTerm
+        else if (_replacement is LinExpr lin)
+        {
+            lin.AddTerm(other, -1.0);
+        }
+        // Check if this is directly a QuadExpr (no replacement) - use efficient AddTerm
+        else if (_replacement is null && this is QuadExpr thisQuad)
+        {
+            thisQuad.AddTerm(other, -1.0);
+        }
+        // Check if this is directly a LinExpr (no replacement) - use efficient AddTerm
+        else if (_replacement is null && this is LinExpr thisLin)
+        {
+            thisLin.AddTerm(other, -1.0);
+        }
+        // Check if this is a zero constant with no replacement yet
+        else if (_replacement is null && this is Constant { Value: 0 })
+        {
+            ReplaceWith(-other);
+        }
+        // Otherwise create appropriate expression type
+        else
+        {
+            var current = Clone();
+            // Use QuadExpr if either operand is quadratic
+            if ((!current.IsLinear() && current.IsAtMostQuadratic()) || 
+                (!other.IsLinear() && other.IsAtMostQuadratic()) ||
+                current is QuadExpr || other is QuadExpr)
+            {
+                ReplaceWith(new QuadExpr([current, -other]));
+            }
+            else
+            {
+                ReplaceWith(new LinExpr([current, -other]));
+            }
+        }
+    }
+
+    public void operator *=(Expr other)
+    {
+        // Special handling for LinExpr and QuadExpr multiplying by constant
+        if (other is Constant c)
+        {
+            if (_replacement is LinExpr replacementLin)
+            {
+                for (int i = 0; i < replacementLin.Weights.Count; i++)
+                    replacementLin.Weights[i] *= c.Value;
+                replacementLin.ConstantTerm *= c.Value;
+                return;
+            }
+            if (_replacement is QuadExpr replacementQuad)
+            {
+                for (int i = 0; i < replacementQuad.LinearWeights.Count; i++)
+                    replacementQuad.LinearWeights[i] *= c.Value;
+                for (int i = 0; i < replacementQuad.QuadraticWeights.Count; i++)
+                    replacementQuad.QuadraticWeights[i] *= c.Value;
+                replacementQuad.ConstantTerm *= c.Value;
+                return;
+            }
+            if (_replacement is null && this is LinExpr thisLin)
+            {
+                for (int i = 0; i < thisLin.Weights.Count; i++)
+                    thisLin.Weights[i] *= c.Value;
+                thisLin.ConstantTerm *= c.Value;
+                return;
+            }
+            if (_replacement is null && this is QuadExpr thisQuad)
+            {
+                for (int i = 0; i < thisQuad.LinearWeights.Count; i++)
+                    thisQuad.LinearWeights[i] *= c.Value;
+                for (int i = 0; i < thisQuad.QuadraticWeights.Count; i++)
+                    thisQuad.QuadraticWeights[i] *= c.Value;
+                thisQuad.ConstantTerm *= c.Value;
+                return;
+            }
+        }
+
+        // Check if we've been replaced with a Product
+        if (_replacement is Product replacementProduct)
+        {
+            replacementProduct.Factors.Add(other);
+        }
+        // Check if this is directly a Product (no replacement)
+        else if (_replacement is null && this is Product thisProduct)
+        {
+            thisProduct.Factors.Add(other);
+        }
+        // Check if this is a one constant with no replacement yet
+        else if (_replacement is null && this is Constant { Value: 1 })
+        {
+            ReplaceWith(other);
+        }
+        // Otherwise create a new Product with current value and new factor
+        else
+        {
+            ReplaceWith(new Product([Clone(), other]));
+        }
+    }
+
+    public void operator /=(Expr other)
+    {
+        // Special handling for LinExpr and QuadExpr dividing by constant
+        if (other is Constant c)
+        {
+            if (_replacement is LinExpr replacementLin)
+            {
+                for (int i = 0; i < replacementLin.Weights.Count; i++)
+                    replacementLin.Weights[i] /= c.Value;
+                replacementLin.ConstantTerm /= c.Value;
+                return;
+            }
+            if (_replacement is QuadExpr replacementQuad)
+            {
+                for (int i = 0; i < replacementQuad.LinearWeights.Count; i++)
+                    replacementQuad.LinearWeights[i] /= c.Value;
+                for (int i = 0; i < replacementQuad.QuadraticWeights.Count; i++)
+                    replacementQuad.QuadraticWeights[i] /= c.Value;
+                replacementQuad.ConstantTerm /= c.Value;
+                return;
+            }
+            if (_replacement is null && this is LinExpr thisLin)
+            {
+                for (int i = 0; i < thisLin.Weights.Count; i++)
+                    thisLin.Weights[i] /= c.Value;
+                thisLin.ConstantTerm /= c.Value;
+                return;
+            }
+            if (_replacement is null && this is QuadExpr thisQuad)
+            {
+                for (int i = 0; i < thisQuad.LinearWeights.Count; i++)
+                    thisQuad.LinearWeights[i] /= c.Value;
+                for (int i = 0; i < thisQuad.QuadraticWeights.Count; i++)
+                    thisQuad.QuadraticWeights[i] /= c.Value;
+                thisQuad.ConstantTerm /= c.Value;
+                return;
+            }
+        }
+
+        // Check if we've been replaced with a Product (add reciprocal)
+        if (_replacement is Product replacementProduct)
+        {
+            replacementProduct.Factors.Add(new Division(1, other));
+        }
+        // Check if this is directly a Product (no replacement)
+        else if (_replacement is null && this is Product thisProduct)
+        {
+            thisProduct.Factors.Add(new Division(1, other));
+        }
+        // Otherwise create a division
+        else
+        {
+            ReplaceWith(new Division(Clone(), other));
+        }
+    }
+
+    public Constraint Between(double lower, double upper) => new Constraint(this, lower, upper);
+
+    protected Expr Clone()
+    {
+        if (_replacement is not null)
+            return _replacement.Clone();
+        return CloneCore();
+    }
+
+    protected abstract Expr CloneCore();
+
+    protected void ReplaceWith(Expr other)
+    {
+        _replacement = other;
+    }
+
+    /// <summary>
+    /// Caches variables for this expression and all children to optimize repeated Hessian evaluations.
+    /// Called once during model finalization before optimization.
+    /// </summary>
+    internal void CacheVariables()
+    {
+        if (_replacement is not null)
+        {
+            _replacement.CacheVariables();
+            return;
+        }
+
+        if (_cachedVariables is not null)
+            return; // Already cached
+
+        _cachedVariables = new HashSet<Variable>();
+        CollectVariablesCore(_cachedVariables);
+
+        // Recursively cache for children
+        CacheVariablesForChildren();
+    }
+
+    /// <summary>
+    /// Clears cached variables to free memory after optimization completes.
+    /// </summary>
+    internal void ClearCachedVariables()
+    {
+        if (_replacement is not null)
+        {
+            _replacement.ClearCachedVariables();
+        }
+
+        _cachedVariables = null;
+        ClearCachedVariablesForChildren();
+    }
+
+    /// <summary>
+    /// Override in derived classes to recursively cache variables for child expressions.
+    /// </summary>
+    protected virtual void CacheVariablesForChildren() { }
+
+    /// <summary>
+    /// Override in derived classes to recursively clear cached variables for child expressions.
+    /// </summary>
+    protected virtual void ClearCachedVariablesForChildren() { }
+
+    public static Constraint operator >=(Expr expr, double value) => new(expr, value, double.PositiveInfinity);
+    public static Constraint operator <=(Expr expr, double value) => new(expr, double.NegativeInfinity, value);
+    public static Constraint operator ==(Expr expr, double value) => new(expr, value, value);
+    public static Constraint operator !=(Expr expr, double value) => throw new NotSupportedException("Inequality constraints (!=) are not supported in optimization models.");
+
+    public static Constraint operator >=(double value, Expr expr) => new(expr, double.NegativeInfinity, value);
+    public static Constraint operator <=(double value, Expr expr) => new(expr, value, double.PositiveInfinity);
+    public static Constraint operator ==(double value, Expr expr) => new(expr, value, value);
+    public static Constraint operator !=(double value, Expr expr) => throw new NotSupportedException("Inequality constraints (!=) are not supported in optimization models.");
+
+    public static Constraint operator >=(Expr left, Expr right) => new(left - right, 0, double.PositiveInfinity);
+    public static Constraint operator <=(Expr left, Expr right) => new(left - right, double.NegativeInfinity, 0);
+    public static Constraint operator ==(Expr left, Expr right) => new(left - right, 0, 0);
+    public static Constraint operator !=(Expr left, Expr right) => throw new NotSupportedException("Inequality constraints (!=) are not supported in optimization models.");
+
+    public static Expr Pow(Expr @base, double exponent) => new PowerOp(@base, exponent);
+    public static Expr Pow(Expr @base, Expr exponent) => Exp(exponent * Log(@base));
+    public static Expr Sqrt(Expr a) => new PowerOp(a, 0.5);
+    public static Expr Sin(Expr a) => new Sin(a);
+    public static Expr Cos(Expr a) => new Cos(a);
+    public static Expr Tan(Expr a) => new Tan(a);
+    public static Expr Exp(Expr a) => new Exp(a);
+    public static Expr Log(Expr a) => new Log(a);
+
+    /// <summary>
+    /// Prints the expression tree for debugging.
+    /// </summary>
+    /// <param name="writer">The TextWriter to write to. Defaults to Console.Out.</param>
+    /// <param name="indent">The indentation string for formatting.</param>
+    public void Print(TextWriter? writer = null, string indent = "")
+    {
+        writer ??= Console.Out;
+        if (_replacement is not null)
+        {
+            writer.WriteLine($"{indent}[Replaced with:]");
+            _replacement.Print(writer, indent + "  ");
+            return;
+        }
+        PrintCore(writer, indent);
+    }
+
+    protected virtual void PrintCore(TextWriter writer, string indent)
+    {
+        writer.WriteLine($"{indent}{GetType().Name}");
+    }
+}
