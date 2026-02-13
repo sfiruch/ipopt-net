@@ -127,13 +127,15 @@ public sealed class Model : IDisposable
         var n = _variables.Count;
         var m = _constraints.Count;
 
+        const double Infinity = 1e19;
+
         // Variable bounds
         var xL = new double[n];
         var xU = new double[n];
         for (int i = 0; i < n; i++)
         {
-            xL[i] = _variables[i].LowerBound;
-            xU[i] = _variables[i].UpperBound;
+            xL[i] = Math.Clamp(_variables[i].LowerBound, -Infinity, Infinity);
+            xU[i] = Math.Clamp(_variables[i].UpperBound, -Infinity, Infinity);
         }
 
         // Constraint bounds
@@ -162,99 +164,105 @@ public sealed class Model : IDisposable
         ApplicationReturnStatus status;
         double objValue;
         SolveStatistics statistics;
-        var solution = new Dictionary<Variable, double>();
         var constraintValues = new double[m];
         var constraintMultipliers = new double[m];
         var lowerBoundMultipliers = new double[n];
         var upperBoundMultipliers = new double[n];
 
-        using (var solver = new IpoptSolver(
+        using var solver = new IpoptSolver(
             n, xL, xU,
             m, gL, gU,
             jacRows.Length, hessRows.Length,
-            evalF, evalGradF, evalG, evalJacG, evalH))
+            evalF, evalGradF, evalG, evalJacG, evalH);
+
+        // Apply user-specified options
+        foreach (var (name, value) in Options.Options)
         {
-
-            // Apply user-specified options
-            foreach (var (name, value) in Options.Options)
+            switch (value)
             {
-                switch (value)
-                {
-                    case string strValue:
-                        solver.SetOption(name, strValue);
-                        break;
-                    case int intValue:
-                        solver.SetOption(name, intValue);
-                        break;
-                    case double dblValue:
-                        solver.SetOption(name, dblValue);
-                        break;
-                }
+                case string strValue:
+                    solver.SetOption(name, strValue);
+                    break;
+                case int intValue:
+                    solver.SetOption(name, intValue);
+                    break;
+                case double dblValue:
+                    solver.SetOption(name, dblValue);
+                    break;
             }
-
-            // Auto-set constant derivative options if user hasn't explicitly set them
-            // These are set directly on the solver to avoid persisting in Options across multiple solves
-
-            // Auto-enable warm start if we have non-zero dual values and user hasn't explicitly set it
-            if (Options.WarmStartInitPoint is null &&
-                (_variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
-                 _constraints.Any(c => c.DualStart != 0)))
-            {
-                solver.SetOption("warm_start_init_point", "yes");
-            }
-
-            // Auto-enable grad_f_constant if objective has constant gradients and user hasn't explicitly set it
-            if (Options.GradFConstant is null && _objective.IsLinear())
-            {
-                solver.SetOption("grad_f_constant", "yes");
-            }
-
-            // Auto-enable jac_c_constant if all equality constraints have constant Jacobians
-            var equalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) < 1e-15).ToList();
-            if (Options.JacCConstant is null && equalityConstraints.All(c => c.Expression.IsLinear()))
-            {
-                solver.SetOption("jac_c_constant", "yes");
-            }
-
-            // Auto-enable jac_d_constant if all inequality constraints have constant Jacobians
-            var inequalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) >= 1e-15).ToList();
-            if (Options.JacDConstant is null && inequalityConstraints.All(c => c.Expression.IsLinear()))
-            {
-                solver.SetOption("jac_d_constant", "yes");
-            }
-
-            // Auto-enable hessian_constant if objective and all constraints are at most quadratic
-            if (Options.HessianConstant is null && !useLimitedMemory &&
-                _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsLinear()))
-            {
-                solver.SetOption("hessian_constant", "yes");
-            }
-
-            // Initialize primal variables from variable Start values, ensuring they're within bounds
-            var x = new double[n];
-            for (int i = 0; i < n; i++)
-                x[i] = Math.Clamp(_variables[i].Start, xL[i], xU[i]);
-
-            // Initialize dual variables
-            for (int i = 0; i < m; i++)
-                constraintMultipliers[i] = _constraints[i].DualStart;
-
-            for (int i = 0; i < n; i++)
-            {
-                lowerBoundMultipliers[i] = _variables[i].LowerBoundDualStart;
-                upperBoundMultipliers[i] = _variables[i].UpperBoundDualStart;
-            }
-
-            status = solver.Solve(x, out objValue, out statistics, constraintValues, constraintMultipliers,
-                                      lowerBoundMultipliers, upperBoundMultipliers);
-
-            // Build solution
-            for (int i = 0; i < n; i++)
-                solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]);
         }
 
-        // Update variable Start values and dual variables if requested and solution is usable
-        if (updateStartValues && status is
+        // Auto-set constant derivative options if user hasn't explicitly set them
+        // These are set directly on the solver to avoid persisting in Options across multiple solves
+
+        // Auto-enable warm start if we have non-zero dual values and user hasn't explicitly set it
+        if (Options.WarmStartInitPoint is null &&
+            (_variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
+             _constraints.Any(c => c.DualStart != 0)))
+        {
+            solver.SetOption("warm_start_init_point", "yes");
+        }
+
+        // Auto-enable grad_f_constant if objective has constant gradients and user hasn't explicitly set it
+        if (Options.GradFConstant is null && _objective.IsLinear())
+        {
+            solver.SetOption("grad_f_constant", "yes");
+        }
+
+        // Auto-enable jac_c_constant if all equality constraints have constant Jacobians
+        var equalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) < 1e-15).ToList();
+        if (Options.JacCConstant is null && equalityConstraints.All(c => c.Expression.IsLinear()))
+        {
+            solver.SetOption("jac_c_constant", "yes");
+        }
+
+        // Auto-enable jac_d_constant if all inequality constraints have constant Jacobians
+        var inequalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) >= 1e-15).ToList();
+        if (Options.JacDConstant is null && inequalityConstraints.All(c => c.Expression.IsLinear()))
+        {
+            solver.SetOption("jac_d_constant", "yes");
+        }
+
+        // Auto-enable hessian_constant if objective and all constraints are at most quadratic
+        if (Options.HessianConstant is null && !useLimitedMemory &&
+            _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsLinear()))
+        {
+            solver.SetOption("hessian_constant", "yes");
+        }
+
+        // Initialize primal variables from variable Start values, ensuring they're within bounds
+        var x = new double[n];
+        for (int i = 0; i < n; i++)
+            if (_variables[i].Start.HasValue)
+                x[i] = Math.Clamp(_variables[i].Start!.Value, xL[i], xU[i]);
+            else if (xU[i] == Infinity)
+                x[i] = Math.Max(0, xL[i]);
+            else if (xL[i] == -Infinity)
+                x[i] = Math.Min(0, xU[i]);
+            else
+            {
+                Debug.Assert(xU[i] != Infinity && xL[i] != -Infinity);
+                x[i] = (xL[i] + xU[i]) * 0.5;
+            }
+
+
+        // Initialize dual variables
+        for (int i = 0; i < m; i++)
+            constraintMultipliers[i] = _constraints[i].DualStart;
+
+        for (int i = 0; i < n; i++)
+        {
+            lowerBoundMultipliers[i] = _variables[i].LowerBoundDualStart;
+            upperBoundMultipliers[i] = _variables[i].UpperBoundDualStart;
+        }
+
+        status = solver.Solve(x, out objValue, out statistics, constraintValues, constraintMultipliers,
+                                  lowerBoundMultipliers, upperBoundMultipliers);
+
+        // Build solution
+        var solution = new Dictionary<Variable, double>();
+
+        if (status is
             ApplicationReturnStatus.SolveSucceeded or
             ApplicationReturnStatus.SolvedToAcceptableLevel or
             ApplicationReturnStatus.FeasiblePointFound or
@@ -263,15 +271,22 @@ public sealed class Model : IDisposable
             ApplicationReturnStatus.MaximumWallTimeExceeded)
         {
             for (int i = 0; i < n; i++)
-            {
-                // x values are already in solution dictionary
-                _variables[i].Start = solution[_variables[i]];
-                _variables[i].LowerBoundDualStart = lowerBoundMultipliers[i];
-                _variables[i].UpperBoundDualStart = upperBoundMultipliers[i];
-            }
+                solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]);
 
-            for (int i = 0; i < m; i++)
-                _constraints[i].DualStart = constraintMultipliers[i];
+            // Update variable Start values and dual variables if requested and solution is usable
+            if (updateStartValues)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    // x values are already in solution dictionary
+                    _variables[i].Start = solution[_variables[i]];
+                    _variables[i].LowerBoundDualStart = lowerBoundMultipliers[i];
+                    _variables[i].UpperBoundDualStart = upperBoundMultipliers[i];
+                }
+
+                for (int i = 0; i < m; i++)
+                    _constraints[i].DualStart = constraintMultipliers[i];
+            }
         }
 
         return new ModelResult(status, solution, objValue, statistics);
@@ -333,7 +348,6 @@ public sealed class Model : IDisposable
         {
             var x = new ReadOnlySpan<double>(pX, n);
             *objValue = _objective!.Evaluate(x);
-
             return IsValidNumber(*objValue);
         };
     }
@@ -348,10 +362,8 @@ public sealed class Model : IDisposable
             _objective!.AccumulateGradient(x, gradF, 1.0);
 
             for (int i = 0; i < n; i++)
-            {
                 if (!IsValidNumber(gradF[i]))
                     return false;
-            }
 
             return true;
         };
@@ -433,7 +445,7 @@ public sealed class Model : IDisposable
         for (int i = 0; i < structRows.Length; i++)
             indexMap[(structRows[i], structCols[i])] = i;
 
-        var hess = new HessianAccumulator(_variables.Count);
+        var hess = new HessianAccumulator();
 
         return (int n, double* pX, bool newX, double objFactor, int m, double* lambda, bool newLambda,
                 int neleHess, int* iRow, int* jCol, double* pValues, nint userData) =>
@@ -464,7 +476,7 @@ public sealed class Model : IDisposable
                 // Copy to values array
                 var values = new Span<double>(pValues, neleHess);
                 values.Clear();
-                foreach (var (key, value) in hess.GetEntries())
+                foreach (var (key, value) in hess.Entries)
                 {
                     var idx = indexMap[key];
                     values[idx] = value;
