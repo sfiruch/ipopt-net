@@ -230,6 +230,25 @@ public abstract class Expr
     }
     public static Expr operator *(Expr a, double b)
     {
+        if (a is LinExpr linA)
+        {
+            var result = new LinExpr();
+            result.Terms = [.. linA.Terms];
+            result.Weights = linA.Weights.Select(w => w * b).ToList();
+            result.ConstantTerm = linA.ConstantTerm * b;
+            return result;
+        }
+        if (a is QuadExpr quadA)
+        {
+            var result = new QuadExpr();
+            result.LinearTerms = [.. quadA.LinearTerms];
+            result.LinearWeights = quadA.LinearWeights.Select(w => w * b).ToList();
+            result.QuadraticTerms1 = [.. quadA.QuadraticTerms1];
+            result.QuadraticTerms2 = [.. quadA.QuadraticTerms2];
+            result.QuadraticWeights = quadA.QuadraticWeights.Select(w => w * b).ToList();
+            result.ConstantTerm = quadA.ConstantTerm * b;
+            return result;
+        }
         if (a is Product prodA)
         {
             return new Product([.. prodA.Factors, new Constant(b)]);
@@ -239,13 +258,54 @@ public abstract class Expr
 
     public static Expr operator *(double a, Expr b)
     {
+        if (b is LinExpr linB)
+        {
+            var result = new LinExpr();
+            result.Terms = [.. linB.Terms];
+            result.Weights = linB.Weights.Select(w => w * a).ToList();
+            result.ConstantTerm = linB.ConstantTerm * a;
+            return result;
+        }
+        if (b is QuadExpr quadB)
+        {
+            var result = new QuadExpr();
+            result.LinearTerms = [.. quadB.LinearTerms];
+            result.LinearWeights = quadB.LinearWeights.Select(w => w * a).ToList();
+            result.QuadraticTerms1 = [.. quadB.QuadraticTerms1];
+            result.QuadraticTerms2 = [.. quadB.QuadraticTerms2];
+            result.QuadraticWeights = quadB.QuadraticWeights.Select(w => w * a).ToList();
+            result.ConstantTerm = quadB.ConstantTerm * a;
+            return result;
+        }
         if (b is Product prodB)
         {
             return new Product([new Constant(a), .. prodB.Factors]);
         }
         return new Product([new Constant(a), b]);
     }
-    public static Expr operator /(Expr a, double b) => a * (1.0 / b);
+    public static Expr operator /(Expr a, double b)
+    {
+        if (a is LinExpr linA)
+        {
+            var result = new LinExpr();
+            result.Terms = [.. linA.Terms];
+            result.Weights = linA.Weights.Select(w => w / b).ToList();
+            result.ConstantTerm = linA.ConstantTerm / b;
+            return result;
+        }
+        if (a is QuadExpr quadA)
+        {
+            var result = new QuadExpr();
+            result.LinearTerms = [.. quadA.LinearTerms];
+            result.LinearWeights = quadA.LinearWeights.Select(w => w / b).ToList();
+            result.QuadraticTerms1 = [.. quadA.QuadraticTerms1];
+            result.QuadraticTerms2 = [.. quadA.QuadraticTerms2];
+            result.QuadraticWeights = quadA.QuadraticWeights.Select(w => w / b).ToList();
+            result.ConstantTerm = quadA.ConstantTerm / b;
+            return result;
+        }
+        return a * (1.0 / b);
+    }
     public static Expr operator /(double a, Expr b) => new Division(new Constant(a), b);
 
     // C# 14 compound assignment operators - modify expression in-place for efficiency
@@ -341,6 +401,43 @@ public abstract class Expr
 
     public void operator *=(Expr other)
     {
+        // Special handling for LinExpr and QuadExpr multiplying by constant
+        if (other is Constant c)
+        {
+            if (_replacement is LinExpr replacementLin)
+            {
+                for (int i = 0; i < replacementLin.Weights.Count; i++)
+                    replacementLin.Weights[i] *= c.Value;
+                replacementLin.ConstantTerm *= c.Value;
+                return;
+            }
+            if (_replacement is QuadExpr replacementQuad)
+            {
+                for (int i = 0; i < replacementQuad.LinearWeights.Count; i++)
+                    replacementQuad.LinearWeights[i] *= c.Value;
+                for (int i = 0; i < replacementQuad.QuadraticWeights.Count; i++)
+                    replacementQuad.QuadraticWeights[i] *= c.Value;
+                replacementQuad.ConstantTerm *= c.Value;
+                return;
+            }
+            if (_replacement is null && this is LinExpr thisLin)
+            {
+                for (int i = 0; i < thisLin.Weights.Count; i++)
+                    thisLin.Weights[i] *= c.Value;
+                thisLin.ConstantTerm *= c.Value;
+                return;
+            }
+            if (_replacement is null && this is QuadExpr thisQuad)
+            {
+                for (int i = 0; i < thisQuad.LinearWeights.Count; i++)
+                    thisQuad.LinearWeights[i] *= c.Value;
+                for (int i = 0; i < thisQuad.QuadraticWeights.Count; i++)
+                    thisQuad.QuadraticWeights[i] *= c.Value;
+                thisQuad.ConstantTerm *= c.Value;
+                return;
+            }
+        }
+
         // Check if we've been replaced with a Product
         if (_replacement is Product replacementProduct)
         {
@@ -365,6 +462,43 @@ public abstract class Expr
 
     public void operator /=(Expr other)
     {
+        // Special handling for LinExpr and QuadExpr dividing by constant
+        if (other is Constant c)
+        {
+            if (_replacement is LinExpr replacementLin)
+            {
+                for (int i = 0; i < replacementLin.Weights.Count; i++)
+                    replacementLin.Weights[i] /= c.Value;
+                replacementLin.ConstantTerm /= c.Value;
+                return;
+            }
+            if (_replacement is QuadExpr replacementQuad)
+            {
+                for (int i = 0; i < replacementQuad.LinearWeights.Count; i++)
+                    replacementQuad.LinearWeights[i] /= c.Value;
+                for (int i = 0; i < replacementQuad.QuadraticWeights.Count; i++)
+                    replacementQuad.QuadraticWeights[i] /= c.Value;
+                replacementQuad.ConstantTerm /= c.Value;
+                return;
+            }
+            if (_replacement is null && this is LinExpr thisLin)
+            {
+                for (int i = 0; i < thisLin.Weights.Count; i++)
+                    thisLin.Weights[i] /= c.Value;
+                thisLin.ConstantTerm /= c.Value;
+                return;
+            }
+            if (_replacement is null && this is QuadExpr thisQuad)
+            {
+                for (int i = 0; i < thisQuad.LinearWeights.Count; i++)
+                    thisQuad.LinearWeights[i] /= c.Value;
+                for (int i = 0; i < thisQuad.QuadraticWeights.Count; i++)
+                    thisQuad.QuadraticWeights[i] /= c.Value;
+                thisQuad.ConstantTerm /= c.Value;
+                return;
+            }
+        }
+
         // Check if we've been replaced with a Product (add reciprocal)
         if (_replacement is Product replacementProduct)
         {

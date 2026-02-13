@@ -1339,6 +1339,236 @@ public class ExpressionTests
     }
 
     [TestMethod]
+    public void LinExpr_MultiplyByConstant_UpdatesCoefficients()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var linExpr = new LinExpr([2 * x, 3 * y, new Constant(4)]);
+
+        // Multiply by constant
+        var scaled = linExpr * 5.0;
+
+        // Should still be LinExpr, not Product
+        Assert.IsInstanceOfType(scaled, typeof(LinExpr), "LinExpr * constant should return LinExpr");
+
+        var scaledLin = (LinExpr)scaled;
+        Assert.AreEqual(2, scaledLin.Terms.Count, "Should have 2 terms");
+        Assert.AreEqual(10.0, scaledLin.Weights[0], 1e-10, "First weight should be 2*5=10");
+        Assert.AreEqual(15.0, scaledLin.Weights[1], 1e-10, "Second weight should be 3*5=15");
+        Assert.AreEqual(20.0, scaledLin.ConstantTerm, 1e-10, "Constant should be 4*5=20");
+
+        // Test double * LinExpr as well
+        var scaled2 = 5.0 * linExpr;
+        Assert.IsInstanceOfType(scaled2, typeof(LinExpr), "constant * LinExpr should return LinExpr");
+        var scaledLin2 = (LinExpr)scaled2;
+        Assert.AreEqual(10.0, scaledLin2.Weights[0], 1e-10);
+        Assert.AreEqual(15.0, scaledLin2.Weights[1], 1e-10);
+        Assert.AreEqual(20.0, scaledLin2.ConstantTerm, 1e-10);
+    }
+
+    [TestMethod]
+    public void LinExpr_DivideByConstant_UpdatesCoefficients()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var linExpr = new LinExpr([2 * x, 3 * y, new Constant(6)]);
+
+        // Divide by constant
+        var divided = linExpr / 2.0;
+
+        // Should still be LinExpr, not Division
+        Assert.IsInstanceOfType(divided, typeof(LinExpr), "LinExpr / constant should return LinExpr");
+
+        var dividedLin = (LinExpr)divided;
+        Assert.AreEqual(2, dividedLin.Terms.Count, "Should have 2 terms");
+        Assert.AreEqual(1.0, dividedLin.Weights[0], 1e-10, "First weight should be 2/2=1");
+        Assert.AreEqual(1.5, dividedLin.Weights[1], 1e-10, "Second weight should be 3/2=1.5");
+        Assert.AreEqual(3.0, dividedLin.ConstantTerm, 1e-10, "Constant should be 6/2=3");
+    }
+
+    [TestMethod]
+    public void QuadExpr_MultiplyByConstant_UpdatesCoefficients()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var quadExpr = new QuadExpr([x * y, 2 * x, new Constant(3)]);
+
+        // Multiply by constant
+        var scaled = quadExpr * 4.0;
+
+        // Should still be QuadExpr, not Product
+        Assert.IsInstanceOfType(scaled, typeof(QuadExpr), "QuadExpr * constant should return QuadExpr");
+
+        var scaledQuad = (QuadExpr)scaled;
+        Assert.AreEqual(1, scaledQuad.LinearTerms.Count, "Should have 1 linear term");
+        Assert.AreEqual(1, scaledQuad.QuadraticTerms1.Count, "Should have 1 quadratic term");
+        Assert.AreEqual(8.0, scaledQuad.LinearWeights[0], 1e-10, "Linear weight should be 2*4=8");
+        Assert.AreEqual(4.0, scaledQuad.QuadraticWeights[0], 1e-10, "Quadratic weight should be 1*4=4");
+        Assert.AreEqual(12.0, scaledQuad.ConstantTerm, 1e-10, "Constant should be 3*4=12");
+
+        // Test double * QuadExpr as well
+        var scaled2 = 4.0 * quadExpr;
+        Assert.IsInstanceOfType(scaled2, typeof(QuadExpr), "constant * QuadExpr should return QuadExpr");
+        var scaledQuad2 = (QuadExpr)scaled2;
+        Assert.AreEqual(8.0, scaledQuad2.LinearWeights[0], 1e-10);
+        Assert.AreEqual(4.0, scaledQuad2.QuadraticWeights[0], 1e-10);
+        Assert.AreEqual(12.0, scaledQuad2.ConstantTerm, 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_DivideByConstant_UpdatesCoefficients()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var quadExpr = new QuadExpr([x * y, 4 * x, new Constant(8)]);
+
+        // Divide by constant
+        var divided = quadExpr / 2.0;
+
+        // Should still be QuadExpr, not Division
+        Assert.IsInstanceOfType(divided, typeof(QuadExpr), "QuadExpr / constant should return QuadExpr");
+
+        var dividedQuad = (QuadExpr)divided;
+        Assert.AreEqual(1, dividedQuad.LinearTerms.Count, "Should have 1 linear term");
+        Assert.AreEqual(1, dividedQuad.QuadraticTerms1.Count, "Should have 1 quadratic term");
+        Assert.AreEqual(2.0, dividedQuad.LinearWeights[0], 1e-10, "Linear weight should be 4/2=2");
+        Assert.AreEqual(0.5, dividedQuad.QuadraticWeights[0], 1e-10, "Quadratic weight should be 1/2=0.5");
+        Assert.AreEqual(4.0, dividedQuad.ConstantTerm, 1e-10, "Constant should be 8/2=4");
+    }
+
+    [TestMethod]
+    public void LinExpr_CompoundMultiplyAssignment_UpdatesCoefficients()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var linExpr = new LinExpr([2 * x, new Constant(5)]);
+        linExpr *= 3.0;
+
+        var actual = linExpr.GetActual();
+        Assert.IsInstanceOfType(actual, typeof(LinExpr), "LinExpr after *= constant should still be LinExpr");
+
+        var lin = (LinExpr)actual;
+        Assert.AreEqual(1, lin.Terms.Count, "Should have 1 term");
+        Assert.AreEqual(6.0, lin.Weights[0], 1e-10, "Weight should be 2*3=6");
+        Assert.AreEqual(15.0, lin.ConstantTerm, 1e-10, "Constant should be 5*3=15");
+    }
+
+    [TestMethod]
+    public void LinExpr_CompoundDivideAssignment_UpdatesCoefficients()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var linExpr = new LinExpr([6 * x, new Constant(12)]);
+        linExpr /= 3.0;
+
+        var actual = linExpr.GetActual();
+        Assert.IsInstanceOfType(actual, typeof(LinExpr), "LinExpr after /= constant should still be LinExpr");
+
+        var lin = (LinExpr)actual;
+        Assert.AreEqual(1, lin.Terms.Count, "Should have 1 term");
+        Assert.AreEqual(2.0, lin.Weights[0], 1e-10, "Weight should be 6/3=2");
+        Assert.AreEqual(4.0, lin.ConstantTerm, 1e-10, "Constant should be 12/3=4");
+    }
+
+    [TestMethod]
+    public void QuadExpr_CompoundMultiplyAssignment_UpdatesCoefficients()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var quadExpr = new QuadExpr([x * y, 2 * x, new Constant(4)]);
+        quadExpr *= 2.0;
+
+        var actual = quadExpr.GetActual();
+        Assert.IsInstanceOfType(actual, typeof(QuadExpr), "QuadExpr after *= constant should still be QuadExpr");
+
+        var quad = (QuadExpr)actual;
+        Assert.AreEqual(1, quad.LinearTerms.Count, "Should have 1 linear term");
+        Assert.AreEqual(1, quad.QuadraticTerms1.Count, "Should have 1 quadratic term");
+        Assert.AreEqual(4.0, quad.LinearWeights[0], 1e-10, "Linear weight should be 2*2=4");
+        Assert.AreEqual(2.0, quad.QuadraticWeights[0], 1e-10, "Quadratic weight should be 1*2=2");
+        Assert.AreEqual(8.0, quad.ConstantTerm, 1e-10, "Constant should be 4*2=8");
+    }
+
+    [TestMethod]
+    public void QuadExpr_CompoundDivideAssignment_UpdatesCoefficients()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var quadExpr = new QuadExpr([x * y, 8 * x, new Constant(16)]);
+        quadExpr /= 4.0;
+
+        var actual = quadExpr.GetActual();
+        Assert.IsInstanceOfType(actual, typeof(QuadExpr), "QuadExpr after /= constant should still be QuadExpr");
+
+        var quad = (QuadExpr)actual;
+        Assert.AreEqual(1, quad.LinearTerms.Count, "Should have 1 linear term");
+        Assert.AreEqual(1, quad.QuadraticTerms1.Count, "Should have 1 quadratic term");
+        Assert.AreEqual(2.0, quad.LinearWeights[0], 1e-10, "Linear weight should be 8/4=2");
+        Assert.AreEqual(0.25, quad.QuadraticWeights[0], 1e-10, "Quadratic weight should be 1/4=0.25");
+        Assert.AreEqual(4.0, quad.ConstantTerm, 1e-10, "Constant should be 16/4=4");
+    }
+
+    [TestMethod]
+    public void LinExpr_CompoundAssignment_ModifiesInPlace()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        // Create LinExpr directly (not through replacement)
+        var linExpr = new LinExpr([2 * x, new Constant(5)]);
+        var originalReference = linExpr;
+
+        // Multiply by constant using compound assignment
+        linExpr *= 3.0;
+
+        // Verify the object was modified in-place (no replacement created)
+        Assert.AreSame(originalReference, linExpr, "Should be the same object reference");
+        Assert.AreEqual(6.0, linExpr.Weights[0], 1e-10, "Weight should be updated in-place");
+        Assert.AreEqual(15.0, linExpr.ConstantTerm, 1e-10, "Constant should be updated in-place");
+
+        // Verify no replacement was created
+        Assert.AreSame(linExpr, linExpr.GetActual(), "GetActual should return the same object (no replacement)");
+    }
+
+    [TestMethod]
+    public void QuadExpr_CompoundAssignment_ModifiesInPlace()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create QuadExpr directly (not through replacement)
+        var quadExpr = new QuadExpr([x * y, 2 * x, new Constant(4)]);
+        var originalReference = quadExpr;
+
+        // Divide by constant using compound assignment
+        quadExpr /= 2.0;
+
+        // Verify the object was modified in-place (no replacement created)
+        Assert.AreSame(originalReference, quadExpr, "Should be the same object reference");
+        Assert.AreEqual(1.0, quadExpr.LinearWeights[0], 1e-10, "Linear weight should be updated in-place");
+        Assert.AreEqual(0.5, quadExpr.QuadraticWeights[0], 1e-10, "Quadratic weight should be updated in-place");
+        Assert.AreEqual(2.0, quadExpr.ConstantTerm, 1e-10, "Constant should be updated in-place");
+
+        // Verify no replacement was created
+        Assert.AreSame(quadExpr, quadExpr.GetActual(), "GetActual should return the same object (no replacement)");
+    }
+
+    [TestMethod]
     public void QuadExpr_CleanupLinExprWithProducts()
     {
         var model = new Model();
