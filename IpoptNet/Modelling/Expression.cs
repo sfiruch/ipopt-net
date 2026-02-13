@@ -2090,48 +2090,19 @@ public sealed class Product : Expr
 
 public sealed class HessianAccumulator
 {
-    private readonly Dictionary<(int, int), double> _entries = new();
-    private readonly int _n;
+    public readonly Dictionary<(int Row, int Col), double> Entries = new();
 
-    public HessianAccumulator(int n) => _n = n;
+    public HessianAccumulator() { }
 
     public void Add(int i, int j, double value)
     {
-        if (Math.Abs(value) < 1e-18) return;
+        if (Math.Abs(value) < 1e-18)
+            return;
 
         var key = i >= j ? (i, j) : (j, i);
-        ref var entry = ref CollectionsMarshal.GetValueRefOrAddDefault(_entries, key, out _);
+        ref var entry = ref CollectionsMarshal.GetValueRefOrAddDefault(Entries, key, out _);
         entry += value;
     }
 
-    public void Clear() => _entries.Clear();
-
-    public int Count => _entries.Count;
-
-    public bool TryGetValue(int i, int j, out double value)
-    {
-        var key = i >= j ? (i, j) : (j, i);
-        return _entries.TryGetValue(key, out value);
-    }
-
-    public IReadOnlyDictionary<(int row, int col), double> Entries =>
-        _entries.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-    public IEnumerable<((int row, int col) key, double value)> GetEntries()
-    {
-        foreach (var kvp in _entries)
-        {
-            yield return (kvp.Key, kvp.Value);
-        }
-    }
-
-    public int GetNonZeroCount()
-    {
-        // For IPOPT, we need the structure of the lower triangular Hessian
-        var count = 0;
-        foreach (var entry in _entries)
-            if (Math.Abs(entry.Value) >= 1e-18)
-                count++;
-        return count;
-    }
+    public void Clear() => Entries.Clear();
 }

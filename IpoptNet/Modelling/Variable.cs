@@ -3,11 +3,11 @@ namespace IpoptNet.Modelling;
 public sealed class Variable : Expr
 {
     public int Index { get; internal set; } = -1;
-    public double LowerBound { get; set; } = double.NegativeInfinity;
-    public double UpperBound { get; set; } = double.PositiveInfinity;
-    public double Start { get; set; } = 0;
-    public double LowerBoundDualStart { get; set; } = 0;
-    public double UpperBoundDualStart { get; set; } = 0;
+    public double LowerBound = double.NegativeInfinity;
+    public double UpperBound = double.PositiveInfinity;
+    public double? Start;
+    public double LowerBoundDualStart = 0;
+    public double UpperBoundDualStart = 0;
 
     internal Variable() { }
 

@@ -526,8 +526,8 @@ public class ModellingTests
         Assert.AreEqual(2.0, result.Solution[y], 0.001);
 
         // Verify Start values were updated to solution
-        Assert.AreEqual(2.0, x.Start, 0.001);
-        Assert.AreEqual(2.0, y.Start, 0.001);
+        Assert.AreEqual(2.0, x.Start.Value, 0.001);
+        Assert.AreEqual(2.0, y.Start.Value, 0.001);
     }
 
     [TestMethod]
@@ -551,8 +551,8 @@ public class ModellingTests
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
 
         // Verify Start values were updated to solution
-        Assert.AreEqual(3.0, x.Start, 0.001);
-        Assert.AreEqual(4.0, y.Start, 0.001);
+        Assert.AreEqual(3.0, x.Start.Value, 0.001);
+        Assert.AreEqual(4.0, y.Start.Value, 0.001);
     }
 
     [TestMethod]
@@ -603,8 +603,8 @@ public class ModellingTests
         var result1 = SolveWithDerivativeTest(model);
         AssertDerivativeTestPassed(result1.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
-        Assert.AreEqual(2.0, x.Start, 0.001);
-        Assert.AreEqual(2.0, y.Start, 0.001);
+        Assert.AreEqual(2.0, x.Start.Value, 0.001);
+        Assert.AreEqual(2.0, y.Start.Value, 0.001);
 
         // Second optimization: same problem, should start from previous solution
         var result2 = SolveWithDerivativeTest(model);
@@ -612,8 +612,8 @@ public class ModellingTests
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result2.Status);
 
         // Start values should still be at the solution
-        Assert.AreEqual(2.0, x.Start, 0.001);
-        Assert.AreEqual(2.0, y.Start, 0.001);
+        Assert.AreEqual(2.0, x.Start.Value, 0.001);
+        Assert.AreEqual(2.0, y.Start.Value, 0.001);
     }
 
     [TestMethod]

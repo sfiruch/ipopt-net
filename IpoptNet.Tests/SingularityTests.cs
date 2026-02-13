@@ -25,7 +25,7 @@ public class SingularityTests
         // It should NOT crash. 
         // It will likely hit the singularity and eventually stop because it can't 
         // evaluate closer to 0 or it reaches the maximum number of backtracks.
-        System.Console.WriteLine($"Status: {result.Status}, x: {result.Solution[x]}, obj: {result.ObjectiveValue}");
+        Console.WriteLine($"Status: {result.Status}, obj: {result.ObjectiveValue}");
         
         Assert.AreNotEqual(ApplicationReturnStatus.InternalError, result.Status);
     }

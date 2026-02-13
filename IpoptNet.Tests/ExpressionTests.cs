@@ -224,7 +224,7 @@ public class ExpressionTests
         // For f(x,y) = x * y:
         //   ∂²f/∂x∂y = 1  (the only non-zero Hessian entry)
         // The bug would give ∂²f/∂x∂y = 2 (doubled)
-        
+
         var model = new Model();
         var x = model.AddVariable();
         var y = model.AddVariable();
@@ -233,14 +233,14 @@ public class ExpressionTests
         double[] point = [3.0, 5.0];
 
         var n = point.Length;
-        var hess = new HessianAccumulator(n);
+        var hess = new HessianAccumulator();
         expr.AccumulateHessian(point, hess, 1.0);
 
         // Analytical Hessian for f(x,y) = x*y:
         // H[0,0] = ∂²f/∂x² = 0
         // H[1,1] = ∂²f/∂y² = 0  
         // H[1,0] = ∂²f/∂x∂y = 1 (stored in lower triangle)
-        
+
         hess.Entries.TryGetValue((0, 0), out var h_xx);
         hess.Entries.TryGetValue((1, 1), out var h_yy);
         hess.Entries.TryGetValue((1, 0), out var h_xy);
@@ -249,7 +249,7 @@ public class ExpressionTests
         Console.WriteLine($"DEBUG: Total Hessian entries: {hess.Entries.Count}");
         foreach (var entry in hess.Entries)
         {
-            Console.WriteLine($"  H[{entry.Key.row},{entry.Key.col}] = {entry.Value}");
+            Console.WriteLine($"  H[{entry.Key.Row},{entry.Key.Col}] = {entry.Value}");
         }
 
         Assert.AreEqual(0.0, h_xx, 1e-10, "Hessian ∂²f/∂x² should be 0");
@@ -265,7 +265,7 @@ public class ExpressionTests
         //   ∂²f/∂x∂y = z
         //   ∂²f/∂x∂z = y
         //   ∂²f/∂y∂z = x
-        
+
         var model = new Model();
         var x = model.AddVariable();
         var y = model.AddVariable();
@@ -278,7 +278,7 @@ public class ExpressionTests
         Assert.IsInstanceOfType(expr, typeof(Product), "x*y*z should create a Product");
 
         var n = point.Length;
-        var hess = new HessianAccumulator(n);
+        var hess = new HessianAccumulator();
         expr.AccumulateHessian(point, hess, 1.0);
 
         // Analytical values:
@@ -287,15 +287,15 @@ public class ExpressionTests
         // ∂²f/∂y∂z = x = 2.0
 
         // Get cross-terms (stored in lower triangle)
-        hess.Entries.TryGetValue((1, 0), out var h_xy);  // ∂²f/∂x∂y
-        hess.Entries.TryGetValue((2, 0), out var h_xz);  // ∂²f/∂x∂z
-        hess.Entries.TryGetValue((2, 1), out var h_yz);  // ∂²f/∂y∂z
+        var h_xy = hess.Entries[(1, 0)];  // ∂²f/∂x∂y
+        var h_xz = hess.Entries[(2, 0)];  // ∂²f/∂x∂z
+        var h_yz = hess.Entries[(2, 1)];  // ∂²f/∂y∂z
 
         Console.WriteLine($"DEBUG 3-factor: h_xy={h_xy} (expected {point[2]}), h_xz={h_xz} (expected {point[1]}), h_yz={h_yz} (expected {point[0]})");
         Console.WriteLine($"DEBUG: Total Hessian entries: {hess.Entries.Count}");
         foreach (var entry in hess.Entries)
         {
-            Console.WriteLine($"  H[{entry.Key.row},{entry.Key.col}] = {entry.Value}");
+            Console.WriteLine($"  H[{entry.Key.Row},{entry.Key.Col}] = {entry.Value}");
         }
 
         Assert.AreEqual(point[2], h_xy, 1e-10, $"∂²f/∂x∂y should equal z={point[2]}, got {h_xy}");
@@ -318,7 +318,7 @@ public class ExpressionTests
     private static void AssertHessianMatchesFiniteDifference(Expr expr, double[] point)
     {
         var n = point.Length;
-        var hess = new HessianAccumulator(n);
+        var hess = new HessianAccumulator();
         expr.AccumulateHessian(point, hess, 1.0);
 
         var fdHess = ComputeFiniteDifferenceHessian(expr, point);
@@ -648,8 +648,8 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create: 2*x + 3*y + 5
-        var lin = new LinExpr([new Product([new Constant(2), x]), 
-                                new Product([new Constant(3), y]), 
+        var lin = new LinExpr([new Product([new Constant(2), x]),
+                                new Product([new Constant(3), y]),
                                 new Constant(5)]);
 
         Assert.AreEqual(2, lin.Terms.Count, "Should have 2 weighted terms");
@@ -688,7 +688,7 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create: 2*x + 3*y
-        var lin = new LinExpr([new Product([new Constant(2), x]), 
+        var lin = new LinExpr([new Product([new Constant(2), x]),
                                 new Product([new Constant(3), y])]);
 
         double[] point = [1, 2];
@@ -753,18 +753,18 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create: 2*x + 3*y + 5
-        var lin1 = new LinExpr([new Product([new Constant(2), x]), 
-                                 new Product([new Constant(3), y]), 
+        var lin1 = new LinExpr([new Product([new Constant(2), x]),
+                                 new Product([new Constant(3), y]),
                                  new Constant(5)]);
-        
+
         // Create identical expression
-        var lin2 = new LinExpr([new Product([new Constant(2), x]), 
-                                 new Product([new Constant(3), y]), 
+        var lin2 = new LinExpr([new Product([new Constant(2), x]),
+                                 new Product([new Constant(3), y]),
                                  new Constant(5)]);
-        
+
         double[] point = [1, 2];
         Assert.AreEqual(lin1.Evaluate(point), lin2.Evaluate(point), 1e-10, "Identical expressions should evaluate identically");
-        
+
         // Verify both have correct structure
         Assert.AreEqual(2, lin1.Terms.Count);
         Assert.AreEqual(2, lin2.Terms.Count);
@@ -836,11 +836,11 @@ public class ExpressionTests
         var x = model.AddVariable();
 
         var sum = new LinExpr([x, new Constant(5)]);
-        
+
         // Verify by evaluation instead of accessing protected CloneCore
         double[] point = [3];
         var expected = sum.Evaluate(point);
-        
+
         var sum2 = new LinExpr([x, new Constant(5)]);
         Assert.AreEqual(expected, sum2.Evaluate(point), 1e-10, "Clone should evaluate identically");
     }
@@ -868,7 +868,7 @@ public class ExpressionTests
         var sw = new StringWriter();
         model.Print(sw);
         var output = sw.ToString();
-        
+
         // Verify output contains expected content
         Assert.IsTrue(output.Contains("=== Model ==="));
         Assert.IsTrue(output.Contains("Variables: 2"));
@@ -876,7 +876,7 @@ public class ExpressionTests
         Assert.IsTrue(output.Contains("LinExpr:"));
         Assert.IsTrue(output.Contains("Constraints: 2"));
         Assert.IsTrue(output.Contains("Variable[0]"));
-        
+
         Console.WriteLine("StringWriter output verified successfully");
     }
 
@@ -904,7 +904,7 @@ public class ExpressionTests
             Assert.IsTrue(content.Contains("=== Model ==="));
             Assert.IsTrue(content.Contains("Variables: 2"));
             Assert.IsTrue(content.Contains("Objective:"));
-            
+
             Console.WriteLine($"Successfully wrote model to file: {tempFile}");
             Console.WriteLine($"File size: {new FileInfo(tempFile).Length} bytes");
         }
@@ -1024,7 +1024,7 @@ public class ExpressionTests
 
         Assert.AreEqual(2, combined.Terms.Count, "Should have 2 terms (x and y)");
         Assert.AreEqual(8.0, combined.ConstantTerm, 1e-10, "Constant should be 3 + 5 = 8");
-        
+
         // Verify no nested LinExpr
         Assert.IsFalse(combined.Terms.Any(t => t is LinExpr), "Should not contain nested LinExpr");
 
@@ -1067,8 +1067,8 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create: 3 * (2*x + 4*y + 5) = 6*x + 12*y + 15
-        var inner = new LinExpr([new Product([new Constant(2), x]), 
-                                  new Product([new Constant(4), y]), 
+        var inner = new LinExpr([new Product([new Constant(2), x]),
+                                  new Product([new Constant(4), y]),
                                   new Constant(5)]);
         var weighted = new Product([new Constant(3), inner]);
 
@@ -1096,16 +1096,16 @@ public class ExpressionTests
         // Build step by step
         var term1 = 2 * x + 3; // LinExpr with weight=2 for x, constant=3
         var term2 = 4 * x + 5; // LinExpr with weight=4 for x, constant=5
-        
+
         // Create: x + (2*x + 3) - (4*x + 5) + 6
         var expr = x + term1 - term2 + 6;
 
         var lin = (LinExpr)expr;
-        
+
         // Verify no nested LinExpr (main goal of this optimization)
         Assert.IsFalse(lin.Terms.Any(t => t is LinExpr), "Should not contain nested LinExpr");
         Assert.IsFalse(lin.Terms.Any(t => t is Negation), "Should not contain Negation");
-        
+
         // Note: The expression might have duplicate variable terms which is OK
         // The important optimizations are: no nesting, negations handled, constants consolidated
     }
@@ -1120,7 +1120,7 @@ public class ExpressionTests
         var expr = Expr.Pow(x, 2);
 
         Assert.IsInstanceOfType(expr, typeof(PowerOp)); // Pow itself is not QuadExpr
-        
+
         // But wrapping in QuadExpr should recognize it
         var quad = new QuadExpr([expr]);
         Assert.AreEqual(1, quad.QuadraticTerms1.Count);
@@ -1236,7 +1236,7 @@ public class ExpressionTests
 
         var quad1 = new QuadExpr([x * x, 2 * x]);
         var quad2 = new QuadExpr([y * y, 3 * y]);
-        
+
         // Combine them
         var combined = new QuadExpr([quad1, quad2, new Constant(5)]);
 
@@ -1297,7 +1297,7 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create a quadratic expression
-        var expr = new QuadExpr([x*x, 2*x*y, 3*x, new Constant(4)]);
+        var expr = new QuadExpr([x * x, 2 * x * y, 3 * x, new Constant(4)]);
 
         // Test Print to StringWriter
         var sw = new StringWriter();
@@ -1326,13 +1326,13 @@ public class ExpressionTests
         Assert.IsInstanceOfType(expr1, typeof(QuadExpr), "x*y + 5 should be QuadExpr");
 
         // 2*x + 3*y should be LinExpr
-        var expr2 = 2*x + 3*y;
+        var expr2 = 2 * x + 3 * y;
         Assert.IsInstanceOfType(expr2, typeof(LinExpr), "2*x + 3*y should be LinExpr");
 
         // x*x + 2*x + 1 should be QuadExpr
-        var expr3 = x*x + 2*x + 1;
+        var expr3 = x * x + 2 * x + 1;
         Assert.IsInstanceOfType(expr3, typeof(QuadExpr), "x*x + 2*x + 1 should be QuadExpr");
-        
+
         // Pow(x, 2) + 1 should be QuadExpr
         var expr4 = Expr.Pow(x, 2) + 1;
         Assert.IsInstanceOfType(expr4, typeof(QuadExpr), "x^2 + 1 should be QuadExpr");
@@ -1379,7 +1379,7 @@ public class ExpressionTests
         // Simulate: obj += (variable - 5)^2
         Expr obj = new Constant(0);
         var residual = variable - 5.0;
-        
+
         Console.WriteLine("residual type: " + residual.GetType().Name);
         if (residual is LinExpr lin)
         {
@@ -1390,9 +1390,9 @@ public class ExpressionTests
             }
             Console.WriteLine("  ConstantTerm: " + lin.ConstantTerm);
         }
-        
+
         obj += residual * residual;
-        
+
         Console.WriteLine("\nobj type after +=: " + obj.GetType().Name);
         if (obj is QuadExpr quad)
         {
@@ -1404,16 +1404,16 @@ public class ExpressionTests
             }
             Console.WriteLine("  QuadraticTerms: " + quad.QuadraticTerms1.Count);
             Console.WriteLine("  ConstantTerm: " + quad.ConstantTerm);
-            
+
             // Should have NO Product nodes in LinearTerms
             foreach (var term in quad.LinearTerms)
             {
                 Assert.IsFalse(term is Product, "LinearTerms should not contain Product nodes");
             }
-            
+
             // Should have 1 quadratic term (variable * variable)
             Assert.AreEqual(1, quad.QuadraticTerms1.Count, "Should have 1 quadratic term");
-            
+
             // Verify evaluation: (x - 5)^2 at x=3 → (-2)^2 = 4
             double[] point = [3];
             Assert.AreEqual(4.0, quad.Evaluate(point), 1e-10);
@@ -1450,13 +1450,13 @@ public class ExpressionTests
         Console.WriteLine($"ConstantTerm: {quad.ConstantTerm}");
         Console.WriteLine($"LinearTerms: {quad.LinearTerms.Count}");
         Console.WriteLine($"QuadraticTerms: {quad.QuadraticTerms1.Count}");
-        
+
         for (int i = 0; i < quad.LinearTerms.Count; i++)
         {
             var term = quad.LinearTerms[i];
             var weight = quad.LinearWeights[i];
             Console.WriteLine($"  Linear[{i}]: {term.GetType().Name} (weight={weight})");
-            
+
             // FAIL if we find a Product
             if (term is Product prod)
             {
@@ -1471,24 +1471,24 @@ public class ExpressionTests
                 }
                 Assert.Fail($"LinearTerms[{i}] is a Product - should have been expanded to quadratic terms!");
             }
-            
+
             // Linear terms should only be Variable or similar simple expressions
-            Assert.IsTrue(term is Variable || term is Negation, 
+            Assert.IsTrue(term is Variable || term is Negation,
                 $"Linear term should be Variable or Negation, not {term.GetType().Name}");
         }
 
         // Verify quadratic structure: (v[i] - 5)^2 = v[i]^2 - 10*v[i] + 25
         // Should have exactly 50 quadratic terms (one v[i]^2 per variable)
         Assert.AreEqual(50, quad.QuadraticTerms1.Count, "Should have 50 quadratic terms");
-        
+
         // All quadratic terms should be v[i] * v[i] (same variable squared)
         for (int i = 0; i < quad.QuadraticTerms1.Count; i++)
         {
-            Assert.IsInstanceOfType(quad.QuadraticTerms1[i], typeof(Variable), 
+            Assert.IsInstanceOfType(quad.QuadraticTerms1[i], typeof(Variable),
                 $"QuadraticTerm1[{i}] should be Variable");
-            Assert.IsInstanceOfType(quad.QuadraticTerms2[i], typeof(Variable), 
+            Assert.IsInstanceOfType(quad.QuadraticTerms2[i], typeof(Variable),
                 $"QuadraticTerm2[{i}] should be Variable");
-            Assert.AreEqual(quad.QuadraticTerms1[i], quad.QuadraticTerms2[i], 
+            Assert.AreEqual(quad.QuadraticTerms1[i], quad.QuadraticTerms2[i],
                 $"QuadraticTerm {i} should be same variable squared");
         }
 
@@ -1506,7 +1506,7 @@ public class ExpressionTests
         var linExpr = new LinExpr();
         linExpr += 2 * x;
         linExpr += 3 * y;
-        
+
         // Verify it worked efficiently (should have 2 terms)
         Assert.AreEqual(2, linExpr.Terms.Count);
         Assert.AreEqual(2.0, linExpr.Weights[0]);
@@ -1516,7 +1516,7 @@ public class ExpressionTests
         var quadExpr = new QuadExpr();
         quadExpr += x * y;
         quadExpr += x * x;
-        
+
         // Should have 2 quadratic terms
         Assert.AreEqual(2, quadExpr.QuadraticTerms1.Count);
         Assert.AreEqual(0, quadExpr.LinearTerms.Count);
@@ -1525,7 +1525,7 @@ public class ExpressionTests
         var prod = new Product([new Constant(2)]);
         prod *= x;
         prod *= y;
-        
+
         // Should have 3 factors
         Assert.AreEqual(3, prod.Factors.Count);
 
@@ -1542,15 +1542,15 @@ public class ExpressionTests
         // Test (x-3)^2 + (y-4)^2 pattern
         var xm3 = x - 3;
         var ym4 = y - 4;
-        
+
         var xSq = Expr.Pow(xm3, 2);
         var ySq = Expr.Pow(ym4, 2);
-        
+
         var obj = xSq + ySq;
-        
+
         Console.WriteLine("obj type: " + obj.GetType().Name);
         Console.WriteLine("obj actual: " + obj.GetActual().GetType().Name);
-        
+
         var actualObj = obj.GetActual();
         if (actualObj is QuadExpr quad)
         {
@@ -1558,10 +1558,10 @@ public class ExpressionTests
             Console.WriteLine("  LinearTerms: " + quad.LinearTerms.Count);
             Console.WriteLine("  QuadraticTerms: " + quad.QuadraticTerms1.Count);
             Console.WriteLine("  ConstantTerm: " + quad.ConstantTerm);
-            
+
             // Should have 2 quadratic terms (x^2 and y^2)
             Assert.AreEqual(2, quad.QuadraticTerms1.Count, "Should have 2 quadratic terms");
-            
+
             // Verify no Products in LinearTerms
             foreach (var term in quad.LinearTerms)
             {
@@ -1582,16 +1582,16 @@ public class ExpressionTests
         model.Options.DerivativeTest = DerivativeTest.FirstOrder;
         model.Options.CheckDerivativesForNanInf = true;
         model.Options.PrintLevel = 0;
-        
+
         var x = model.AddVariable(0, 10);
         x.Start = 2.0;
-        
+
         // Use a custom expression with intentionally wrong gradient
         var wrongExpr = new WrongGradientExpr(x);
         model.SetObjective(wrongExpr);
-        
+
         var result = ModellingTests.SolveWithDerivativeTest(model);
-        
+
         // Derivative test should have detected errors
         Assert.IsNotNull(result.DerivativeTestResult);
         Assert.IsFalse(result.DerivativeTestResult.Passed, "Derivative test should fail for wrong gradient");
@@ -1606,16 +1606,16 @@ public class ExpressionTests
         model.Options.DerivativeTest = DerivativeTest.SecondOrder;
         model.Options.CheckDerivativesForNanInf = true;
         model.Options.PrintLevel = 0;
-        
+
         var x = model.AddVariable(0, 10);
         x.Start = 2.0;
-        
+
         // Use a custom expression with correct gradient but wrong Hessian
         var wrongExpr = new WrongHessianExpr(x);
         model.SetObjective(wrongExpr);
-        
+
         var result = ModellingTests.SolveWithDerivativeTest(model);
-        
+
         // Derivative test should have detected errors
         Assert.IsNotNull(result.DerivativeTestResult);
         Assert.IsFalse(result.DerivativeTestResult.Passed, "Derivative test should fail for wrong Hessian");
