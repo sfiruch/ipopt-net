@@ -1679,6 +1679,142 @@ public class ExpressionTests
     }
 
     [TestMethod]
+    public void Product_ConstantsExtractedToFactor()
+    {
+        // Constants should be extracted to Factor field, not kept in Factors
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var prod = new Product([new Constant(2), x, new Constant(3)]);
+
+        Assert.AreEqual(1, prod.Factors.Count, "Should have 1 non-constant factor");
+        Assert.AreEqual(6.0, prod.Factor, 1e-10, "Factor should be 2 * 3 = 6");
+        Assert.IsFalse(prod.Factors.Any(f => f is Constant), "Factors should not contain Constants");
+    }
+
+    [TestMethod]
+    public void Product_MultipleConstantsMultiplied()
+    {
+        // Multiple constants should be multiplied together
+        var prod = new Product([new Constant(2), new Constant(3), new Constant(5)]);
+
+        Assert.AreEqual(0, prod.Factors.Count, "Should have no non-constant factors");
+        Assert.AreEqual(30.0, prod.Factor, 1e-10, "Factor should be 2 * 3 * 5 = 30");
+    }
+
+    [TestMethod]
+    public void Product_OnlyConstant_ExtractedToFactor()
+    {
+        // Single constant should be extracted to Factor
+        var prod = new Product([new Constant(7)]);
+
+        Assert.AreEqual(0, prod.Factors.Count, "Should have no factors");
+        Assert.AreEqual(7.0, prod.Factor, 1e-10, "Factor should be 7");
+    }
+
+    [TestMethod]
+    public void Product_NoConstants_FactorIsOne()
+    {
+        // Product with no constants should have Factor = 1.0
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var prod = new Product([x, y]);
+
+        Assert.AreEqual(2, prod.Factors.Count);
+        Assert.AreEqual(1.0, prod.Factor, 1e-10, "Factor should be 1.0 when no constants");
+    }
+
+    [TestMethod]
+    public void Product_FactorPreservedInOperations()
+    {
+        // Factor should be preserved when extending Products
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+        var z = model.AddVariable();
+
+        var prod1 = new Product([new Constant(2), x]);
+        var prod2 = prod1 * y; // Extend with y
+
+        Assert.IsInstanceOfType<Product>(prod2);
+        var prod2Product = (Product)prod2;
+        Assert.AreEqual(2.0, prod2Product.Factor, 1e-10, "Factor should be preserved");
+        Assert.AreEqual(2, prod2Product.Factors.Count, "Should have x and y");
+    }
+
+    [TestMethod]
+    public void Product_FactorInEvaluation()
+    {
+        // Factor should be included in evaluation
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var prod = new Product([new Constant(2), x, y, new Constant(3)]);
+
+        double[] point = [5.0, 7.0];
+        double expected = 2.0 * 5.0 * 7.0 * 3.0; // 210
+        Assert.AreEqual(expected, prod.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void Product_FactorInGradient()
+    {
+        // Factor should be included in gradient computation
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create 2 * x * y * 3 = 6 * x * y
+        var prod = new Product([new Constant(2), x, y, new Constant(3)]);
+
+        double[] point = [5.0, 7.0];
+        var grad = new double[2];
+        prod.AccumulateGradient(point, grad, 1.0);
+
+        // d(6*x*y)/dx = 6*y = 6*7 = 42
+        // d(6*x*y)/dy = 6*x = 6*5 = 30
+        Assert.AreEqual(42.0, grad[0], 1e-10, "Gradient w.r.t. x");
+        Assert.AreEqual(30.0, grad[1], 1e-10, "Gradient w.r.t. y");
+    }
+
+    [TestMethod]
+    public void Product_ScalarMultiplication_UpdatesFactor()
+    {
+        // Multiplying a Product by a scalar should update Factor
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var prod = new Product([new Constant(2), x]);
+        var result = prod * 3.0;
+
+        Assert.IsInstanceOfType<Product>(result);
+        var resultProd = (Product)result;
+        Assert.AreEqual(6.0, resultProd.Factor, 1e-10, "Factor should be 2 * 3 = 6");
+        Assert.AreEqual(1, resultProd.Factors.Count, "Should still have 1 factor");
+        Assert.IsFalse(resultProd.Factors.Any(f => f is Constant), "Should not contain Constants");
+    }
+
+    [TestMethod]
+    public void Product_FactorInCompoundOperators()
+    {
+        // Factor should work correctly with compound operators
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        Expr expr = 0;
+        expr += new Product([new Constant(3), x, y]);
+
+        var actual = expr.GetActual();
+        double[] point = [2.0, 4.0];
+        double expected = 3.0 * 2.0 * 4.0; // 24
+        Assert.AreEqual(expected, actual.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
     public void QuadExpr_CompoundDivideAssignment_UpdatesCoefficients()
     {
         var model = new Model();
@@ -1933,8 +2069,9 @@ public class ExpressionTests
         prod *= x;
         prod *= y;
 
-        // Should have 3 factors
-        Assert.AreEqual(3, prod.Factors.Count);
+        // Should have 2 factors (Constants are extracted to Factor field)
+        Assert.AreEqual(2, prod.Factors.Count);
+        Assert.AreEqual(2.0, prod.Factor, 1e-10, "Factor should be 2");
 
         Console.WriteLine("Compound operators work efficiently on direct types!");
     }

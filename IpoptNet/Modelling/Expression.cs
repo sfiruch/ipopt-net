@@ -157,12 +157,16 @@ public abstract class Expr
         // If left operand is already a Product, extend it with the right operand
         if (a is Product prodA)
         {
-            return new Product([.. prodA.Factors, b]);
+            var result = new Product([.. prodA.Factors, b]);
+            result.Factor = prodA.Factor;
+            return result;
         }
         // If right operand is a Product, prepend the left operand to it
         else if (b is Product prodB)
         {
-            return new Product([a, .. prodB.Factors]);
+            var result = new Product([a, .. prodB.Factors]);
+            result.Factor = prodB.Factor;
+            return result;
         }
         else if (ReferenceEquals(a,b))
         {
@@ -268,7 +272,9 @@ public abstract class Expr
         }
         if (a is Product prodA)
         {
-            return new Product([.. prodA.Factors, new Constant(b)]);
+            var result = new Product([.. prodA.Factors]);
+            result.Factor = prodA.Factor * b;
+            return result;
         }
         return new Product([a, new Constant(b)]);
     }
@@ -300,7 +306,9 @@ public abstract class Expr
         }
         if (b is Product prodB)
         {
-            return new Product([new Constant(a), .. prodB.Factors]);
+            var result = new Product([.. prodB.Factors]);
+            result.Factor = prodB.Factor * a;
+            return result;
         }
         return new Product([new Constant(a), b]);
     }
@@ -1325,18 +1333,35 @@ public class LinExpr : Expr
                     weights.Add(lin.Weights[i]);
                 }
             }
-            // Extract weight from Product of Constant * Expr
-            else if (term is Product { Factors.Count: 2 } prod 
-                     && prod.Factors[0] is Constant weight 
-                     && prod.Factors[1] is not Constant)
+            // Extract weight from Product with Factor field
+            else if (term is Product prod)
             {
-                ProcessTerm(prod.Factors[1], weight.Value, ref constantSum, nonConstantTerms, weights);
-            }
-            else if (term is Product { Factors.Count: 2 } prod2 
-                     && prod2.Factors[1] is Constant weight2 
-                     && prod2.Factors[0] is not Constant)
-            {
-                ProcessTerm(prod2.Factors[0], weight2.Value, ref constantSum, nonConstantTerms, weights);
+                // Product now extracts Constants into Factor field
+                // If it has exactly 1 factor, we can flatten it
+                if (prod.Factors.Count == 1)
+                {
+                    ProcessTerm(prod.Factors[0], prod.Factor, ref constantSum, nonConstantTerms, weights);
+                }
+                // If it's a constant product (no factors), add to constant term
+                else if (prod.Factors.Count == 0)
+                {
+                    constantSum += prod.Factor;
+                }
+                else
+                {
+                    // Multiple factors - keep as Product but account for Factor
+                    if (Math.Abs(prod.Factor - 1.0) < 1e-15)
+                    {
+                        nonConstantTerms.Add(term);
+                        weights.Add(1.0);
+                    }
+                    else
+                    {
+                        // Need to keep the Product with its Factor
+                        nonConstantTerms.Add(term);
+                        weights.Add(1.0);
+                    }
+                }
             }
             else
             {
@@ -1372,17 +1397,23 @@ public class LinExpr : Expr
                 weights.Add(weight * lin.Weights[i]);
             }
         }
-        else if (term is Product { Factors.Count: 2 } prod 
-                 && prod.Factors[0] is Constant innerWeight 
-                 && prod.Factors[1] is not Constant)
+        else if (term is Product prod)
         {
-            ProcessTerm(prod.Factors[1], weight * innerWeight.Value, ref constantSum, nonConstantTerms, weights);
-        }
-        else if (term is Product { Factors.Count: 2 } prod2 
-                 && prod2.Factors[1] is Constant innerWeight2 
-                 && prod2.Factors[0] is not Constant)
-        {
-            ProcessTerm(prod2.Factors[0], weight * innerWeight2.Value, ref constantSum, nonConstantTerms, weights);
+            // Product now extracts Constants into Factor field
+            if (prod.Factors.Count == 1)
+            {
+                ProcessTerm(prod.Factors[0], weight * prod.Factor, ref constantSum, nonConstantTerms, weights);
+            }
+            else if (prod.Factors.Count == 0)
+            {
+                constantSum += weight * prod.Factor;
+            }
+            else
+            {
+                // Multiple factors - keep as Product
+                nonConstantTerms.Add(term);
+                weights.Add(weight);
+            }
         }
         else
         {
@@ -1763,17 +1794,9 @@ public class QuadExpr : Expr
         List<Expr> linearTerms, List<double> linearWeights,
         List<Expr> quadTerms1, List<Expr> quadTerms2, List<double> quadWeights)
     {
-        // Extract all constants from the product
-        var productWeight = weight;
-        var nonConstants = new List<Expr>();
-        
-        foreach (var factor in prod.Factors)
-        {
-            if (factor is Constant c)
-                productWeight *= c.Value;
-            else
-                nonConstants.Add(factor);
-        }
+        // Product now stores constants in Factor field
+        var productWeight = weight * prod.Factor;
+        var nonConstants = prod.Factors; // No need to filter - all Constants are in Factor
 
         // Handle based on number of non-constant factors
         if (nonConstants.Count == 0)
@@ -2138,13 +2161,26 @@ public class QuadExpr : Expr
 public sealed class Product : Expr
 {
     public List<Expr> Factors { get; set; }
+    public double Factor = 1.0;
 
     public Product() => Factors = [];
-    public Product(List<Expr> factors) => Factors = factors;
+    public Product(List<Expr> factors)
+    {
+        // Extract all Constants and multiply them into Factor
+        Factor = 1.0;
+        Factors = [];
+        foreach (var f in factors)
+        {
+            if (f is Constant c)
+                Factor *= c.Value;
+            else
+                Factors.Add(f);
+        }
+    }
 
     protected override double EvaluateCore(ReadOnlySpan<double> x)
     {
-        var result = 1.0;
+        var result = Factor;
         foreach (var factor in Factors)
             result *= factor.Evaluate(x);
         return result;
@@ -2153,6 +2189,7 @@ public sealed class Product : Expr
     protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
     {
         // Product rule: d(f*g*h)/dx = df/dx*g*h + f*dg/dx*h + f*g*dh/dx
+        var scaledMultiplier = multiplier * Factor;
         for (int i = 0; i < Factors.Count; i++)
         {
             var otherProduct = 1.0;
@@ -2161,17 +2198,19 @@ public sealed class Product : Expr
                 if (i != j)
                     otherProduct *= Factors[j].Evaluate(x);
             }
-            Factors[i].AccumulateGradient(x, grad, multiplier * otherProduct);
+            Factors[i].AccumulateGradient(x, grad, scaledMultiplier * otherProduct);
         }
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
+        var scaledMultiplier = multiplier * Factor;
+
         if (Factors.Count == 0)
             return;
         if (Factors.Count == 1)
         {
-            Factors[0].AccumulateHessian(x, hess, multiplier);
+            Factors[0].AccumulateHessian(x, hess, scaledMultiplier);
             return;
         }
 
@@ -2237,7 +2276,7 @@ public sealed class Product : Expr
             }
 
             if (Math.Abs(otherProduct) > 1e-18)
-                Factors[k].AccumulateHessian(x, hess, multiplier * otherProduct);
+                Factors[k].AccumulateHessian(x, hess, scaledMultiplier * otherProduct);
         }
 
         // 2. Add cross terms between pairs of factors
@@ -2265,7 +2304,7 @@ public sealed class Product : Expr
 
                 if (Math.Abs(otherProduct) > 1e-18)
                 {
-                    var coeff = multiplier * otherProduct;
+                    var coeff = scaledMultiplier * otherProduct;
                     var gradM = factorGradients[m];
                     var spanM = CollectionsMarshal.AsSpan(idxM);
 
@@ -2342,7 +2381,7 @@ public sealed class Product : Expr
         }
     }
 
-    protected override bool IsConstantWrtXCore() => Factors.All(f => f.IsConstantWrtX());
+    protected override bool IsConstantWrtXCore() => Factors.Count == 0 || Factors.All(f => f.IsConstantWrtX());
 
     protected override bool IsLinearCore()
     {
@@ -2368,7 +2407,12 @@ public sealed class Product : Expr
         return false; // More than two non-constant factors means degree > 2
     }
 
-    protected override Expr CloneCore() => new Product([.. Factors]);
+    protected override Expr CloneCore()
+    {
+        var clone = new Product([.. Factors]);
+        clone.Factor = Factor;
+        return clone;
+    }
 
     protected override void CacheVariablesForChildren()
     {
@@ -2384,7 +2428,7 @@ public sealed class Product : Expr
 
     protected override void PrintCore(TextWriter writer, string indent)
     {
-        writer.WriteLine($"{indent}Product: {Factors.Count} factors");
+        writer.WriteLine($"{indent}Product: {Factors.Count} factors, Factor={Factor}");
         for (int i = 0; i < Factors.Count; i++)
         {
             writer.WriteLine($"{indent}  [{i}]:");
