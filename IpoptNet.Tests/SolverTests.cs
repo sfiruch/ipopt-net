@@ -163,4 +163,110 @@ public class SolverTests
         Assert.AreEqual(3.821, x[2], 0.01);
         Assert.AreEqual(1.379, x[3], 0.01);
     }
+
+    /// <summary>
+    /// Tests a pure feasibility problem (no objective function).
+    /// Find x, y such that:
+    /// - x^2 + y^2 = 1 (on unit circle)
+    /// - x + y >= 1.0
+    /// - -2 <= x, y <= 2
+    /// Starting point: (0.5, 0.5)
+    /// Expected: Any point on the unit circle where x + y >= 1.0
+    /// </summary>
+    [TestMethod]
+    public unsafe void PureFeasibilityProblem_Converges()
+    {
+        const int n = 2;
+        const int m = 2;
+        const int jacobianNonZeros = 4; // Both vars appear in both constraints
+        const int hessianNonZeros = 3; // Lower triangular 2x2
+
+        double[] xL = [-2, -2];
+        double[] xU = [2, 2];
+        double[] gL = [1.0, 1.0]; // x + y >= 1.0, x^2 + y^2 = 1.0
+        double[] gU = [double.PositiveInfinity, 1.0];
+
+        // Callback: evaluate constraints
+        // g1 = x + y
+        // g2 = x^2 + y^2
+        EvalGCallback evalG = (int nn, double* x, bool newX, int mm, double* g, nint userData) =>
+        {
+            g[0] = x[0] + x[1];
+            g[1] = x[0] * x[0] + x[1] * x[1];
+            return true;
+        };
+
+        // Jacobian structure
+        int[] jacRows = [0, 0, 1, 1];
+        int[] jacCols = [0, 1, 0, 1];
+
+        EvalJacGCallback evalJacG = (int nn, double* x, bool newX, int mm, int neleJac, int* iRow, int* jCol, double* values, nint userData) =>
+        {
+            if (values == null)
+            {
+                for (int i = 0; i < jacRows.Length; i++)
+                {
+                    iRow[i] = jacRows[i];
+                    jCol[i] = jacCols[i];
+                }
+            }
+            else
+            {
+                // g1 = x + y
+                values[0] = 1; // dg1/dx
+                values[1] = 1; // dg1/dy
+                // g2 = x^2 + y^2
+                values[2] = 2 * x[0]; // dg2/dx
+                values[3] = 2 * x[1]; // dg2/dy
+            }
+            return true;
+        };
+
+        // Hessian structure (lower triangular)
+        int[] hessRows = [0, 1, 1];
+        int[] hessCols = [0, 0, 1];
+
+        EvalHCallback evalH = (int nn, double* x, bool newX, double objFactor, int mm, double* lambda, bool newLambda,
+                              int neleHess, int* iRow, int* jCol, double* values, nint userData) =>
+        {
+            if (values == null)
+            {
+                for (int i = 0; i < hessRows.Length; i++)
+                {
+                    iRow[i] = hessRows[i];
+                    jCol[i] = hessCols[i];
+                }
+            }
+            else
+            {
+                // No objective contribution (objFactor should be 0 for feasibility problems)
+                // Constraint Hessians:
+                // g1 = x + y (Hessian is zero)
+                // g2 = x^2 + y^2
+                values[0] = lambda[1] * 2; // d2g2/dx^2
+                values[1] = 0;              // d2g2/dxdy
+                values[2] = lambda[1] * 2; // d2g2/dy^2
+            }
+            return true;
+        };
+
+        using var solver = new IpoptSolver(n, xL, xU, m, gL, gU, jacobianNonZeros, hessianNonZeros,
+            null, null, evalG, evalJacG, evalH);
+
+        solver.SetOption("print_level", 0);
+
+        double[] x = [0.5, 0.5];
+        var status = solver.Solve(x, out var objValue, out var statistics);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, status);
+        Assert.IsTrue(statistics.IterationCount > 0);
+
+        // Verify solution is on the unit circle
+        double radiusSquared = x[0] * x[0] + x[1] * x[1];
+        Assert.AreEqual(1.0, radiusSquared, 0.001);
+
+        // Verify x + y >= 1.0
+        double sum = x[0] + x[1];
+        Assert.IsTrue(sum >= 0.999, $"Expected x + y >= 1.0, got {sum}");
+    }
 }

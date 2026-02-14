@@ -41,8 +41,8 @@ public sealed class IpoptSolver : IDisposable
         ReadOnlySpan<double> gU,
         int jacobianNonZeros,
         int hessianNonZeros,
-        EvalFCallback evalF,
-        EvalGradFCallback evalGradF,
+        EvalFCallback? evalF,
+        EvalGradFCallback? evalGradF,
         EvalGCallback evalG,
         EvalJacGCallback evalJacG,
         EvalHCallback evalH)
@@ -51,6 +51,26 @@ public sealed class IpoptSolver : IDisposable
             throw new ArgumentException($"Variable bounds must have length {n}");
         if (m > 0 && (gL.Length != m || gU.Length != m))
             throw new ArgumentException($"Constraint bounds must have length {m}");
+
+        // For pure feasibility problems (no objective), provide dummy callbacks
+        if (evalF == null && evalGradF == null)
+        {
+            evalF = (int nn, double* x, bool newX, double* objValue, nint userData) =>
+            {
+                *objValue = 0;
+                return true;
+            };
+            evalGradF = (int nn, double* x, bool newX, double* gradF, nint userData) =>
+            {
+                for (int i = 0; i < nn; i++)
+                    gradF[i] = 0;
+                return true;
+            };
+        }
+        else if (evalF == null || evalGradF == null)
+        {
+            throw new ArgumentException("Both evalF and evalGradF must be provided, or both must be null for feasibility problems");
+        }
 
         // Store callbacks as fields to keep them alive
         _evalF = evalF;
