@@ -23,12 +23,12 @@ public sealed class Division : Expr
         return Left.Evaluate(x) / Right.Evaluate(x);
     }
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         var rVal = Right.Evaluate(x);
         var lVal = Left.Evaluate(x);
-        Left.AccumulateGradientCompact(x, compactGrad, multiplier / rVal, varIndexToCompact);
-        Right.AccumulateGradientCompact(x, compactGrad, -multiplier * lVal / (rVal * rVal), varIndexToCompact);
+        Left.AccumulateGradientCompact(x, compactGrad, multiplier / rVal, sortedVarIndices);
+        Right.AccumulateGradientCompact(x, compactGrad, -multiplier * lVal / (rVal * rVal), sortedVarIndices);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
@@ -49,8 +49,8 @@ public sealed class Division : Expr
         // Compute compact gradients
         Array.Clear(_gradLBuffer!);
         Array.Clear(_gradRBuffer!);
-        Left.AccumulateGradientCompact(x, _gradLBuffer!, 1.0, Left._varIndexToCompact!);
-        Right.AccumulateGradientCompact(x, _gradRBuffer!, 1.0, Right._varIndexToCompact!);
+        Left.AccumulateGradientCompact(x, _gradLBuffer!, 1.0, Left._sortedVarIndices!);
+        Right.AccumulateGradientCompact(x, _gradRBuffer!, 1.0, Right._sortedVarIndices!);
 
         // Add 2lr'²/r³ (outer product of r' with itself)
         var coeffR = multiplier * 2 * lVal / r3;

@@ -2438,11 +2438,11 @@ internal class WrongGradientExpr : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
-        // Correct would be: compactGrad[varIndexToCompact[_x.Index]] += multiplier * 2 * x[_x.Index];
+        // Correct would be: compactGrad[Array.BinarySearch(sortedVarIndices, _x.Index)] += multiplier * 2 * x[_x.Index];
         // But we intentionally return wrong derivative:
-        compactGrad[varIndexToCompact[_x.Index]] += multiplier * 3 * x[_x.Index]; // WRONG!
+        compactGrad[Array.BinarySearch(sortedVarIndices, _x.Index)] += multiplier * 3 * x[_x.Index]; // WRONG!
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
@@ -2481,9 +2481,9 @@ internal class WrongHessianExpr : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
-        compactGrad[varIndexToCompact[_x.Index]] += multiplier * 2 * x[_x.Index]; // Correct
+        compactGrad[Array.BinarySearch(sortedVarIndices, _x.Index)] += multiplier * 2 * x[_x.Index]; // Correct
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)

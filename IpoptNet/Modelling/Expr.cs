@@ -8,7 +8,6 @@ public abstract class Expr
     protected Expr? _replacement;
     internal HashSet<Variable>? _cachedVariables;
     internal int[]? _sortedVarIndices;
-    internal Dictionary<int, int>? _varIndexToCompact;
 
     /// <summary>
     /// Gets the actual expression, following any replacements. For testing purposes.
@@ -24,7 +23,7 @@ public abstract class Expr
         // Allocate compact buffer and compute compact gradient
         var compactGrad = ArrayPool<double>.Shared.Rent(expr._cachedVariables!.Count);
         Array.Clear(compactGrad, 0, expr._cachedVariables!.Count);
-        expr.AccumulateGradientCompactCore(x, compactGrad, 1.0, expr._varIndexToCompact!);
+        expr.AccumulateGradientCompactCore(x, compactGrad, 1.0, expr._sortedVarIndices!);
 
         // Expand compact gradient to full-sized array
         for (int i = 0; i < expr._sortedVarIndices!.Length; i++)
@@ -40,8 +39,8 @@ public abstract class Expr
     public void CollectHessianSparsity(HashSet<(int row, int col)> entries) =>
         (_replacement ?? this).CollectHessianSparsityCore(entries);
 
-    internal void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact) =>
-        (_replacement ?? this).AccumulateGradientCompactCore(x, compactGrad, multiplier, varIndexToCompact);
+    internal void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices) =>
+        (_replacement ?? this).AccumulateGradientCompactCore(x, compactGrad, multiplier, sortedVarIndices);
 
     /// <summary>
     /// Returns true if this expression contains no variables (is a constant value).
@@ -61,7 +60,7 @@ public abstract class Expr
     public bool IsAtMostQuadratic() => (_replacement ?? this).IsAtMostQuadraticCore();
 
     protected abstract double EvaluateCore(ReadOnlySpan<double> x);
-    protected abstract void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact);
+    protected abstract void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices);
     protected abstract void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier);
     protected abstract void CollectVariablesCore(HashSet<Variable> variables);
     protected abstract void CollectHessianSparsityCore(HashSet<(int row, int col)> entries);
@@ -578,11 +577,14 @@ public abstract class Expr
         _cachedVariables = new HashSet<Variable>();
         CollectVariablesCore(_cachedVariables);
 
-        // Build sorted variable indices and mapping dictionary
-        _sortedVarIndices = _cachedVariables.Select(v => v.Index).OrderBy(i => i).ToArray();
-        _varIndexToCompact = new Dictionary<int, int>(_sortedVarIndices.Length);
-        for (int i = 0; i < _sortedVarIndices.Length; i++)
-            _varIndexToCompact[_sortedVarIndices[i]] = i;
+        // Build sorted variable indices
+        _sortedVarIndices = new int[_cachedVariables.Count];
+        {
+            var i = 0;
+            foreach (var v in _cachedVariables)
+                _sortedVarIndices[i++] = v.Index;
+        }
+        Array.Sort(_sortedVarIndices);
 
         // Recursively cache for children
         PrepareChildren();
@@ -598,7 +600,6 @@ public abstract class Expr
 
         _cachedVariables = null;
         _sortedVarIndices = null;
-        _varIndexToCompact = null;
         ClearChildren();
     }
 

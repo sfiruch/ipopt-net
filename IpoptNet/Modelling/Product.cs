@@ -36,7 +36,7 @@ public sealed class Product : Expr
         return result;
     }
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         if (Factor == 0.0)
             return;
@@ -50,7 +50,7 @@ public sealed class Product : Expr
                 if (i != j)
                     otherProduct *= Factors[j].Evaluate(x);
             }
-            Factors[i].AccumulateGradientCompact(x, compactGrad, scaledMultiplier * otherProduct, varIndexToCompact);
+            Factors[i].AccumulateGradientCompact(x, compactGrad, scaledMultiplier * otherProduct, sortedVarIndices);
         }
     }
 
@@ -85,7 +85,7 @@ public sealed class Product : Expr
             if (!Factors[i].IsConstantWrtX())
             {
                 Array.Clear(_factorGradBuffers![i]);
-                Factors[i].AccumulateGradientCompact(x, _factorGradBuffers[i], 1.0, Factors[i]._varIndexToCompact!);
+                Factors[i].AccumulateGradientCompact(x, _factorGradBuffers[i], 1.0, Factors[i]._sortedVarIndices!);
             }
 
         // Accumulate Hessian from each factor's second derivative

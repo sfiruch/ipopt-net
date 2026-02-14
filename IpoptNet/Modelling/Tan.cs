@@ -9,11 +9,11 @@ public sealed class Tan : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Tan(Argument.Evaluate(x));
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         var arg = Argument.Evaluate(x);
         var cos = Math.Cos(arg);
-        Argument.AccumulateGradientCompact(x, compactGrad, multiplier / (cos * cos), varIndexToCompact);
+        Argument.AccumulateGradientCompact(x, compactGrad, multiplier / (cos * cos), sortedVarIndices);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
@@ -27,7 +27,7 @@ public sealed class Tan : Expr
         if (Math.Abs(coeff) < 1e-18) return;
 
         Array.Clear(_gradBuffer!);
-        Argument.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Argument._varIndexToCompact!);
+        Argument.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Argument._sortedVarIndices!);
 
         var sorted = Argument._sortedVarIndices!;
         for (int i = 0; i < sorted.Length; i++)

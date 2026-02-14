@@ -16,11 +16,11 @@ public sealed class PowerOp : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(Base.Evaluate(x), Exponent);
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         var bVal = Base.Evaluate(x);
         var deriv = Exponent * Math.Pow(bVal, Exponent - 1);
-        Base.AccumulateGradientCompact(x, compactGrad, multiplier * deriv, varIndexToCompact);
+        Base.AccumulateGradientCompact(x, compactGrad, multiplier * deriv, sortedVarIndices);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
@@ -36,7 +36,7 @@ public sealed class PowerOp : Expr
         if (Math.Abs(coeff) < 1e-18) return;
 
         Array.Clear(_gradBuffer!);
-        Base.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Base._varIndexToCompact!);
+        Base.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Base._sortedVarIndices!);
 
         var sorted = Base._sortedVarIndices!;
         for (int i = 0; i < sorted.Length; i++)

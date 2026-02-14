@@ -17,9 +17,9 @@ public sealed class Negation : Expr
         return -val;
     }
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
-        Operand.AccumulateGradientCompact(x, compactGrad, -multiplier, varIndexToCompact);
+        Operand.AccumulateGradientCompact(x, compactGrad, -multiplier, sortedVarIndices);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)

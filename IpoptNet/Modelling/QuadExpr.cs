@@ -614,11 +614,11 @@ public class QuadExpr : Expr
         return result;
     }
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         // Linear terms
         for (int i = 0; i < LinearTerms.Count; i++)
-            LinearTerms[i].AccumulateGradientCompact(x, compactGrad, multiplier * LinearWeights[i], varIndexToCompact);
+            LinearTerms[i].AccumulateGradientCompact(x, compactGrad, multiplier * LinearWeights[i], sortedVarIndices);
 
         // Quadratic terms
         for (int i = 0; i < QuadraticTerms1.Count; i++)
@@ -627,8 +627,8 @@ public class QuadExpr : Expr
             var g = QuadraticTerms2[i].Evaluate(x);
             var w = multiplier * QuadraticWeights[i];
 
-            QuadraticTerms1[i].AccumulateGradientCompact(x, compactGrad, w * g, varIndexToCompact);
-            QuadraticTerms2[i].AccumulateGradientCompact(x, compactGrad, w * f, varIndexToCompact);
+            QuadraticTerms1[i].AccumulateGradientCompact(x, compactGrad, w * g, sortedVarIndices);
+            QuadraticTerms2[i].AccumulateGradientCompact(x, compactGrad, w * f, sortedVarIndices);
         }
     }
 
