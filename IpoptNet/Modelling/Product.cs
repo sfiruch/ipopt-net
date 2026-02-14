@@ -27,6 +27,9 @@ public sealed class Product : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x)
     {
+        if (Factor == 0.0)
+            return 0.0;
+
         var result = Factor;
         foreach (var factor in Factors)
             result *= factor.Evaluate(x);
@@ -35,6 +38,9 @@ public sealed class Product : Expr
 
     protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
     {
+        if (Factor == 0.0)
+            return;
+
         var scaledMultiplier = multiplier * Factor;
         for (int i = 0; i < Factors.Count; i++)
         {
@@ -50,6 +56,9 @@ public sealed class Product : Expr
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
+        if (Factor == 0.0)
+            return;
+
         var scaledMultiplier = multiplier * Factor;
 
         if (Factors.Count == 0)
