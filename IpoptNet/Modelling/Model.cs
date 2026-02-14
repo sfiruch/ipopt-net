@@ -445,7 +445,7 @@ public sealed class Model : IDisposable
         for (int i = 0; i < structRows.Length; i++)
             indexMap[(structRows[i], structCols[i])] = i;
 
-        var hess = new HessianAccumulator();
+        var hess = new HessianAccumulator(_variables.Count);
 
         return (int n, double* pX, bool newX, double objFactor, int m, double* lambda, bool newLambda,
                 int neleHess, int* iRow, int* jCol, double* pValues, nint userData) =>
@@ -474,11 +474,10 @@ public sealed class Model : IDisposable
                 // Copy to values array
                 var values = new Span<double>(pValues, neleHess);
                 values.Clear();
-                foreach (var (key, value) in hess.Entries)
+                for (int i = 0; i < structRows.Length; i++)
                 {
-                    var idx = indexMap[key];
-                    values[idx] = value;
-                    if (!IsValidNumber(values[idx]))
+                    values[i] = hess.Get(structRows[i], structCols[i]);
+                    if (!IsValidNumber(values[i]))
                         return false;
                 }
             }

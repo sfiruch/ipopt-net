@@ -42,14 +42,17 @@ public sealed class Product : Expr
             return;
 
         var scaledMultiplier = multiplier * Factor;
+
+        // Evaluate all factors once
+        for (int i = 0; i < Factors.Count; i++)
+            _factorValues![i] = Factors[i].Evaluate(x);
+
         for (int i = 0; i < Factors.Count; i++)
         {
             var otherProduct = 1.0;
             for (int j = 0; j < Factors.Count; j++)
-            {
                 if (i != j)
-                    otherProduct *= Factors[j].Evaluate(x);
-            }
+                    otherProduct *= _factorValues![j];
             Factors[i].AccumulateGradientCompact(x, compactGrad, scaledMultiplier * otherProduct, sortedVarIndices);
         }
     }

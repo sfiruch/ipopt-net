@@ -2,7 +2,7 @@ using System.Text;
 
 namespace IpoptNet.Modelling;
 
-public class LinExpr : Expr
+public sealed class LinExpr : Expr
 {
     public List<Expr> Terms { get; set; }
     public List<double> Weights { get; set; }

@@ -1,19 +1,31 @@
-using System.Runtime.InteropServices;
-
 namespace IpoptNet.Modelling;
 
 public sealed class HessianAccumulator
 {
-    public readonly Dictionary<(int Row, int Col), double> Entries = new();
+    private readonly double[] _values;
+    private readonly int _n;
 
-    public HessianAccumulator() { }
+    public HessianAccumulator(int n)
+    {
+        _n = n;
+        _values = new double[n * (n + 1) / 2];
+    }
 
     public void Add(int i, int j, double value)
     {
-        var key = i >= j ? (i, j) : (j, i);
-        ref var entry = ref CollectionsMarshal.GetValueRefOrAddDefault(Entries, key, out _);
-        entry += value;
+        // Ensure i >= j for lower triangular storage
+        if (i < j)
+            (i, j) = (j, i);
+        _values[i * (i + 1) / 2 + j] += value;
     }
 
-    public void Clear() => Entries.Clear();
+    public double Get(int i, int j)
+    {
+        // Ensure i >= j for lower triangular storage
+        if (i < j)
+            (i, j) = (j, i);
+        return _values[i * (i + 1) / 2 + j];
+    }
+
+    public void Clear() => Array.Clear(_values);
 }

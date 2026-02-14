@@ -363,24 +363,19 @@ public class ExpressionTests
         expr.Prepare();
 
         var n = point.Length;
-        var hess = new HessianAccumulator();
+        var hess = new HessianAccumulator(n);
         expr.AccumulateHessian(point, hess, 1.0);
 
         // Analytical Hessian for f(x,y) = x*y:
         // H[0,0] = ∂²f/∂x² = 0
-        // H[1,1] = ∂²f/∂y² = 0  
+        // H[1,1] = ∂²f/∂y² = 0
         // H[1,0] = ∂²f/∂x∂y = 1 (stored in lower triangle)
 
-        hess.Entries.TryGetValue((0, 0), out var h_xx);
-        hess.Entries.TryGetValue((1, 1), out var h_yy);
-        hess.Entries.TryGetValue((1, 0), out var h_xy);
+        var h_xx = hess.Get(0, 0);
+        var h_yy = hess.Get(1, 1);
+        var h_xy = hess.Get(1, 0);
 
         Console.WriteLine($"DEBUG: h_xx={h_xx}, h_yy={h_yy}, h_xy={h_xy}");
-        Console.WriteLine($"DEBUG: Total Hessian entries: {hess.Entries.Count}");
-        foreach (var entry in hess.Entries)
-        {
-            Console.WriteLine($"  H[{entry.Key.Row},{entry.Key.Col}] = {entry.Value}");
-        }
 
         Assert.AreEqual(0.0, h_xx, 1e-10, "Hessian ∂²f/∂x² should be 0");
         Assert.AreEqual(0.0, h_yy, 1e-10, "Hessian ∂²f/∂y² should be 0");
@@ -411,25 +406,20 @@ public class ExpressionTests
         expr.Prepare();
 
         var n = point.Length;
-        var hess = new HessianAccumulator();
+        var hess = new HessianAccumulator(n);
         expr.AccumulateHessian(point, hess, 1.0);
 
         // Analytical values:
         // ∂²f/∂x∂y = z = 5.0
-        // ∂²f/∂x∂z = y = 3.0  
+        // ∂²f/∂x∂z = y = 3.0
         // ∂²f/∂y∂z = x = 2.0
 
         // Get cross-terms (stored in lower triangle)
-        var h_xy = hess.Entries[(1, 0)];  // ∂²f/∂x∂y
-        var h_xz = hess.Entries[(2, 0)];  // ∂²f/∂x∂z
-        var h_yz = hess.Entries[(2, 1)];  // ∂²f/∂y∂z
+        var h_xy = hess.Get(1, 0);  // ∂²f/∂x∂y
+        var h_xz = hess.Get(2, 0);  // ∂²f/∂x∂z
+        var h_yz = hess.Get(2, 1);  // ∂²f/∂y∂z
 
         Console.WriteLine($"DEBUG 3-factor: h_xy={h_xy} (expected {point[2]}), h_xz={h_xz} (expected {point[1]}), h_yz={h_yz} (expected {point[0]})");
-        Console.WriteLine($"DEBUG: Total Hessian entries: {hess.Entries.Count}");
-        foreach (var entry in hess.Entries)
-        {
-            Console.WriteLine($"  H[{entry.Key.Row},{entry.Key.Col}] = {entry.Value}");
-        }
 
         Assert.AreEqual(point[2], h_xy, 1e-10, $"∂²f/∂x∂y should equal z={point[2]}, got {h_xy}");
         Assert.AreEqual(point[1], h_xz, 1e-10, $"∂²f/∂x∂z should equal y={point[1]}, got {h_xz}");
@@ -542,7 +532,7 @@ public class ExpressionTests
         expr.Prepare();
 
         var n = point.Length;
-        var hess = new HessianAccumulator();
+        var hess = new HessianAccumulator(n);
         expr.AccumulateHessian(point, hess, 1.0);
 
         var fdHess = ComputeFiniteDifferenceHessian(expr, point);
@@ -551,7 +541,7 @@ public class ExpressionTests
         {
             for (int j = 0; j <= i; j++)
             {
-                hess.Entries.TryGetValue((i, j), out var adValue);
+                var adValue = hess.Get(i, j);
                 Assert.AreEqual(fdHess[i, j], adValue, HessianTolerance,
                     $"Hessian mismatch at ({i},{j}): FD={fdHess[i, j]}, AD={adValue}");
             }

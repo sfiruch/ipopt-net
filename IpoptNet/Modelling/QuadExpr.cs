@@ -3,7 +3,7 @@ using System.Text;
 
 namespace IpoptNet.Modelling;
 
-public class QuadExpr : Expr
+public sealed class QuadExpr : Expr
 {
     public List<Expr> LinearTerms { get; set; }
     public List<double> LinearWeights { get; set; }
