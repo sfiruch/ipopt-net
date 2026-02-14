@@ -263,7 +263,8 @@ public sealed class Model : IDisposable
             ApplicationReturnStatus.FeasiblePointFound or
             ApplicationReturnStatus.MaximumIterationsExceeded or
             ApplicationReturnStatus.MaximumCpuTimeExceeded or
-            ApplicationReturnStatus.MaximumWallTimeExceeded)
+            ApplicationReturnStatus.MaximumWallTimeExceeded or
+            ApplicationReturnStatus.RestorationFailed)
         {
             for (int i = 0; i < n; i++)
                 solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]);
