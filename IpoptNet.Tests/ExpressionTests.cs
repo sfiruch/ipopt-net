@@ -64,6 +64,100 @@ public class ExpressionTests
     }
 
     [TestMethod]
+    public void Gradient_DivisionWithOverlappingVariables_MatchesFiniteDifference()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var expr = (x + y) / (x * y);
+        double[] point = [3, 2];
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void Gradient_MixedProductsDivisions_MatchesFiniteDifference()
+    {
+        // Complex expression with products, divisions, and sums
+        var model = new Model();
+        var v1 = model.AddVariable();
+        var v2 = model.AddVariable();
+        var v3 = model.AddVariable();
+        var v4 = model.AddVariable();
+
+        // Build a complex expression similar to user's optimization problem
+        var expr = (v1 * v2 + v3) / (v4 + 1.5) + v1 * v3 / v2 - v2 * v4;
+        double[] point = [2, 3, 4, 5];
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void IpoptDerivativeCheck_ComplexExpression_PassesValidation()
+    {
+        // Test using IPOPT's built-in derivative checker
+        var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
+        model.Options.CheckDerivativesForNanInf = true;
+
+        var v1 = model.AddVariable(1, 10);
+        v1.Start = 2;
+        var v2 = model.AddVariable(1, 10);
+        v2.Start = 3;
+        var v3 = model.AddVariable(1, 10);
+        v3.Start = 4;
+        var v4 = model.AddVariable(1, 10);
+        v4.Start = 5;
+
+        // Complex objective with mixed operations including divisions with overlapping variables
+        var obj = Expr.Pow(v1 * v2 + v3, 2) / (v4 + 1.5) + v1 * v3 / v2 - v2 * v4 + Expr.Log(v1 + v2);
+        model.SetObjective(obj);
+
+        // Add a constraint with overlapping variables in division
+        model.AddConstraint((v1 + v2) / (v3 * v4) <= 5);
+
+        var result = ModellingTests.SolveWithDerivativeTest(model);
+
+        ModellingTests.AssertDerivativeTestPassed(result.DerivativeTestResult);
+    }
+
+    [TestMethod]
+    public void IpoptDerivativeCheck_LeastSquaresWithDivisions_PassesValidation()
+    {
+        // Test pattern similar to user's code: sum of squared residuals with complex expressions
+        var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
+        model.Options.CheckDerivativesForNanInf = true;
+
+        // Create some parameter variables
+        var p1 = model.AddVariable(0);
+        p1.Start = 1;
+        var p2 = model.AddVariable(0);
+        p2.Start = 2;
+        var p3 = model.AddVariable(0);
+        p3.Start = 1.5;
+
+        // Build objective as sum of squared residuals
+        Expr obj = 0;
+        for (int i = 0; i < 10; i++)
+        {
+            double observed = i + 5.0;
+            double x_val = i + 1.0;
+
+            // predicted = (p1 * x + p2) / (p3 * x)  - involves division with overlapping variables
+            var predicted = (p1 * x_val + p2) / (p3 * x_val);
+            obj += Expr.Pow(observed - predicted, 2);
+        }
+
+        model.SetObjective(obj);
+
+        var result = ModellingTests.SolveWithDerivativeTest(model);
+
+        ModellingTests.AssertDerivativeTestPassed(result.DerivativeTestResult);
+    }
+
+    [TestMethod]
     public void Gradient_ProductWithRepeatedFactors_MatchesFiniteDifference()
     {
         var model = new Model();
@@ -340,6 +434,91 @@ public class ExpressionTests
         Assert.AreEqual(point[2], h_xy, 1e-10, $"∂²f/∂x∂y should equal z={point[2]}, got {h_xy}");
         Assert.AreEqual(point[1], h_xz, 1e-10, $"∂²f/∂x∂z should equal y={point[1]}, got {h_xz}");
         Assert.AreEqual(point[0], h_yz, 1e-10, $"∂²f/∂y∂z should equal x={point[0]}, got {h_yz}");
+    }
+
+    [TestMethod]
+    public void Gradient_ProductWithFixedVariable_MatchesFiniteDifference()
+    {
+        // Test Product with a fixed variable
+        var model = new Model();
+        var fixedVar = model.AddVariable(1, 1); // Fixed to 1
+        var freeVar = model.AddVariable(0); // >= 0
+
+        // Product: fixedVar * freeVar (where fixedVar = 1)
+        var expr = fixedVar * freeVar;
+        double[] point = [1, 5]; // fixedVar=1, freeVar=5
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void Gradient_SquaredLinExprWithFixedVariableProducts_MatchesFiniteDifference()
+    {
+        // Match user's model structure: Pow((constant - fixedVar * freeVar - ...), 2)
+        var model = new Model();
+        var fixed1 = model.AddVariable(1, 1); // Fixed to 1 (like Variable[99])
+        var free1 = model.AddVariable(0); // Free (like Variable[4])
+        var free2 = model.AddVariable(0); // Another free variable
+
+        // Build: (16.77 - fixed1 * free1 - fixed1 * free2)^2
+        // This matches the user's pattern where Variable[99] (fixed to 1) multiplies free variables
+        var linExpr = 16.77 - fixed1 * free1 - fixed1 * free2;
+        var expr = Expr.Pow(linExpr, 2);
+
+        double[] point = [1, 5, 3]; // fixed1=1, free1=5, free2=3
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void Gradient_ComplexNestedWithZeroWeightQuadratic_MatchesFiniteDifference()
+    {
+        // Replicate the exact structure from user's Variable[73] term
+        var model = new Model();
+        var v96 = model.AddVariable(0);
+        var v73 = model.AddVariable(0); // The variable with 14.7% error
+        var v139 = model.AddVariable(0);
+        var v113 = model.AddVariable(0);
+        var v129 = model.AddVariable(0);
+        var v134 = model.AddVariable(0);
+        var v136 = model.AddVariable(0);
+        var v137 = model.AddVariable(0);
+        var v138 = model.AddVariable(0);
+
+        // Build QuadExpr with zero-weight terms
+        var quad = new QuadExpr();
+        quad.LinearTerms.Add(v138);
+        quad.LinearWeights.Add(1.0);
+        quad.QuadraticTerms1.Add(v129);
+        quad.QuadraticTerms2.Add(v134);
+        quad.QuadraticWeights.Add(0); // Zero weight!
+        quad.QuadraticTerms1.Add(v136);
+        quad.QuadraticTerms2.Add(v129);
+        quad.QuadraticWeights.Add(0.042);
+        quad.QuadraticTerms1.Add(v129);
+        quad.QuadraticTerms2.Add(v137);
+        quad.QuadraticWeights.Add(1.0);
+
+        // Build LinExpr: constant - v96*v73 - v96*v139*quad - v113*quad
+        var linExpr = 3.27 - 0.001 * v96 * v73 - v96 * v139 * quad - v113 * quad;
+
+        // Square it
+        var expr = Expr.Pow(linExpr, 2);
+
+        double[] point = [2, 3, 4, 5, 6, 7, 8, 9, 10]; // v96, v73, v139, v113, v129, v134, v136, v137, v138
+
+        // Manually check gradients with more detailed output
+        expr.Prepare();
+        var adGrad = new double[point.Length];
+        expr.AccumulateGradient(point, adGrad);
+        var fdGrad = ComputeFiniteDifferenceGradient(expr, point);
+
+        for (int i = 0; i < point.Length; i++)
+        {
+            var relativeError = Math.Abs(adGrad[i] - fdGrad[i]) / Math.Max(Math.Abs(fdGrad[i]), 1e-10);
+            Assert.IsTrue(relativeError < 0.01,
+                $"Gradient[{i}] has {relativeError*100:F2}% error: AD={adGrad[i]}, FD={fdGrad[i]}");
+        }
     }
 
     private static void AssertGradientMatchesFiniteDifference(Expr expr, double[] point)

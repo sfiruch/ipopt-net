@@ -69,7 +69,6 @@ public sealed class Model : IDisposable
     {
         writer ??= Console.Out;
 
-        writer.WriteLine("=== Model ===");
         writer.WriteLine($"Variables: {_variables.Count}");
         for (int i = 0; i < _variables.Count; i++)
         {
@@ -82,19 +81,16 @@ public sealed class Model : IDisposable
             else if (v.UpperBound < double.PositiveInfinity)
                 bounds = $" <= {v.UpperBound}";
 
-            writer.WriteLine($"  x[{i}]{bounds}, start={v.Start}");
+            var start = v.Start.HasValue ? $", start={v.Start}" : "";
+            writer.WriteLine($"  x[{i}]{bounds}{start}");
         }
 
         writer.WriteLine();
         writer.WriteLine("Objective:");
         if (_objective is not null)
-        {
             _objective.Print(writer, "  ");
-        }
         else
-        {
             writer.WriteLine("  (not set)");
-        }
 
         writer.WriteLine();
         writer.WriteLine($"Constraints: {_constraints.Count}");
@@ -114,7 +110,6 @@ public sealed class Model : IDisposable
             writer.WriteLine($"  Constraint[{i}]{boundsStr}:");
             c.Expression.Print(writer, "    ");
         }
-        writer.WriteLine("=============");
     }
 
     public ModelResult Solve(bool updateStartValues = true)

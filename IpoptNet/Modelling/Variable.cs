@@ -39,14 +39,6 @@ public sealed class Variable : Expr
 
     protected override void PrintCore(TextWriter writer, string indent)
     {
-        var bounds = "";
-        if (LowerBound > double.NegativeInfinity && UpperBound < double.PositiveInfinity)
-            bounds = $" [{LowerBound}, {UpperBound}]";
-        else if (LowerBound > double.NegativeInfinity)
-            bounds = $" >= {LowerBound}";
-        else if (UpperBound < double.PositiveInfinity)
-            bounds = $" <= {UpperBound}";
-
-        writer.WriteLine($"{indent}Variable[{Index}]{bounds}");
+        writer.WriteLine($"{indent}x[{Index}]");
     }
 }
