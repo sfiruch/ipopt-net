@@ -6,6 +6,9 @@ public sealed class Division : Expr
     public Expr Right { get; set; }
     private double[]? _gradLBuffer;
     private double[]? _gradRBuffer;
+    private int[]? _allVarsSorted;
+    private int[]? _lIndices; // Index in _gradLBuffer for each var in _allVarsSorted, or -1 if not in L
+    private int[]? _rIndices; // Index in _gradRBuffer for each var in _allVarsSorted, or -1 if not in R
 
     public Division(Expr left, Expr right)
     {
@@ -64,29 +67,31 @@ public sealed class Division : Expr
         var coeffCross = -multiplier / r2;
         if (Math.Abs(coeffCross) > 1e-18)
         {
-            var sortedL = Left._sortedVarIndices!;
-            var sortedR = Right._sortedVarIndices!;
-
-            for (int i = 0; i < sortedL.Length; i++)
+            // Iterate over pre-computed merged variable list (lower triangle only)
+            for (int i = 0; i < _allVarsSorted!.Length; i++)
             {
-                var gLi = _gradLBuffer![i];
-                var gRi = 0.0;
+                var varI = _allVarsSorted[i];
+                var lIdxI = _lIndices![i];
+                var rIdxI = _rIndices![i];
 
-                int rIndex = Array.BinarySearch(sortedR, sortedL[i]);
-                if (rIndex >= 0)
-                    gRi = _gradRBuffer![rIndex];
+                // Get gradients at varI
+                var gLi = lIdxI >= 0 ? _gradLBuffer![lIdxI] : 0.0;
+                var gRi = rIdxI >= 0 ? _gradRBuffer![rIdxI] : 0.0;
 
-                for (int j = 0; j < sortedR.Length; j++)
+                for (int j = 0; j <= i; j++)
                 {
-                    var gRj = _gradRBuffer![j];
-                    var gLj = 0.0;
+                    var varJ = _allVarsSorted[j];
+                    var lIdxJ = _lIndices[j];
+                    var rIdxJ = _rIndices[j];
 
-                    int lIndex = Array.BinarySearch(sortedL, sortedR[j]);
-                    if (lIndex >= 0)
-                        gLj = _gradLBuffer![lIndex];
+                    // Get gradients at varJ
+                    var gLj = lIdxJ >= 0 ? _gradLBuffer![lIdxJ] : 0.0;
+                    var gRj = rIdxJ >= 0 ? _gradRBuffer![rIdxJ] : 0.0;
 
-                    hess.Add(sortedL[i], sortedR[j], coeffCross * gLi * gRj);
-                    hess.Add(sortedR[j], sortedL[i], coeffCross * gRi * gLj);
+                    // Add both terms of -(∂L/∂i * ∂R/∂j + ∂R/∂i * ∂L/∂j) / R²
+                    var contrib = coeffCross * (gLi * gRj + gRi * gLj);
+                    if (Math.Abs(contrib) > 1e-18)
+                        hess.Add(varI, varJ, contrib);
                 }
             }
         }
@@ -138,6 +143,60 @@ public sealed class Division : Expr
         Right.Prepare();
         _gradLBuffer = new double[Left._cachedVariables!.Count];
         _gradRBuffer = new double[Right._cachedVariables!.Count];
+
+        // Pre-compute merged variable list for cross-term computation
+        var sortedL = Left._sortedVarIndices!;
+        var sortedR = Right._sortedVarIndices!;
+
+        // Merge two sorted arrays into one, keeping unique values
+        var merged = new List<int>(sortedL.Length + sortedR.Length);
+        var lIndicesList = new List<int>(sortedL.Length + sortedR.Length);
+        var rIndicesList = new List<int>(sortedL.Length + sortedR.Length);
+
+        int li = 0, ri = 0;
+        while (li < sortedL.Length && ri < sortedR.Length)
+        {
+            if (sortedL[li] < sortedR[ri])
+            {
+                merged.Add(sortedL[li]);
+                lIndicesList.Add(li);
+                rIndicesList.Add(-1);
+                li++;
+            }
+            else if (sortedL[li] > sortedR[ri])
+            {
+                merged.Add(sortedR[ri]);
+                lIndicesList.Add(-1);
+                rIndicesList.Add(ri);
+                ri++;
+            }
+            else // equal
+            {
+                merged.Add(sortedL[li]);
+                lIndicesList.Add(li);
+                rIndicesList.Add(ri);
+                li++;
+                ri++;
+            }
+        }
+        while (li < sortedL.Length)
+        {
+            merged.Add(sortedL[li]);
+            lIndicesList.Add(li);
+            rIndicesList.Add(-1);
+            li++;
+        }
+        while (ri < sortedR.Length)
+        {
+            merged.Add(sortedR[ri]);
+            lIndicesList.Add(-1);
+            rIndicesList.Add(ri);
+            ri++;
+        }
+
+        _allVarsSorted = merged.ToArray();
+        _lIndices = lIndicesList.ToArray();
+        _rIndices = rIndicesList.ToArray();
     }
 
     protected override void ClearChildren()
@@ -146,6 +205,9 @@ public sealed class Division : Expr
         Right.Clear();
         _gradLBuffer = null;
         _gradRBuffer = null;
+        _allVarsSorted = null;
+        _lIndices = null;
+        _rIndices = null;
     }
 
     protected override void PrintCore(TextWriter writer, string indent)

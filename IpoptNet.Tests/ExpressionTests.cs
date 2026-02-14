@@ -236,6 +236,21 @@ public class ExpressionTests
     }
 
     [TestMethod]
+    public void Hessian_DivisionWithOverlappingVariables_MatchesFiniteDifference()
+    {
+        // This test catches bugs when the same variables appear in both numerator and denominator
+        // For f(x,y) = (x + y) / (x * y), both x and y appear in L and R
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var expr = (x + y) / (x * y);
+        double[] point = [3, 2];
+
+        AssertHessianMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
     public void Hessian_SimpleProduct_MatchesAnalytical()
     {
         // This test specifically catches the bug where product cross-terms are doubled
