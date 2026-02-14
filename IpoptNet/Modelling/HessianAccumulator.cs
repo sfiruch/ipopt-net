@@ -3,11 +3,9 @@ namespace IpoptNet.Modelling;
 public sealed class HessianAccumulator
 {
     private readonly double[] _values;
-    private readonly int _n;
 
     public HessianAccumulator(int n)
     {
-        _n = n;
         _values = new double[n * (n + 1) / 2];
     }
 
