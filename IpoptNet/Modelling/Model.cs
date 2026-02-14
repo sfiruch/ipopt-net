@@ -442,12 +442,7 @@ public sealed class Model : IDisposable
 
     private unsafe EvalHCallback CreateEvalHCallback(int[] structRows, int[] structCols)
     {
-        // Build a map from (row, col) to index once
-        var indexMap = new Dictionary<(int, int), int>();
-        for (int i = 0; i < structRows.Length; i++)
-            indexMap[(structRows[i], structCols[i])] = i;
-
-        var hess = new HessianAccumulator(_variables.Count);
+        var hess = new HessianAccumulator(_variables.Count, structRows, structCols);
 
         return (int n, double* pX, bool newX, double objFactor, int m, double* lambda, bool newLambda,
                 int neleHess, int* iRow, int* jCol, double* pValues, nint userData) =>
@@ -473,15 +468,12 @@ public sealed class Model : IDisposable
                 for (int row = 0; row < m; row++)
                     _constraints[row].Expression.AccumulateHessian(x, hess, lambda[row]);
 
-                // Copy to values array
+                // Copy values directly (CSR order matches structRows/structCols order)
                 var values = new Span<double>(pValues, neleHess);
-                values.Clear();
-                for (int i = 0; i < structRows.Length; i++)
-                {
-                    values[i] = hess.Get(structRows[i], structCols[i]);
+                hess.Values.CopyTo(values);
+                for (int i = 0; i < values.Length; i++)
                     if (!IsValidNumber(values[i]))
                         return false;
-                }
             }
             return true;
         };

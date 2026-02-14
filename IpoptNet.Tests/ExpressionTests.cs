@@ -363,7 +363,13 @@ public class ExpressionTests
         expr.Prepare();
 
         var n = point.Length;
-        var hess = new HessianAccumulator(n);
+        var entries = new HashSet<(int row, int col)>();
+        expr.CollectHessianSparsity(entries);
+        var sorted = entries.OrderBy(e => e.row).ThenBy(e => e.col).ToArray();
+        var rows = sorted.Select(e => e.row).ToArray();
+        var cols = sorted.Select(e => e.col).ToArray();
+
+        var hess = new HessianAccumulator(n, rows, cols);
         expr.AccumulateHessian(point, hess, 1.0);
 
         // Analytical Hessian for f(x,y) = x*y:
@@ -406,7 +412,13 @@ public class ExpressionTests
         expr.Prepare();
 
         var n = point.Length;
-        var hess = new HessianAccumulator(n);
+        var entries = new HashSet<(int row, int col)>();
+        expr.CollectHessianSparsity(entries);
+        var sorted = entries.OrderBy(e => e.row).ThenBy(e => e.col).ToArray();
+        var rows = sorted.Select(e => e.row).ToArray();
+        var cols = sorted.Select(e => e.col).ToArray();
+
+        var hess = new HessianAccumulator(n, rows, cols);
         expr.AccumulateHessian(point, hess, 1.0);
 
         // Analytical values:
@@ -528,11 +540,16 @@ public class ExpressionTests
 
     private static void AssertHessianMatchesFiniteDifference(Expr expr, double[] point)
     {
-        // Cache variables before computing Hessian
         expr.Prepare();
-
         var n = point.Length;
-        var hess = new HessianAccumulator(n);
+
+        var entries = new HashSet<(int row, int col)>();
+        expr.CollectHessianSparsity(entries);
+        var sorted = entries.OrderBy(e => e.row).ThenBy(e => e.col).ToArray();
+        var rows = sorted.Select(e => e.row).ToArray();
+        var cols = sorted.Select(e => e.col).ToArray();
+
+        var hess = new HessianAccumulator(n, rows, cols);
         expr.AccumulateHessian(point, hess, 1.0);
 
         var fdHess = ComputeFiniteDifferenceHessian(expr, point);
