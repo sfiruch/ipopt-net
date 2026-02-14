@@ -60,8 +60,8 @@ public sealed class Division : Expr
             }
         }
 
-        // Add -2l'r'/r² (cross terms between l' and r')
-        var coeffCross = -2 * multiplier / r2;
+        // Add -(l'r' + r'l')/r² (cross terms between l' and r')
+        var coeffCross = -multiplier / r2;
         if (Math.Abs(coeffCross) > 1e-18)
         {
             var sortedL = Left._sortedVarIndices!;
@@ -70,13 +70,23 @@ public sealed class Division : Expr
             for (int i = 0; i < sortedL.Length; i++)
             {
                 var gLi = _gradLBuffer![i];
-                var idxI = sortedL[i];
+                var gRi = 0.0;
+
+                int rIndex = Array.BinarySearch(sortedR, sortedL[i]);
+                if (rIndex >= 0)
+                    gRi = _gradRBuffer![rIndex];
 
                 for (int j = 0; j < sortedR.Length; j++)
                 {
-                    var idxJ = sortedR[j];
-                    // Add symmetric contribution (divide by 2 since we add both directions)
-                    hess.Add(idxI, idxJ, coeffCross / 2 * gLi * _gradRBuffer![j]);
+                    var gRj = _gradRBuffer![j];
+                    var gLj = 0.0;
+
+                    int lIndex = Array.BinarySearch(sortedL, sortedR[j]);
+                    if (lIndex >= 0)
+                        gLj = _gradLBuffer![lIndex];
+
+                    hess.Add(sortedL[i], sortedR[j], coeffCross * gLi * gRj);
+                    hess.Add(sortedR[j], sortedL[i], coeffCross * gRi * gLj);
                 }
             }
         }

@@ -218,6 +218,24 @@ public class ExpressionTests
     }
 
     [TestMethod]
+    public void Hessian_DivisionWithCrossTerms_MatchesFiniteDifference()
+    {
+        // This test catches bugs in division cross-term Hessian computation
+        // For f(w,x,y,z) = (w + x) / (y * z), the Hessian has cross-terms
+        // where L and R depend on different variables (no overlap)
+        var model = new Model();
+        var w = model.AddVariable();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+        var z = model.AddVariable();
+
+        var expr = (w + x) / (y * z);
+        double[] point = [2, 3, 4, 5];
+
+        AssertHessianMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
     public void Hessian_SimpleProduct_MatchesAnalytical()
     {
         // This test specifically catches the bug where product cross-terms are doubled
