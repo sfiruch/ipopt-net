@@ -97,6 +97,10 @@ public class LinExpr : Expr
 
     private static void ProcessTerm(Expr term, double weight, ref double constantSum, List<Expr> nonConstantTerms, List<double> weights)
     {
+        // Skip terms with zero weight
+        if (Math.Abs(weight) < 1e-15)
+            return;
+
         // Handle nested structures
         if (term is Constant c)
         {
@@ -113,8 +117,12 @@ public class LinExpr : Expr
             constantSum += weight * lin.ConstantTerm;
             for (int i = 0; i < lin.Terms.Count; i++)
             {
-                nonConstantTerms.Add(lin.Terms[i]);
-                weights.Add(weight * lin.Weights[i]);
+                var scaledWeight = weight * lin.Weights[i];
+                if (Math.Abs(scaledWeight) >= 1e-15)
+                {
+                    nonConstantTerms.Add(lin.Terms[i]);
+                    weights.Add(scaledWeight);
+                }
             }
         }
         else if (term is Product prod)

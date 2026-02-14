@@ -1209,6 +1209,51 @@ public class ExpressionTests
     }
 
     [TestMethod]
+    public void LinExpr_FiltersZeroWeightTerms()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create LinExpr with zero-weight term
+        var lin = new LinExpr();
+        lin.AddTerm(x, 2.0);
+        lin.AddTerm(y, 0.0); // Should be filtered out
+        lin.AddTerm(x, 0.0); // Should be filtered out
+
+        Assert.AreEqual(1, lin.Terms.Count, "Should only have 1 term (zero-weight terms filtered)");
+        Assert.AreEqual(2.0, lin.Weights[0], 1e-10);
+        Assert.AreSame(x, lin.Terms[0]);
+
+        double[] point = [5, 3];
+        Assert.AreEqual(10.0, lin.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
+    public void QuadExpr_FiltersZeroWeightTerms()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create QuadExpr with zero-weight terms
+        var quad = new QuadExpr();
+        quad.AddTerm(x, 2.0);
+        quad.AddTerm(y, 0.0); // Should be filtered out
+        quad.AddTerm(x * y, 3.0);
+        quad.AddTerm(x * x, 0.0); // Should be filtered out
+
+        Assert.AreEqual(1, quad.LinearTerms.Count, "Should only have 1 linear term");
+        Assert.AreEqual(1, quad.QuadraticTerms1.Count, "Should only have 1 quadratic term");
+        Assert.AreEqual(2.0, quad.LinearWeights[0], 1e-10);
+        Assert.AreSame(x, quad.LinearTerms[0]);
+        Assert.AreEqual(3.0, quad.QuadraticWeights[0], 1e-10);
+
+        double[] point = [5, 3];
+        Assert.AreEqual(2.0 * 5 + 3.0 * 5 * 3, quad.Evaluate(point), 1e-10);
+    }
+
+    [TestMethod]
     public void LinExpr_MixedNegationsAndProducts()
     {
         var model = new Model();
