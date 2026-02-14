@@ -508,33 +508,33 @@ public class QuadExpr : Expr
     protected override double EvaluateCore(ReadOnlySpan<double> x)
     {
         var result = ConstantTerm;
-        
+
         // Linear terms
         for (int i = 0; i < LinearTerms.Count; i++)
             result += LinearWeights[i] * LinearTerms[i].Evaluate(x);
-        
+
         // Quadratic terms
         for (int i = 0; i < QuadraticTerms1.Count; i++)
             result += QuadraticWeights[i] * QuadraticTerms1[i].Evaluate(x) * QuadraticTerms2[i].Evaluate(x);
-        
+
         return result;
     }
 
-    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
     {
         // Linear terms
         for (int i = 0; i < LinearTerms.Count; i++)
-            LinearTerms[i].AccumulateGradient(x, grad, multiplier * LinearWeights[i]);
-        
-        // Quadratic terms: d/dx_i (w * f * g) = w * (f' * g + f * g')
+            LinearTerms[i].AccumulateGradientCompact(x, compactGrad, multiplier * LinearWeights[i], varIndexToCompact);
+
+        // Quadratic terms
         for (int i = 0; i < QuadraticTerms1.Count; i++)
         {
             var f = QuadraticTerms1[i].Evaluate(x);
             var g = QuadraticTerms2[i].Evaluate(x);
             var w = multiplier * QuadraticWeights[i];
-            
-            QuadraticTerms1[i].AccumulateGradient(x, grad, w * g);
-            QuadraticTerms2[i].AccumulateGradient(x, grad, w * f);
+
+            QuadraticTerms1[i].AccumulateGradientCompact(x, compactGrad, w * g, varIndexToCompact);
+            QuadraticTerms2[i].AccumulateGradientCompact(x, compactGrad, w * f, varIndexToCompact);
         }
     }
 
@@ -628,24 +628,24 @@ public class QuadExpr : Expr
         return clone;
     }
 
-    protected override void CacheVariablesForChildren()
+    protected override void PrepareChildren()
     {
         foreach (var term in LinearTerms)
-            term.CacheVariables();
+            term.Prepare();
         foreach (var term in QuadraticTerms1)
-            term.CacheVariables();
+            term.Prepare();
         foreach (var term in QuadraticTerms2)
-            term.CacheVariables();
+            term.Prepare();
     }
 
-    protected override void ClearCachedVariablesForChildren()
+    protected override void ClearChildren()
     {
         foreach (var term in LinearTerms)
-            term.ClearCachedVariables();
+            term.Clear();
         foreach (var term in QuadraticTerms1)
-            term.ClearCachedVariables();
+            term.Clear();
         foreach (var term in QuadraticTerms2)
-            term.ClearCachedVariables();
+            term.Clear();
     }
 
     protected override void PrintCore(TextWriter writer, string indent)

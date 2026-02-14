@@ -148,10 +148,10 @@ public class LinExpr : Expr
         return result;
     }
 
-    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
     {
         for (int i = 0; i < Terms.Count; i++)
-            Terms[i].AccumulateGradient(x, grad, multiplier * Weights[i]);
+            Terms[i].AccumulateGradientCompact(x, compactGrad, multiplier * Weights[i], varIndexToCompact);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
@@ -184,16 +184,16 @@ public class LinExpr : Expr
         return clone;
     }
 
-    protected override void CacheVariablesForChildren()
+    protected override void PrepareChildren()
     {
         foreach (var term in Terms)
-            term.CacheVariables();
+            term.Prepare();
     }
 
-    protected override void ClearCachedVariablesForChildren()
+    protected override void ClearChildren()
     {
         foreach (var term in Terms)
-            term.ClearCachedVariables();
+            term.Clear();
     }
 
     protected override void PrintCore(TextWriter writer, string indent)

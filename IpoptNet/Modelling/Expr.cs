@@ -7,6 +7,8 @@ public abstract class Expr
 {
     protected Expr? _replacement;
     internal HashSet<Variable>? _cachedVariables;
+    internal int[]? _sortedVarIndices;
+    internal Dictionary<int, int>? _varIndexToCompact;
 
     /// <summary>
     /// Gets the actual expression, following any replacements. For testing purposes.
@@ -14,8 +16,23 @@ public abstract class Expr
     public Expr GetActual() => _replacement ?? this;
 
     public double Evaluate(ReadOnlySpan<double> x) => _replacement?.Evaluate(x) ?? EvaluateCore(x);
-    public void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad, double multiplier) =>
-        (_replacement ?? this).AccumulateGradientCore(x, grad, multiplier);
+
+    public void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad)
+    {
+        var expr = _replacement ?? this;
+
+        // Allocate compact buffer and compute compact gradient
+        var compactGrad = ArrayPool<double>.Shared.Rent(expr._cachedVariables!.Count);
+        Array.Clear(compactGrad, 0, expr._cachedVariables!.Count);
+        expr.AccumulateGradientCompactCore(x, compactGrad, 1.0, expr._varIndexToCompact!);
+
+        // Expand compact gradient to full-sized array
+        for (int i = 0; i < expr._sortedVarIndices!.Length; i++)
+            grad[expr._sortedVarIndices[i]] += compactGrad[i];
+
+        ArrayPool<double>.Shared.Return(compactGrad);
+    }
+
     public void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) =>
         (_replacement ?? this).AccumulateHessianCore(x, hess, multiplier);
     public void CollectVariables(HashSet<Variable> variables) =>
@@ -23,29 +40,8 @@ public abstract class Expr
     public void CollectHessianSparsity(HashSet<(int row, int col)> entries) =>
         (_replacement ?? this).CollectHessianSparsityCore(entries);
 
-    protected void AccumulateOuterHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double coeff, HashSet<Variable> vars, double[] rentedGrad)
-    {
-        if (Math.Abs(coeff) < 1e-18) return;
-
-        // Only iterate over non-zero entries
-        var nonZeros = new List<int>(vars.Count);
-        foreach (var v in vars)
-            if (Math.Abs(rentedGrad[v.Index]) > 1e-18)
-                nonZeros.Add(v.Index);
-
-        nonZeros.Sort();
-
-        for (int i = 0; i < nonZeros.Count; i++)
-        {
-            int row = nonZeros[i];
-            double valI = rentedGrad[row];
-            for (int j = 0; j <= i; j++)
-            {
-                int col = nonZeros[j];
-                hess.Add(row, col, coeff * valI * rentedGrad[col]);
-            }
-        }
-    }
+    internal void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact) =>
+        (_replacement ?? this).AccumulateGradientCompactCore(x, compactGrad, multiplier, varIndexToCompact);
 
     /// <summary>
     /// Returns true if this expression contains no variables (is a constant value).
@@ -65,7 +61,7 @@ public abstract class Expr
     public bool IsAtMostQuadratic() => (_replacement ?? this).IsAtMostQuadraticCore();
 
     protected abstract double EvaluateCore(ReadOnlySpan<double> x);
-    protected abstract void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier);
+    protected abstract void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact);
     protected abstract void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier);
     protected abstract void CollectVariablesCore(HashSet<Variable> variables);
     protected abstract void CollectHessianSparsityCore(HashSet<(int row, int col)> entries);
@@ -105,21 +101,21 @@ public abstract class Expr
         {
             return new QuadExpr([a, b]);
         }
-        
+
         // Auto-create QuadExpr if BOTH operands are at most quadratic
         // and at least one is actually quadratic (non-linear)
         bool aIsQuadratic = !a.IsLinear() && a.IsAtMostQuadratic();
         bool bIsQuadratic = !b.IsLinear() && b.IsAtMostQuadratic();
-        
+
         if ((aIsQuadratic || bIsQuadratic) && a.IsAtMostQuadratic() && b.IsAtMostQuadratic())
         {
             return new QuadExpr([a, b]);
         }
-        
+
         // Always create a new LinExpr to ensure proper merging
         return new LinExpr([a, b]);
     }
-    
+
     public static Expr operator -(Expr a, Expr b)
     {
         // If either operand is QuadExpr, result should be QuadExpr
@@ -132,16 +128,16 @@ public abstract class Expr
         {
             return new QuadExpr([a, -b]);
         }
-        
+
         // Auto-create QuadExpr if BOTH operands are at most quadratic
         bool aIsQuadratic = !a.IsLinear() && a.IsAtMostQuadratic();
         bool bIsQuadratic = !b.IsLinear() && b.IsAtMostQuadratic();
-        
+
         if ((aIsQuadratic || bIsQuadratic) && a.IsAtMostQuadratic() && b.IsAtMostQuadratic())
         {
             return new QuadExpr([a, -b]);
         }
-        
+
         // Always create a new LinExpr to ensure proper merging
         return new LinExpr([a, -b]);
     }
@@ -167,7 +163,7 @@ public abstract class Expr
             result.Factor = prodB.Factor;
             return result;
         }
-        else if (ReferenceEquals(a,b))
+        else if (ReferenceEquals(a, b))
         {
             return new PowerOp(a, 2);
         }
@@ -373,7 +369,7 @@ public abstract class Expr
         {
             var current = Clone();
             // Use QuadExpr if either operand is quadratic
-            if ((!current.IsLinear() && current.IsAtMostQuadratic()) || 
+            if ((!current.IsLinear() && current.IsAtMostQuadratic()) ||
                 (!other.IsLinear() && other.IsAtMostQuadratic()) ||
                 current is QuadExpr || other is QuadExpr)
             {
@@ -418,7 +414,7 @@ public abstract class Expr
         {
             var current = Clone();
             // Use QuadExpr if either operand is quadratic
-            if ((!current.IsLinear() && current.IsAtMostQuadratic()) || 
+            if ((!current.IsLinear() && current.IsAtMostQuadratic()) ||
                 (!other.IsLinear() && other.IsAtMostQuadratic()) ||
                 current is QuadExpr || other is QuadExpr)
             {
@@ -568,47 +564,47 @@ public abstract class Expr
     /// Caches variables for this expression and all children to optimize repeated Hessian evaluations.
     /// Called once during model finalization before optimization.
     /// </summary>
-    internal void CacheVariables()
+    internal void Prepare()
     {
         if (_replacement is not null)
         {
-            _replacement.CacheVariables();
+            _replacement.Prepare();
             return;
         }
 
         if (_cachedVariables is not null)
-            return; // Already cached
+            return;
 
         _cachedVariables = new HashSet<Variable>();
         CollectVariablesCore(_cachedVariables);
 
+        // Build sorted variable indices and mapping dictionary
+        _sortedVarIndices = _cachedVariables.Select(v => v.Index).OrderBy(i => i).ToArray();
+        _varIndexToCompact = new Dictionary<int, int>(_sortedVarIndices.Length);
+        for (int i = 0; i < _sortedVarIndices.Length; i++)
+            _varIndexToCompact[_sortedVarIndices[i]] = i;
+
         // Recursively cache for children
-        CacheVariablesForChildren();
+        PrepareChildren();
     }
 
     /// <summary>
     /// Clears cached variables to free memory after optimization completes.
     /// </summary>
-    internal void ClearCachedVariables()
+    internal void Clear()
     {
         if (_replacement is not null)
-        {
-            _replacement.ClearCachedVariables();
-        }
+            _replacement.Clear();
 
         _cachedVariables = null;
-        ClearCachedVariablesForChildren();
+        _sortedVarIndices = null;
+        _varIndexToCompact = null;
+        ClearChildren();
     }
 
-    /// <summary>
-    /// Override in derived classes to recursively cache variables for child expressions.
-    /// </summary>
-    protected virtual void CacheVariablesForChildren() { }
+    protected virtual void PrepareChildren() { }
 
-    /// <summary>
-    /// Override in derived classes to recursively clear cached variables for child expressions.
-    /// </summary>
-    protected virtual void ClearCachedVariablesForChildren() { }
+    protected virtual void ClearChildren() { }
 
     public static Constraint operator >=(Expr expr, double value) => new(expr, value, double.PositiveInfinity);
     public static Constraint operator <=(Expr expr, double value) => new(expr, double.NegativeInfinity, value);

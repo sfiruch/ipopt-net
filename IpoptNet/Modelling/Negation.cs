@@ -15,9 +15,9 @@ public sealed class Negation : Expr
         return -val;
     }
 
-    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
     {
-        Operand.AccumulateGradient(x, grad, -multiplier);
+        Operand.AccumulateGradientCompact(x, compactGrad, -multiplier, varIndexToCompact);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
@@ -33,14 +33,14 @@ public sealed class Negation : Expr
 
     protected override Expr CloneCore() => new Negation(Operand);
 
-    protected override void CacheVariablesForChildren()
+    protected override void PrepareChildren()
     {
-        Operand.CacheVariables();
+        Operand.Prepare();
     }
 
-    protected override void ClearCachedVariablesForChildren()
+    protected override void ClearChildren()
     {
-        Operand.ClearCachedVariables();
+        Operand.Clear();
     }
 
     protected override void PrintCore(TextWriter writer, string indent)

@@ -1,19 +1,18 @@
-using System.Buffers;
-
 namespace IpoptNet.Modelling;
 
 public sealed class Cos : Expr
 {
     public Expr Argument { get; set; }
+    private double[]? _gradBuffer;
 
     public Cos(Expr argument) => Argument = argument;
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Cos(Argument.Evaluate(x));
 
-    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
     {
         var arg = Argument.Evaluate(x);
-        Argument.AccumulateGradient(x, grad, multiplier * -Math.Sin(arg));
+        Argument.AccumulateGradientCompact(x, compactGrad, multiplier * -Math.Sin(arg), varIndexToCompact);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
@@ -21,20 +20,19 @@ public sealed class Cos : Expr
         var arg = Argument.Evaluate(x);
         Argument.AccumulateHessian(x, hess, multiplier * -Math.Sin(arg));
 
-        var n = x.Length;
-        var gradArg = ArrayPool<double>.Shared.Rent(n);
+        var coeff = multiplier * -Math.Cos(arg);
+        if (Math.Abs(coeff) < 1e-18) return;
 
-        var vars = Argument._cachedVariables!;
+        Array.Clear(_gradBuffer!);
+        Argument.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Argument._varIndexToCompact!);
 
-        if (vars.Count < n / 32)
-            foreach (var v in vars) gradArg[v.Index] = 0;
-        else
-            Array.Clear(gradArg);
-
-        Argument.AccumulateGradient(x, gradArg, 1.0);
-        AccumulateOuterHessian(x, hess, multiplier * -Math.Cos(arg), vars, gradArg);
-
-        ArrayPool<double>.Shared.Return(gradArg);
+        var sorted = Argument._sortedVarIndices!;
+        for (int i = 0; i < sorted.Length; i++)
+        {
+            var gI = _gradBuffer![i];
+            for (int j = 0; j <= i; j++)
+                hess.Add(sorted[i], sorted[j], coeff * gI * _gradBuffer[j]);
+        }
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
@@ -51,13 +49,15 @@ public sealed class Cos : Expr
 
     protected override Expr CloneCore() => new Cos(Argument);
 
-    protected override void CacheVariablesForChildren()
+    protected override void PrepareChildren()
     {
-        Argument.CacheVariables();
+        Argument.Prepare();
+        _gradBuffer = new double[Argument._cachedVariables!.Count];
     }
 
-    protected override void ClearCachedVariablesForChildren()
+    protected override void ClearChildren()
     {
-        Argument.ClearCachedVariables();
+        Argument.Clear();
+        _gradBuffer = null;
     }
 }

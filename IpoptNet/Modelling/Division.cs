@@ -1,11 +1,11 @@
-using System.Buffers;
-
 namespace IpoptNet.Modelling;
 
 public sealed class Division : Expr
 {
     public Expr Left { get; set; }
     public Expr Right { get; set; }
+    private double[]? _gradLBuffer;
+    private double[]? _gradRBuffer;
 
     public Division(Expr left, Expr right)
     {
@@ -15,28 +15,22 @@ public sealed class Division : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x)
     {
-        var l = Left.Evaluate(x);
-        var r = Right.Evaluate(x);
-        return l / r;
+        return Left.Evaluate(x) / Right.Evaluate(x);
     }
 
-    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
     {
-        // d(L/R)/dx = (dL/dx * R - L * dR/dx) / R²
         var rVal = Right.Evaluate(x);
         var lVal = Left.Evaluate(x);
-        Left.AccumulateGradient(x, grad, multiplier / rVal);
-        Right.AccumulateGradient(x, grad, -multiplier * lVal / (rVal * rVal));
+        Left.AccumulateGradientCompact(x, compactGrad, multiplier / rVal, varIndexToCompact);
+        Right.AccumulateGradientCompact(x, compactGrad, -multiplier * lVal / (rVal * rVal), varIndexToCompact);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         // f = l / r
         // df/dx = (l'r - lr') / r²
-        // d²f/dx² = ((l''r + l'r' - l'r' - lr'')r² - (l'r - lr')2rr') / r⁴
-        //         = ((l''r - lr'')r² - 2rr'(l'r - lr')) / r⁴
-        //         = (l''r - lr'')/r² - 2r'(l'r - lr')/r³
-        //         = l''/r - lr''/r² - 2l'r'/r² + 2lr'²/r³
+        // d²f/dx² = l''/r - lr''/r² - 2l'r'/r² + 2lr'²/r³
         var lVal = Left.Evaluate(x);
         var rVal = Right.Evaluate(x);
         var r2 = rVal * rVal;
@@ -47,48 +41,45 @@ public sealed class Division : Expr
         Left.AccumulateHessian(x, hess, multiplier / rVal);
         Right.AccumulateHessian(x, hess, -multiplier * lVal / r2);
 
-        var n = x.Length;
-        var gradL = ArrayPool<double>.Shared.Rent(n);
-        var gradR = ArrayPool<double>.Shared.Rent(n);
-
-        var varsL = Left._cachedVariables!;
-        var varsR = Right._cachedVariables!;
-
-        if (varsL.Count < n / 32) foreach (var v in varsL) gradL[v.Index] = 0; else Array.Clear(gradL);
-        if (varsR.Count < n / 32) foreach (var v in varsR) gradR[v.Index] = 0; else Array.Clear(gradR);
-
-        Left.AccumulateGradient(x, gradL, 1.0);
-        Right.AccumulateGradient(x, gradR, 1.0);
+        // Compute compact gradients
+        Array.Clear(_gradLBuffer!);
+        Array.Clear(_gradRBuffer!);
+        Left.AccumulateGradientCompact(x, _gradLBuffer!, 1.0, Left._varIndexToCompact!);
+        Right.AccumulateGradientCompact(x, _gradRBuffer!, 1.0, Right._varIndexToCompact!);
 
         // Add 2lr'²/r³ (outer product of r' with itself)
-        AccumulateOuterHessian(x, hess, multiplier * 2 * lVal / r3, varsR, gradR);
-
-        // Add -l'r'/r² (outer products between l' and r')
-        // Cross derivative term is -(l'_x r'_y + l'_y r'_x) / r²
-        var coeff = -multiplier / r2;
-        var nonZerosL = new List<int>(varsL.Count);
-        foreach (var v in varsL) if (Math.Abs(gradL[v.Index]) > 1e-18) nonZerosL.Add(v.Index);
-        var nonZerosR = new List<int>(varsR.Count);
-        foreach (var v in varsR) if (Math.Abs(gradR[v.Index]) > 1e-18) nonZerosR.Add(v.Index);
-
-        foreach (var i in nonZerosL)
+        var coeffR = multiplier * 2 * lVal / r3;
+        if (Math.Abs(coeffR) > 1e-18)
         {
-            var valLi = gradL[i];
-            foreach (var j in nonZerosR)
+            var sortedR = Right._sortedVarIndices!;
+            for (int i = 0; i < sortedR.Length; i++)
             {
-                // Symmetric contribution: -(l'_i * r'_j + l'_j * r'_i) / r²
-                // We add both directions to ensure symmetry if the index sets overlap.
-                // For x/y, l'=[1,0], r'=[0,1]:
-                // i=0, j=1: Adds coeff * l'[0] * r'[1] = coeff * 1 * 1
-                //           Adds coeff * l'[1] * r'[0] = coeff * 0 * 0
-                // Total H[1,0] = coeff
-                hess.Add(i, j, coeff * valLi * gradR[j]);
-                hess.Add(j, i, coeff * gradL[j] * gradR[i]);
+                var gI = _gradRBuffer![i];
+                for (int j = 0; j <= i; j++)
+                    hess.Add(sortedR[i], sortedR[j], coeffR * gI * _gradRBuffer[j]);
             }
         }
 
-        ArrayPool<double>.Shared.Return(gradL);
-        ArrayPool<double>.Shared.Return(gradR);
+        // Add -2l'r'/r² (cross terms between l' and r')
+        var coeffCross = -2 * multiplier / r2;
+        if (Math.Abs(coeffCross) > 1e-18)
+        {
+            var sortedL = Left._sortedVarIndices!;
+            var sortedR = Right._sortedVarIndices!;
+
+            for (int i = 0; i < sortedL.Length; i++)
+            {
+                var gLi = _gradLBuffer![i];
+                var idxI = sortedL[i];
+
+                for (int j = 0; j < sortedR.Length; j++)
+                {
+                    var idxJ = sortedR[j];
+                    // Add symmetric contribution (divide by 2 since we add both directions)
+                    hess.Add(idxI, idxJ, coeffCross / 2 * gLi * _gradRBuffer![j]);
+                }
+            }
+        }
     }
 
 
@@ -131,16 +122,20 @@ public sealed class Division : Expr
 
     protected override Expr CloneCore() => new Division(Left, Right);
 
-    protected override void CacheVariablesForChildren()
+    protected override void PrepareChildren()
     {
-        Left.CacheVariables();
-        Right.CacheVariables();
+        Left.Prepare();
+        Right.Prepare();
+        _gradLBuffer = new double[Left._cachedVariables!.Count];
+        _gradRBuffer = new double[Right._cachedVariables!.Count];
     }
 
-    protected override void ClearCachedVariablesForChildren()
+    protected override void ClearChildren()
     {
-        Left.ClearCachedVariables();
-        Right.ClearCachedVariables();
+        Left.Clear();
+        Right.Clear();
+        _gradLBuffer = null;
+        _gradRBuffer = null;
     }
 
     protected override void PrintCore(TextWriter writer, string indent)

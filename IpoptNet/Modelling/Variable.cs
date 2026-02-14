@@ -19,9 +19,9 @@ public sealed class Variable : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => x[Index];
 
-    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
     {
-        grad[Index] += multiplier;
+        compactGrad[varIndexToCompact[Index]] += multiplier;
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)

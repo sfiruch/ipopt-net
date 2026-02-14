@@ -233,7 +233,7 @@ public class ExpressionTests
         double[] point = [3.0, 5.0];
 
         // Cache variables before computing Hessian
-        expr.CacheVariables();
+        expr.Prepare();
 
         var n = point.Length;
         var hess = new HessianAccumulator();
@@ -281,7 +281,7 @@ public class ExpressionTests
         Assert.IsInstanceOfType(expr, typeof(Product), "x*y*z should create a Product");
 
         // Cache variables before computing Hessian
-        expr.CacheVariables();
+        expr.Prepare();
 
         var n = point.Length;
         var hess = new HessianAccumulator();
@@ -311,9 +311,12 @@ public class ExpressionTests
 
     private static void AssertGradientMatchesFiniteDifference(Expr expr, double[] point)
     {
+        // Cache variables before computing gradient
+        expr.Prepare();
+
         var n = point.Length;
         var adGrad = new double[n];
-        expr.AccumulateGradient(point, adGrad, 1.0);
+        expr.AccumulateGradient(point, adGrad);
 
         var fdGrad = ComputeFiniteDifferenceGradient(expr, point);
 
@@ -324,7 +327,7 @@ public class ExpressionTests
     private static void AssertHessianMatchesFiniteDifference(Expr expr, double[] point)
     {
         // Cache variables before computing Hessian
-        expr.CacheVariables();
+        expr.Prepare();
 
         var n = point.Length;
         var hess = new HessianAccumulator();
@@ -700,9 +703,11 @@ public class ExpressionTests
         var lin = new LinExpr([new Product([new Constant(2), x]),
                                 new Product([new Constant(3), y])]);
 
+        lin.Prepare();
+
         double[] point = [1, 2];
         var grad = new double[2];
-        lin.AccumulateGradient(point, grad, 1.0);
+        lin.AccumulateGradient(point, grad);
 
         // Gradient should be [2, 3]
         Assert.AreEqual(2.0, grad[0], 1e-10, "Gradient wrt x should be 2");
@@ -747,9 +752,11 @@ public class ExpressionTests
         double[] point = [1, 2];
         Assert.AreEqual(8.0, expr.Evaluate(point), 1e-10);
 
+        expr.Prepare();
+
         // Verify gradient
         var grad = new double[2];
-        expr.AccumulateGradient(point, grad, 1.0);
+        expr.AccumulateGradient(point, grad);
         Assert.AreEqual(2.0, grad[0], 1e-10);
         Assert.AreEqual(3.0, grad[1], 1e-10);
     }
@@ -827,11 +834,13 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         var sum = new LinExpr([x, new Constant(2), y, new Constant(3), new Constant(5)]);
+        sum.Prepare();
+
         double[] point = [1.5, 2.5];
 
         // Compute gradient
         var grad = new double[2];
-        sum.AccumulateGradient(point, grad, 1.0);
+        sum.AccumulateGradient(point, grad);
 
         // Gradient should be [1, 1] (derivatives wrt x and y)
         Assert.AreEqual(1.0, grad[0], 1e-10, "Gradient wrt x should be 1");
@@ -1769,10 +1778,11 @@ public class ExpressionTests
 
         // Create 2 * x * y * 3 = 6 * x * y
         var prod = new Product([new Constant(2), x, y, new Constant(3)]);
+        prod.Prepare();
 
         double[] point = [5.0, 7.0];
         var grad = new double[2];
-        prod.AccumulateGradient(point, grad, 1.0);
+        prod.AccumulateGradient(point, grad);
 
         // d(6*x*y)/dx = 6*y = 6*7 = 42
         // d(6*x*y)/dy = 6*x = 6*5 = 30
@@ -2181,11 +2191,11 @@ internal class WrongGradientExpr : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
 
-    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
     {
-        // Correct would be: grad[_x.Index] += multiplier * 2 * x[_x.Index];
+        // Correct would be: compactGrad[varIndexToCompact[_x.Index]] += multiplier * 2 * x[_x.Index];
         // But we intentionally return wrong derivative:
-        grad[_x.Index] += multiplier * 3 * x[_x.Index]; // WRONG!
+        compactGrad[varIndexToCompact[_x.Index]] += multiplier * 3 * x[_x.Index]; // WRONG!
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
@@ -2224,9 +2234,9 @@ internal class WrongHessianExpr : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
 
-    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
     {
-        grad[_x.Index] += multiplier * 2 * x[_x.Index]; // Correct
+        compactGrad[varIndexToCompact[_x.Index]] += multiplier * 2 * x[_x.Index]; // Correct
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)

@@ -148,9 +148,9 @@ public sealed class Model : IDisposable
         }
 
         // Cache variables upfront to eliminate allocations during optimization
-        _objective.CacheVariables();
+        _objective.Prepare();
         foreach (var constraint in _constraints)
-            constraint.Expression.CacheVariables();
+            constraint.Expression.Prepare();
 
         // Analyze sparsity
         var (jacRows, jacCols) = AnalyzeJacobianSparsity();
@@ -295,9 +295,9 @@ public sealed class Model : IDisposable
         }
 
         // Clear cached variables to free memory after optimization
-        _objective.ClearCachedVariables();
+        _objective.Clear();
         foreach (var constraint in _constraints)
-            constraint.Expression.ClearCachedVariables();
+            constraint.Expression.Clear();
 
         return new ModelResult(status, solution, objValue, statistics);
     }
@@ -369,7 +369,7 @@ public sealed class Model : IDisposable
             var x = new ReadOnlySpan<double>(pX, n);
             var gradF = new Span<double>(pGradF, n);
             gradF.Clear();
-            _objective!.AccumulateGradient(x, gradF, 1.0);
+            _objective!.AccumulateGradient(x, gradF);
 
             for (int i = 0; i < n; i++)
                 if (!IsValidNumber(gradF[i]))
@@ -433,7 +433,7 @@ public sealed class Model : IDisposable
 
                 for (int row = 0; row < m; row++)
                 {
-                    _constraints[row].Expression.AccumulateGradient(x, gradSpan, 1.0);
+                    _constraints[row].Expression.AccumulateGradient(x, gradSpan);
 
                     foreach (var (col, idx) in rowToEntries[row])
                     {

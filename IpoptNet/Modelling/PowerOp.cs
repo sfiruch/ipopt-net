@@ -1,11 +1,10 @@
-using System.Buffers;
-
 namespace IpoptNet.Modelling;
 
 public sealed class PowerOp : Expr
 {
     public Expr Base { get; set; }
     public double Exponent { get; set; }
+    private double[]? _gradBuffer;
 
     public PowerOp(Expr @base, double exponent)
     {
@@ -15,12 +14,11 @@ public sealed class PowerOp : Expr
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(Base.Evaluate(x), Exponent);
 
-    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact)
     {
-        // d(b^n)/dx = n * b^(n-1) * db/dx
         var bVal = Base.Evaluate(x);
         var deriv = Exponent * Math.Pow(bVal, Exponent - 1);
-        Base.AccumulateGradient(x, grad, multiplier * deriv);
+        Base.AccumulateGradientCompact(x, compactGrad, multiplier * deriv, varIndexToCompact);
     }
 
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
@@ -31,20 +29,20 @@ public sealed class PowerOp : Expr
         var secondDerivCoeff = Exponent * (Exponent - 1) * Math.Pow(bVal, Exponent - 2);
         Base.AccumulateHessian(x, hess, multiplier * firstDerivCoeff);
 
-        var n = x.Length;
-        var gradB = ArrayPool<double>.Shared.Rent(n);
+        // Outer product of gradient with itself using compact gradient
+        var coeff = multiplier * secondDerivCoeff;
+        if (Math.Abs(coeff) < 1e-18) return;
 
-        var vars = Base._cachedVariables!;
+        Array.Clear(_gradBuffer!);
+        Base.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Base._varIndexToCompact!);
 
-        if (vars.Count < n / 32)
-            foreach (var v in vars) gradB[v.Index] = 0;
-        else
-            Array.Clear(gradB);
-
-        Base.AccumulateGradient(x, gradB, 1.0);
-        AccumulateOuterHessian(x, hess, multiplier * secondDerivCoeff, vars, gradB);
-
-        ArrayPool<double>.Shared.Return(gradB);
+        var sorted = Base._sortedVarIndices!;
+        for (int i = 0; i < sorted.Length; i++)
+        {
+            var gI = _gradBuffer![i];
+            for (int j = 0; j <= i; j++)
+                hess.Add(sorted[i], sorted[j], coeff * gI * _gradBuffer[j]);
+        }
     }
 
     protected override void CollectVariablesCore(HashSet<Variable> variables) => Base.CollectVariables(variables);
@@ -80,14 +78,16 @@ public sealed class PowerOp : Expr
 
     protected override Expr CloneCore() => new PowerOp(Base, Exponent);
 
-    protected override void CacheVariablesForChildren()
+    protected override void PrepareChildren()
     {
-        Base.CacheVariables();
+        Base.Prepare();
+        _gradBuffer = new double[Base._cachedVariables!.Count];
     }
 
-    protected override void ClearCachedVariablesForChildren()
+    protected override void ClearChildren()
     {
-        Base.ClearCachedVariables();
+        Base.Clear();
+        _gradBuffer = null;
     }
 
     protected override void PrintCore(TextWriter writer, string indent)

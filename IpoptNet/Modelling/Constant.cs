@@ -7,7 +7,7 @@ public sealed class Constant : Expr
     public Constant(double value) => Value = value;
 
     protected override double EvaluateCore(ReadOnlySpan<double> x) => Value;
-    protected override void AccumulateGradientCore(ReadOnlySpan<double> x, Span<double> grad, double multiplier) { }
+    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, Dictionary<int, int> varIndexToCompact) { }
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) { }
     protected override void CollectVariablesCore(HashSet<Variable> variables) { }
     protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries) { }
