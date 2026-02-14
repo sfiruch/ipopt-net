@@ -69,18 +69,8 @@ public class LinExpr : Expr
                 }
                 else
                 {
-                    // Multiple factors - keep as Product but account for Factor
-                    if (Math.Abs(prod.Factor - 1.0) < 1e-15)
-                    {
-                        nonConstantTerms.Add(term);
-                        weights.Add(1.0);
-                    }
-                    else
-                    {
-                        // Need to keep the Product with its Factor
-                        nonConstantTerms.Add(term);
-                        weights.Add(1.0);
-                    }
+                    nonConstantTerms.Add(term);
+                    weights.Add(1.0);
                 }
             }
             else
@@ -98,14 +88,12 @@ public class LinExpr : Expr
     private static void ProcessTerm(Expr term, double weight, ref double constantSum, List<Expr> nonConstantTerms, List<double> weights)
     {
         // Skip terms with zero weight
-        if (Math.Abs(weight) < 1e-15)
+        if (weight == 0)
             return;
 
         // Handle nested structures
         if (term is Constant c)
-        {
             constantSum += weight * c.Value;
-        }
         else if (term is Negation neg)
         {
             // Negate weight and continue
@@ -118,24 +106,17 @@ public class LinExpr : Expr
             for (int i = 0; i < lin.Terms.Count; i++)
             {
                 var scaledWeight = weight * lin.Weights[i];
-                if (Math.Abs(scaledWeight) >= 1e-15)
-                {
-                    nonConstantTerms.Add(lin.Terms[i]);
-                    weights.Add(scaledWeight);
-                }
+                nonConstantTerms.Add(lin.Terms[i]);
+                weights.Add(scaledWeight);
             }
         }
         else if (term is Product prod)
         {
             // Product now extracts Constants into Factor field
             if (prod.Factors.Count == 1)
-            {
                 ProcessTerm(prod.Factors[0], weight * prod.Factor, ref constantSum, nonConstantTerms, weights);
-            }
             else if (prod.Factors.Count == 0)
-            {
                 constantSum += weight * prod.Factor;
-            }
             else
             {
                 // Multiple factors - keep as Product

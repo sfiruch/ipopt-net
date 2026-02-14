@@ -61,9 +61,6 @@ public class QuadExpr : Expr
                     var linTerm = lin.Terms[i];
                     var linWeight = lin.Weights[i];
 
-                    if (Math.Abs(linWeight) < 1e-15)
-                        continue;
-
                     // Check if this term is actually quadratic (shouldn't be in LinExpr!)
                     if (linTerm is Product prod)
                     {
@@ -94,9 +91,6 @@ public class QuadExpr : Expr
                     var quadLinTerm = quad.LinearTerms[i];
                     var quadLinWeight = quad.LinearWeights[i];
 
-                    if (Math.Abs(quadLinWeight) < 1e-15)
-                        continue;
-
                     // Check if this linear term is actually quadratic (shouldn't be, but might be from old code)
                     if (quadLinTerm is Product prod)
                     {
@@ -117,12 +111,9 @@ public class QuadExpr : Expr
                 for (int i = 0; i < quad.QuadraticTerms1.Count; i++)
                 {
                     var quadWeight = quad.QuadraticWeights[i];
-                    if (Math.Abs(quadWeight) >= 1e-15)
-                    {
-                        quadTerms1.Add(quad.QuadraticTerms1[i]);
-                        quadTerms2.Add(quad.QuadraticTerms2[i]);
-                        quadWeights.Add(quadWeight);
-                    }
+                    quadTerms1.Add(quad.QuadraticTerms1[i]);
+                    quadTerms2.Add(quad.QuadraticTerms2[i]);
+                    quadWeights.Add(quadWeight);
                 }
             }
             else if (term is Product prod)
@@ -146,12 +137,9 @@ public class QuadExpr : Expr
                             double weight = linBase.Weights[i] * linBase.Weights[j];
                             if (i != j) weight *= 2.0; // Cross terms appear twice
 
-                            if (Math.Abs(weight) >= 1e-15)
-                            {
-                                quadTerms1.Add(linBase.Terms[i]);
-                                quadTerms2.Add(linBase.Terms[j]);
-                                quadWeights.Add(weight);
-                            }
+                            quadTerms1.Add(linBase.Terms[i]);
+                            quadTerms2.Add(linBase.Terms[j]);
+                            quadWeights.Add(weight);
                         }
                     }
 
@@ -161,11 +149,8 @@ public class QuadExpr : Expr
                         for (int i = 0; i < linBase.Terms.Count; i++)
                         {
                             var linearWeight = 2.0 * linBase.ConstantTerm * linBase.Weights[i];
-                            if (Math.Abs(linearWeight) >= 1e-15)
-                            {
-                                linearTerms.Add(linBase.Terms[i]);
-                                linearWeights.Add(linearWeight);
-                            }
+                            linearTerms.Add(linBase.Terms[i]);
+                            linearWeights.Add(linearWeight);
                         }
                     }
 
@@ -201,17 +186,13 @@ public class QuadExpr : Expr
         List<Expr> quadTerms1, List<Expr> quadTerms2, List<double> quadWeights)
     {
         // Skip terms with zero weight
-        if (Math.Abs(weight) < 1e-15)
+        if (weight == 0)
             return;
 
         if (term is Constant c)
-        {
             constantSum += weight * c.Value;
-        }
         else if (term is Negation neg)
-        {
             ProcessTerm(neg.Operand, -weight, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
-        }
         else if (term is LinExpr lin)
         {
             constantSum += weight * lin.ConstantTerm;
@@ -220,9 +201,6 @@ public class QuadExpr : Expr
                 // Don't just copy - recursively process each term in case it's a Product
                 var linTerm = lin.Terms[i];
                 var scaledWeight = weight * lin.Weights[i];
-
-                if (Math.Abs(scaledWeight) < 1e-15)
-                    continue;
 
                 if (linTerm is Product prod)
                 {
@@ -250,13 +228,8 @@ public class QuadExpr : Expr
                 var quadLinTerm = quad.LinearTerms[i];
                 var scaledWeight = weight * quad.LinearWeights[i];
 
-                if (Math.Abs(scaledWeight) < 1e-15)
-                    continue;
-
                 if (quadLinTerm is Product prod)
-                {
                     ProcessProduct(prod, scaledWeight, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
-                }
                 else if (quadLinTerm is PowerOp { Exponent: 2 } pow)
                 {
                     quadTerms1.Add(pow.Base);
@@ -272,12 +245,9 @@ public class QuadExpr : Expr
             for (int i = 0; i < quad.QuadraticTerms1.Count; i++)
             {
                 var scaledWeight = weight * quad.QuadraticWeights[i];
-                if (Math.Abs(scaledWeight) >= 1e-15)
-                {
-                    quadTerms1.Add(quad.QuadraticTerms1[i]);
-                    quadTerms2.Add(quad.QuadraticTerms2[i]);
-                    quadWeights.Add(scaledWeight);
-                }
+                quadTerms1.Add(quad.QuadraticTerms1[i]);
+                quadTerms2.Add(quad.QuadraticTerms2[i]);
+                quadWeights.Add(scaledWeight);
             }
         }
         else if (term is Product prod)
@@ -301,28 +271,19 @@ public class QuadExpr : Expr
                         double termWeight = weight * linBase.Weights[i] * linBase.Weights[j];
                         if (i != j) termWeight *= 2.0; // Cross terms appear twice
 
-                        if (Math.Abs(termWeight) >= 1e-15)
-                        {
-                            quadTerms1.Add(linBase.Terms[i]);
-                            quadTerms2.Add(linBase.Terms[j]);
-                            quadWeights.Add(termWeight);
-                        }
+                        quadTerms1.Add(linBase.Terms[i]);
+                        quadTerms2.Add(linBase.Terms[j]);
+                        quadWeights.Add(termWeight);
                     }
                 }
 
                 // Linear terms from 2 * c * sum(ai*ti)
                 if (linBase.ConstantTerm != 0.0)
-                {
                     for (int i = 0; i < linBase.Terms.Count; i++)
                     {
-                        var linearWeight = weight * 2.0 * linBase.ConstantTerm * linBase.Weights[i];
-                        if (Math.Abs(linearWeight) >= 1e-15)
-                        {
-                            linearTerms.Add(linBase.Terms[i]);
-                            linearWeights.Add(linearWeight);
-                        }
+                        linearTerms.Add(linBase.Terms[i]);
+                        linearWeights.Add((double)(weight * 2.0 * linBase.ConstantTerm * linBase.Weights[i]));
                     }
-                }
 
                 // Constant term: c^2
                 constantSum += weight * linBase.ConstantTerm * linBase.ConstantTerm;
@@ -349,22 +310,19 @@ public class QuadExpr : Expr
         // Product now stores constants in Factor field
         var productWeight = weight * prod.Factor;
 
-        // Skip products with zero weight
-        if (Math.Abs(productWeight) < 1e-15)
+        if (productWeight == 0)
             return;
 
-        var nonConstants = prod.Factors; // No need to filter - all Constants are in Factor
-
         // Handle based on number of non-constant factors
-        if (nonConstants.Count == 0)
+        if (prod.Factors.Count == 0)
         {
             // All constants
             constantSum += productWeight;
         }
-        else if (nonConstants.Count == 1)
+        else if (prod.Factors.Count == 1)
         {
             // Linear term: c * expr
-            var expr = nonConstants[0];
+            var expr = prod.Factors[0];
             if (expr is PowerOp { Exponent: 2 } pow)
             {
                 // c * x^2
@@ -377,11 +335,11 @@ public class QuadExpr : Expr
                 ProcessTerm(expr, productWeight, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
             }
         }
-        else if (nonConstants.Count == 2)
+        else if (prod.Factors.Count == 2)
         {
             // Bilinear or quadratic term: c * expr1 * expr2
-            var expr1 = nonConstants[0];
-            var expr2 = nonConstants[1];
+            var expr1 = prod.Factors[0];
+            var expr2 = prod.Factors[1];
 
             // Check for x^2 represented as x*x
             if (expr1 is Variable v1 && expr2 is Variable v2 && v1.Index == v2.Index)
@@ -403,40 +361,28 @@ public class QuadExpr : Expr
                 for (int i = 0; i < lin1.Terms.Count; i++)
                 {
                     var termWeight = productWeight * lin1.Weights[i] * lin2.ConstantTerm;
-                    if (Math.Abs(termWeight) >= 1e-15)
-                    {
-                        // Don't just add the term - process it in case it's a Product
-                        ProcessTerm(lin1.Terms[i], termWeight,
-                            ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
-                    }
+                    // Don't just add the term - process it in case it's a Product
+                    ProcessTerm(lin1.Terms[i], termWeight,
+                        ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
                 }
 
                 // Linear terms from second LinExpr * constant from first
                 for (int j = 0; j < lin2.Terms.Count; j++)
                 {
                     var termWeight = productWeight * lin2.Weights[j] * lin1.ConstantTerm;
-                    if (Math.Abs(termWeight) >= 1e-15)
-                    {
-                        // Don't just add the term - process it in case it's a Product
-                        ProcessTerm(lin2.Terms[j], termWeight,
-                            ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
-                    }
+                    // Don't just add the term - process it in case it's a Product
+                    ProcessTerm(lin2.Terms[j], termWeight,
+                        ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
                 }
 
                 // Quadratic cross terms
                 for (int i = 0; i < lin1.Terms.Count; i++)
-                {
                     for (int j = 0; j < lin2.Terms.Count; j++)
                     {
-                        var crossWeight = productWeight * lin1.Weights[i] * lin2.Weights[j];
-                        if (Math.Abs(crossWeight) >= 1e-15)
-                        {
-                            quadTerms1.Add(lin1.Terms[i]);
-                            quadTerms2.Add(lin2.Terms[j]);
-                            quadWeights.Add(crossWeight);
-                        }
+                        quadTerms1.Add(lin1.Terms[i]);
+                        quadTerms2.Add(lin2.Terms[j]);
+                        quadWeights.Add((double)(productWeight * lin1.Weights[i] * lin2.Weights[j]));
                     }
-                }
             }
             // Expand LinExpr * other
             else if (expr1 is LinExpr lin)
@@ -444,13 +390,7 @@ public class QuadExpr : Expr
                 // (Σ a_i * x_i + c) * y = Σ (a_i * x_i * y) + c * y
                 // Add c * y as a linear or quadratic term depending on y
                 if (lin.ConstantTerm != 0.0)
-                {
-                    var termWeight = productWeight * lin.ConstantTerm;
-                    if (Math.Abs(termWeight) >= 1e-15)
-                    {
-                        ProcessTerm(expr2, termWeight, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
-                    }
-                }
+                    ProcessTerm(expr2, (double)(productWeight * lin.ConstantTerm), ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
 
                 for (int i = 0; i < lin.Terms.Count; i++)
                 {
@@ -458,9 +398,6 @@ public class QuadExpr : Expr
                     // so we need to check
                     var linTerm = lin.Terms[i];
                     var linWeight = lin.Weights[i];
-
-                    if (Math.Abs(linWeight) < 1e-15)
-                        continue;
 
                     if (linTerm is Product nestedProd)
                     {
@@ -478,38 +415,27 @@ public class QuadExpr : Expr
                         // Now multiply each result by expr2
                         for (int k = 0; k < tempLinTerms.Count; k++)
                         {
-                            var bilinearWeight = productWeight * tempLinWeights[k];
-                            if (Math.Abs(bilinearWeight) >= 1e-15)
-                            {
-                                quadTerms1.Add(tempLinTerms[k]);
-                                quadTerms2.Add(expr2);
-                                quadWeights.Add(bilinearWeight);
-                            }
+                            quadTerms1.Add(tempLinTerms[k]);
+                            quadTerms2.Add(expr2);
+                            quadWeights.Add(productWeight * tempLinWeights[k]);
                         }
                         // Quadratic terms from the nested product can't be multiplied by expr2
                         // (that would be cubic), so just add them scaled
                         for (int k = 0; k < tempQuadTerms1.Count; k++)
                         {
-                            if (Math.Abs(tempQuadWeights[k]) >= 1e-15)
-                            {
-                                // This creates a higher-order term - can't represent in QuadExpr
-                                // Add back as a Product
-                                var higherOrder = new Product([new Constant(tempQuadWeights[k]), tempQuadTerms1[k], tempQuadTerms2[k], expr2]);
-                                linearTerms.Add(higherOrder);
-                                linearWeights.Add(productWeight);
-                            }
+                            // This creates a higher-order term - can't represent in QuadExpr
+                            // Add back as a Product
+                            var higherOrder = new Product([new Constant(tempQuadWeights[k]), tempQuadTerms1[k], tempQuadTerms2[k], expr2]);
+                            linearTerms.Add(higherOrder);
+                            linearWeights.Add(productWeight);
                         }
                     }
                     else
                     {
                         // Normal case: linear term * expr2
-                        var bilinearWeight = productWeight * linWeight;
-                        if (Math.Abs(bilinearWeight) >= 1e-15)
-                        {
-                            quadTerms1.Add(linTerm);
-                            quadTerms2.Add(expr2);
-                            quadWeights.Add(bilinearWeight);
-                        }
+                        quadTerms1.Add(linTerm);
+                        quadTerms2.Add(expr2);
+                        quadWeights.Add(productWeight * linWeight);
                     }
                 }
             }
@@ -517,22 +443,13 @@ public class QuadExpr : Expr
             else if (expr2 is LinExpr linRight)
             {
                 if (linRight.ConstantTerm != 0.0)
-                {
-                    var termWeight = productWeight * linRight.ConstantTerm;
-                    if (Math.Abs(termWeight) >= 1e-15)
-                    {
-                        ProcessTerm(expr1, termWeight, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
-                    }
-                }
+                    ProcessTerm(expr1, productWeight * linRight.ConstantTerm, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
 
                 for (int i = 0; i < linRight.Terms.Count; i++)
                 {
                     // Same as above - check if the term is a Product
                     var linTerm = linRight.Terms[i];
                     var linWeight = linRight.Weights[i];
-
-                    if (Math.Abs(linWeight) < 1e-15)
-                        continue;
 
                     if (linTerm is Product nestedProd)
                     {
@@ -548,34 +465,22 @@ public class QuadExpr : Expr
 
                         for (int k = 0; k < tempLinTerms.Count; k++)
                         {
-                            var bilinearWeight = productWeight * tempLinWeights[k];
-                            if (Math.Abs(bilinearWeight) >= 1e-15)
-                            {
-                                quadTerms1.Add(expr1);
-                                quadTerms2.Add(tempLinTerms[k]);
-                                quadWeights.Add(bilinearWeight);
-                            }
+                            quadTerms1.Add(expr1);
+                            quadTerms2.Add(tempLinTerms[k]);
+                            quadWeights.Add(productWeight * tempLinWeights[k]);
                         }
                         // Higher-order terms
                         for (int k = 0; k < tempQuadTerms1.Count; k++)
                         {
-                            if (Math.Abs(tempQuadWeights[k]) >= 1e-15)
-                            {
-                                var higherOrder = new Product([new Constant(tempQuadWeights[k]), expr1, tempQuadTerms1[k], tempQuadTerms2[k]]);
-                                linearTerms.Add(higherOrder);
-                                linearWeights.Add(productWeight);
-                            }
+                            linearTerms.Add(new Product([new Constant(tempQuadWeights[k]), expr1, tempQuadTerms1[k], tempQuadTerms2[k]]));
+                            linearWeights.Add(productWeight);
                         }
                     }
                     else
                     {
-                        var bilinearWeight = productWeight * linWeight;
-                        if (Math.Abs(bilinearWeight) >= 1e-15)
-                        {
-                            quadTerms1.Add(expr1);
-                            quadTerms2.Add(linTerm);
-                            quadWeights.Add(bilinearWeight);
-                        }
+                        quadTerms1.Add(expr1);
+                        quadTerms2.Add(linTerm);
+                        quadWeights.Add(productWeight * linWeight);
                     }
                 }
             }
@@ -591,9 +496,9 @@ public class QuadExpr : Expr
         {
             // 3+ non-constant factors: this is higher than quadratic
             // Reconstruct the product and add as linear term (will fail IsAtMostQuadratic check later)
-            var reconstructed = nonConstants.Count == prod.Factors.Count
+            var reconstructed = prod.Factors.Count == prod.Factors.Count
                 ? (Expr)prod
-                : new Product([new Constant(productWeight / weight), .. nonConstants]);
+                : new Product([new Constant(productWeight / weight), .. prod.Factors]);
             linearTerms.Add(reconstructed);
             linearWeights.Add(weight);
         }

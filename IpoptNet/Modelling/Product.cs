@@ -90,28 +90,21 @@ public sealed class Product : Expr
 
         // Accumulate Hessian from each factor's second derivative
         for (int k = 0; k < Factors.Count; k++)
-        {
-            var otherProduct = _excludingFactor![k];
-            if (Math.Abs(otherProduct) > 1e-18)
-                Factors[k].AccumulateHessian(x, hess, scaledMultiplier * otherProduct);
-        }
+            Factors[k].AccumulateHessian(x, hess, scaledMultiplier * _excludingFactor![k]);
 
         // Add cross terms between pairs of factors
         for (int k = 0; k + 1 < Factors.Count; k++)
         {
-            if (Factors[k].IsConstantWrtX()) continue;
+            if (Factors[k].IsConstantWrtX()) 
+                continue;
 
             for (int m = k + 1; m < Factors.Count; m++)
             {
-                if (Factors[m].IsConstantWrtX()) continue;
+                if (Factors[m].IsConstantWrtX())
+                    continue;
 
-                var otherProduct = _excludingFactor![k] / _factorValues![m];
-                if (Math.Abs(otherProduct) > 1e-18)
-                {
-                    var coeff = scaledMultiplier * otherProduct;
-                    AddCrossTermCompact(hess, _factorGradBuffers![k], _factorGradBuffers[m],
-                        Factors[k]._sortedVarIndices!, Factors[m]._sortedVarIndices!, coeff);
-                }
+                AddCrossTermCompact(hess, _factorGradBuffers![k], _factorGradBuffers[m],
+                    Factors[k]._sortedVarIndices!, Factors[m]._sortedVarIndices!, (double)(scaledMultiplier * (double)(_excludingFactor![k] / _factorValues![m])));
             }
         }
     }

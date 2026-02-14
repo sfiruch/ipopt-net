@@ -22,7 +22,6 @@ public sealed class Exp : Expr
         Argument.AccumulateHessian(x, hess, multiplier * expVal);
 
         var coeff = multiplier * expVal;
-        if (Math.Abs(coeff) < 1e-18) return;
 
         Array.Clear(_gradBuffer!);
         Argument.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Argument._sortedVarIndices!);

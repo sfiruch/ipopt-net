@@ -21,7 +21,6 @@ public sealed class Cos : Expr
         Argument.AccumulateHessian(x, hess, multiplier * -Math.Sin(arg));
 
         var coeff = multiplier * -Math.Cos(arg);
-        if (Math.Abs(coeff) < 1e-18) return;
 
         Array.Clear(_gradBuffer!);
         Argument.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Argument._sortedVarIndices!);

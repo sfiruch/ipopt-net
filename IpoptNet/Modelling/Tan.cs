@@ -24,7 +24,6 @@ public sealed class Tan : Expr
 
         var secondDeriv = 2 * Math.Tan(arg) / (cos * cos);
         var coeff = multiplier * secondDeriv;
-        if (Math.Abs(coeff) < 1e-18) return;
 
         Array.Clear(_gradBuffer!);
         Argument.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Argument._sortedVarIndices!);

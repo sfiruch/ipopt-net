@@ -41,8 +41,6 @@ public sealed class Division : Expr
         var r2 = rVal * rVal;
         var r3 = r2 * rVal;
 
-        if (Math.Abs(multiplier) < 1e-18) return;
-
         Left.AccumulateHessian(x, hess, multiplier / rVal);
         Right.AccumulateHessian(x, hess, -multiplier * lVal / r2);
 
@@ -54,47 +52,39 @@ public sealed class Division : Expr
 
         // Add 2lr'²/r³ (outer product of r' with itself)
         var coeffR = multiplier * 2 * lVal / r3;
-        if (Math.Abs(coeffR) > 1e-18)
+        var sortedR = Right._sortedVarIndices!;
+        for (int i = 0; i < sortedR.Length; i++)
         {
-            var sortedR = Right._sortedVarIndices!;
-            for (int i = 0; i < sortedR.Length; i++)
-            {
-                var gI = _gradRBuffer![i];
-                for (int j = 0; j <= i; j++)
-                    hess.Add(sortedR[i], sortedR[j], coeffR * gI * _gradRBuffer[j]);
-            }
+            var gI = _gradRBuffer![i];
+            for (int j = 0; j <= i; j++)
+                hess.Add(sortedR[i], sortedR[j], coeffR * gI * _gradRBuffer[j]);
         }
 
         // Add -(l'r' + r'l')/r² (cross terms between l' and r')
         var coeffCross = -multiplier / r2;
-        if (Math.Abs(coeffCross) > 1e-18)
+        // Iterate over pre-computed merged variable list (lower triangle only)
+        for (int i = 0; i < _allVarsSorted!.Length; i++)
         {
-            // Iterate over pre-computed merged variable list (lower triangle only)
-            for (int i = 0; i < _allVarsSorted!.Length; i++)
+            var varI = _allVarsSorted[i];
+            var lIdxI = _lIndices![i];
+            var rIdxI = _rIndices![i];
+
+            // Get gradients at varI
+            var gLi = lIdxI >= 0 ? _gradLBuffer![lIdxI] : 0.0;
+            var gRi = rIdxI >= 0 ? _gradRBuffer![rIdxI] : 0.0;
+
+            for (int j = 0; j <= i; j++)
             {
-                var varI = _allVarsSorted[i];
-                var lIdxI = _lIndices![i];
-                var rIdxI = _rIndices![i];
+                var varJ = _allVarsSorted[j];
+                var lIdxJ = _lIndices[j];
+                var rIdxJ = _rIndices[j];
 
-                // Get gradients at varI
-                var gLi = lIdxI >= 0 ? _gradLBuffer![lIdxI] : 0.0;
-                var gRi = rIdxI >= 0 ? _gradRBuffer![rIdxI] : 0.0;
+                // Get gradients at varJ
+                var gLj = lIdxJ >= 0 ? _gradLBuffer![lIdxJ] : 0.0;
+                var gRj = rIdxJ >= 0 ? _gradRBuffer![rIdxJ] : 0.0;
 
-                for (int j = 0; j <= i; j++)
-                {
-                    var varJ = _allVarsSorted[j];
-                    var lIdxJ = _lIndices[j];
-                    var rIdxJ = _rIndices[j];
-
-                    // Get gradients at varJ
-                    var gLj = lIdxJ >= 0 ? _gradLBuffer![lIdxJ] : 0.0;
-                    var gRj = rIdxJ >= 0 ? _gradRBuffer![rIdxJ] : 0.0;
-
-                    // Add both terms of -(∂L/∂i * ∂R/∂j + ∂R/∂i * ∂L/∂j) / R²
-                    var contrib = coeffCross * (gLi * gRj + gRi * gLj);
-                    if (Math.Abs(contrib) > 1e-18)
-                        hess.Add(varI, varJ, contrib);
-                }
+                // Add both terms of -(∂L/∂i * ∂R/∂j + ∂R/∂i * ∂L/∂j) / R²
+                hess.Add(varI, varJ, coeffCross * (gLi * gRj + gRi * gLj));
             }
         }
     }

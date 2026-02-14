@@ -72,7 +72,7 @@ public sealed class Model : IDisposable
         {
             var v = _variables[i];
             var bounds = "";
-            if (Math.Abs(v.LowerBound - v.UpperBound) < 1e-15)
+            if (v.LowerBound == v.UpperBound)
                 bounds = $" == {v.LowerBound}";
             else if (v.LowerBound > double.NegativeInfinity && v.UpperBound < double.PositiveInfinity)
                 bounds = $" in [{v.LowerBound}, {v.UpperBound}]";
@@ -98,7 +98,7 @@ public sealed class Model : IDisposable
         {
             var c = _constraints[i];
             var boundsStr = "";
-            if (Math.Abs(c.LowerBound - c.UpperBound) < 1e-15)
+            if (c.LowerBound == c.UpperBound)
                 boundsStr = $" == {c.LowerBound}";
             else if (c.LowerBound > double.NegativeInfinity && c.UpperBound < double.PositiveInfinity)
                 boundsStr = $" in [{c.LowerBound}, {c.UpperBound}]";
@@ -206,23 +206,17 @@ public sealed class Model : IDisposable
 
         // Auto-enable grad_f_constant if objective has constant gradients and user hasn't explicitly set it
         if (Options.GradFConstant is null && _objective.IsLinear())
-        {
             solver.SetOption("grad_f_constant", "yes");
-        }
 
         // Auto-enable jac_c_constant if all equality constraints have constant Jacobians
         var equalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) < 1e-15).ToList();
         if (Options.JacCConstant is null && equalityConstraints.All(c => c.Expression.IsLinear()))
-        {
             solver.SetOption("jac_c_constant", "yes");
-        }
 
         // Auto-enable jac_d_constant if all inequality constraints have constant Jacobians
         var inequalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) >= 1e-15).ToList();
         if (Options.JacDConstant is null && inequalityConstraints.All(c => c.Expression.IsLinear()))
-        {
             solver.SetOption("jac_d_constant", "yes");
-        }
 
         // Auto-enable hessian_constant if objective and all constraints are at most quadratic
         if (Options.HessianConstant is null && !useLimitedMemory &&
@@ -471,13 +465,11 @@ public sealed class Model : IDisposable
                 hess.Clear();
 
                 // Objective contribution
-                if (Math.Abs(objFactor) > 1e-15)
-                    _objective!.AccumulateHessian(x, hess, objFactor);
+                _objective!.AccumulateHessian(x, hess, objFactor);
 
                 // Constraint contributions
                 for (int row = 0; row < m; row++)
-                    if (Math.Abs(lambda[row]) > 1e-15)
-                        _constraints[row].Expression.AccumulateHessian(x, hess, lambda[row]);
+                    _constraints[row].Expression.AccumulateHessian(x, hess, lambda[row]);
 
                 // Copy to values array
                 var values = new Span<double>(pValues, neleHess);
