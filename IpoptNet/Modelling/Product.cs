@@ -188,9 +188,10 @@ public sealed class Product : Expr
 
     protected override Expr CloneCore()
     {
-        var clone = new Product([.. Factors]);
-        clone.Factor = Factor;
-        return clone;
+        return new Product([.. Factors])
+        {
+            Factor = Factor
+        };
     }
 
     protected override void PrepareChildren()

@@ -593,9 +593,7 @@ public class QuadExpr : Expr
         for (int i = 0; i < QuadraticTerms1.Count; i++)
         {
             if (QuadraticTerms1[i] is Variable v1 && QuadraticTerms2[i] is Variable v2)
-            {
                 AddSparsityEntry(entries, v1.Index, v2.Index);
-            }
             else
             {
                 QuadraticTerms1[i].CollectHessianSparsity(entries);
@@ -617,14 +615,15 @@ public class QuadExpr : Expr
 
     protected override Expr CloneCore()
     {
-        var clone = new QuadExpr();
-        clone.LinearTerms = [.. LinearTerms];
-        clone.LinearWeights = [.. LinearWeights];
-        clone.QuadraticTerms1 = [.. QuadraticTerms1];
-        clone.QuadraticTerms2 = [.. QuadraticTerms2];
-        clone.QuadraticWeights = [.. QuadraticWeights];
-        clone.ConstantTerm = ConstantTerm;
-        return clone;
+        return new QuadExpr()
+        {
+            LinearTerms = [.. LinearTerms],
+            LinearWeights = [.. LinearWeights],
+            QuadraticTerms1 = [.. QuadraticTerms1],
+            QuadraticTerms2 = [.. QuadraticTerms2],
+            QuadraticWeights = [.. QuadraticWeights],
+            ConstantTerm = ConstantTerm
+        };
     }
 
     protected override void PrepareChildren()

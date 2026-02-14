@@ -169,10 +169,11 @@ public class LinExpr : Expr
 
     protected override Expr CloneCore()
     {
-        var clone = new LinExpr([.. Terms]);
-        clone.Weights = [.. Weights];
-        clone.ConstantTerm = ConstantTerm;
-        return clone;
+        return new LinExpr([.. Terms])
+        {
+            Weights = [.. Weights],
+            ConstantTerm = ConstantTerm
+        };
     }
 
     protected override void PrepareChildren()

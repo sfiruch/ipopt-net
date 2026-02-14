@@ -151,16 +151,18 @@ public abstract class Expr
         // If left operand is already a Product, extend it with the right operand
         if (a is Product prodA)
         {
-            var result = new Product([.. prodA.Factors, b]);
-            result.Factor = prodA.Factor;
-            return result;
+            return new Product([.. prodA.Factors, b])
+            {
+                Factor = prodA.Factor
+            };
         }
         // If right operand is a Product, prepend the left operand to it
         else if (b is Product prodB)
         {
-            var result = new Product([a, .. prodB.Factors]);
-            result.Factor = prodB.Factor;
-            return result;
+            return new Product([a, .. prodB.Factors])
+            {
+                Factor = prodB.Factor
+            };
         }
         else if (ReferenceEquals(a, b))
         {
@@ -247,28 +249,31 @@ public abstract class Expr
 
         if (a is LinExpr linA)
         {
-            var result = new LinExpr();
-            result.Terms = [.. linA.Terms];
-            result.Weights = linA.Weights.Select(w => w * b).ToList();
-            result.ConstantTerm = linA.ConstantTerm * b;
-            return result;
+            return new LinExpr()
+            {
+                Terms = [.. linA.Terms],
+                Weights = linA.Weights.Select(w => w * b).ToList(),
+                ConstantTerm = linA.ConstantTerm * b
+            };
         }
         if (a is QuadExpr quadA)
         {
-            var result = new QuadExpr();
-            result.LinearTerms = [.. quadA.LinearTerms];
-            result.LinearWeights = quadA.LinearWeights.Select(w => w * b).ToList();
-            result.QuadraticTerms1 = [.. quadA.QuadraticTerms1];
-            result.QuadraticTerms2 = [.. quadA.QuadraticTerms2];
-            result.QuadraticWeights = quadA.QuadraticWeights.Select(w => w * b).ToList();
-            result.ConstantTerm = quadA.ConstantTerm * b;
-            return result;
+            return new QuadExpr()
+            {
+                LinearTerms = [.. quadA.LinearTerms],
+                LinearWeights = quadA.LinearWeights.Select(w => w * b).ToList(),
+                QuadraticTerms1 = [.. quadA.QuadraticTerms1],
+                QuadraticTerms2 = [.. quadA.QuadraticTerms2],
+                QuadraticWeights = quadA.QuadraticWeights.Select(w => w * b).ToList(),
+                ConstantTerm = quadA.ConstantTerm * b
+            };
         }
         if (a is Product prodA)
         {
-            var result = new Product([.. prodA.Factors]);
-            result.Factor = prodA.Factor * b;
-            return result;
+            return new Product([.. prodA.Factors])
+            {
+                Factor = prodA.Factor * b
+            };
         }
         return new Product([a, new Constant(b)]);
     }
@@ -281,28 +286,31 @@ public abstract class Expr
 
         if (b is LinExpr linB)
         {
-            var result = new LinExpr();
-            result.Terms = [.. linB.Terms];
-            result.Weights = linB.Weights.Select(w => w * a).ToList();
-            result.ConstantTerm = linB.ConstantTerm * a;
-            return result;
+            return new LinExpr()
+            {
+                Terms = [.. linB.Terms],
+                Weights = linB.Weights.Select(w => w * a).ToList(),
+                ConstantTerm = linB.ConstantTerm * a
+            };
         }
         if (b is QuadExpr quadB)
         {
-            var result = new QuadExpr();
-            result.LinearTerms = [.. quadB.LinearTerms];
-            result.LinearWeights = quadB.LinearWeights.Select(w => w * a).ToList();
-            result.QuadraticTerms1 = [.. quadB.QuadraticTerms1];
-            result.QuadraticTerms2 = [.. quadB.QuadraticTerms2];
-            result.QuadraticWeights = quadB.QuadraticWeights.Select(w => w * a).ToList();
-            result.ConstantTerm = quadB.ConstantTerm * a;
-            return result;
+            return new QuadExpr()
+            {
+                LinearTerms = [.. quadB.LinearTerms],
+                LinearWeights = quadB.LinearWeights.Select(w => w * a).ToList(),
+                QuadraticTerms1 = [.. quadB.QuadraticTerms1],
+                QuadraticTerms2 = [.. quadB.QuadraticTerms2],
+                QuadraticWeights = quadB.QuadraticWeights.Select(w => w * a).ToList(),
+                ConstantTerm = quadB.ConstantTerm * a
+            };
         }
         if (b is Product prodB)
         {
-            var result = new Product([.. prodB.Factors]);
-            result.Factor = prodB.Factor * a;
-            return result;
+            return new Product([.. prodB.Factors])
+            {
+                Factor = prodB.Factor * a
+            };
         }
         return new Product([new Constant(a), b]);
     }
@@ -314,22 +322,24 @@ public abstract class Expr
 
         if (a is LinExpr linA)
         {
-            var result = new LinExpr();
-            result.Terms = [.. linA.Terms];
-            result.Weights = linA.Weights.Select(w => w / b).ToList();
-            result.ConstantTerm = linA.ConstantTerm / b;
-            return result;
+            return new LinExpr()
+            {
+                Terms = [.. linA.Terms],
+                Weights = linA.Weights.Select(w => w / b).ToList(),
+                ConstantTerm = linA.ConstantTerm / b
+            };
         }
         if (a is QuadExpr quadA)
         {
-            var result = new QuadExpr();
-            result.LinearTerms = [.. quadA.LinearTerms];
-            result.LinearWeights = quadA.LinearWeights.Select(w => w / b).ToList();
-            result.QuadraticTerms1 = [.. quadA.QuadraticTerms1];
-            result.QuadraticTerms2 = [.. quadA.QuadraticTerms2];
-            result.QuadraticWeights = quadA.QuadraticWeights.Select(w => w / b).ToList();
-            result.ConstantTerm = quadA.ConstantTerm / b;
-            return result;
+            return new QuadExpr()
+            {
+                LinearTerms = [.. quadA.LinearTerms],
+                LinearWeights = quadA.LinearWeights.Select(w => w / b).ToList(),
+                QuadraticTerms1 = [.. quadA.QuadraticTerms1],
+                QuadraticTerms2 = [.. quadA.QuadraticTerms2],
+                QuadraticWeights = quadA.QuadraticWeights.Select(w => w / b).ToList(),
+                ConstantTerm = quadA.ConstantTerm / b
+            };
         }
         return a * (1.0 / b);
     }
