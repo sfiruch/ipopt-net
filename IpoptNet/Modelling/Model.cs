@@ -255,7 +255,7 @@ public sealed class Model : IDisposable
                                   lowerBoundMultipliers, upperBoundMultipliers);
 
         // Build solution
-        var solution = new Dictionary<Variable, double>();
+        var solution = (Dictionary<Variable, double>?)null;
 
         if (status is
             ApplicationReturnStatus.SolveSucceeded or
@@ -266,6 +266,7 @@ public sealed class Model : IDisposable
             ApplicationReturnStatus.MaximumWallTimeExceeded or
             ApplicationReturnStatus.RestorationFailed)
         {
+            solution = new Dictionary<Variable, double>();
             for (int i = 0; i < n; i++)
                 solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]);
 
@@ -500,6 +501,6 @@ public sealed class Model : IDisposable
 
 public sealed record ModelResult(
     ApplicationReturnStatus Status,
-    IReadOnlyDictionary<Variable, double> Solution,
+    IReadOnlyDictionary<Variable, double>? Solution,
     double ObjectiveValue,
     SolveStatistics Statistics);

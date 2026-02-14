@@ -33,7 +33,7 @@ public class ModellingTests
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
-        Assert.AreEqual(1.0, result.Solution[x1], 0.01);
+        Assert.AreEqual(1.0, result.Solution![x1], 0.01);
         Assert.AreEqual(4.743, result.Solution[x2], 0.01);
         Assert.AreEqual(3.821, result.Solution[x3], 0.01);
         Assert.AreEqual(1.379, result.Solution[x4], 0.01);
@@ -58,8 +58,8 @@ public class ModellingTests
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(0.0, result.ObjectiveValue, 0.001);
-        Assert.AreEqual(1.0, result.Solution[x], 0.001);
-        Assert.AreEqual(1.0, result.Solution[y], 0.001);
+        Assert.AreEqual(1.0, result.Solution![x], 0.001);
+        Assert.AreEqual(1.0, result.Solution![y], 0.001);
     }
 
     [TestMethod]
@@ -81,8 +81,8 @@ public class ModellingTests
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(0.0, result.ObjectiveValue, 0.001);
-        Assert.AreEqual(3.0, result.Solution[x], 0.001);
-        Assert.AreEqual(4.0, result.Solution[y], 0.001);
+        Assert.AreEqual(3.0, result.Solution![x], 0.001);
+        Assert.AreEqual(4.0, result.Solution![y], 0.001);
     }
 
     [TestMethod]
@@ -105,8 +105,8 @@ public class ModellingTests
 
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
-        Assert.AreEqual(2.0, result.Solution[x], 0.001);
-        Assert.AreEqual(2.0, result.Solution[y], 0.001);
+        Assert.AreEqual(2.0, result.Solution![x], 0.001);
+        Assert.AreEqual(2.0, result.Solution![y], 0.001);
         Assert.AreEqual(8.0, result.ObjectiveValue, 0.001);
     }
 
@@ -127,7 +127,7 @@ public class ModellingTests
 
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
-        Assert.AreEqual(Math.PI / 2, result.Solution[x], 0.01);
+        Assert.AreEqual(Math.PI / 2, result.Solution![x], 0.01);
         Assert.AreEqual(-1.0, result.ObjectiveValue, 0.001);
     }
 
@@ -148,7 +148,7 @@ public class ModellingTests
 
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
-        Assert.AreEqual(Math.Log(2), result.Solution[x], 0.001);
+        Assert.AreEqual(Math.Log(2), result.Solution![x], 0.001);
     }
 
     [TestMethod]
@@ -168,7 +168,7 @@ public class ModellingTests
 
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
-        Assert.AreEqual(1.0, result.Solution[x], 0.001);
+        Assert.AreEqual(1.0, result.Solution![x], 0.001);
         Assert.AreEqual(2.0, result.ObjectiveValue, 0.001);
     }
 
@@ -228,8 +228,8 @@ public class ModellingTests
 
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
-        Assert.AreEqual(2.0, result.Solution[x], 0.001);
-        Assert.AreEqual(2.0, result.Solution[y], 0.001);
+        Assert.AreEqual(2.0, result.Solution![x], 0.001);
+        Assert.AreEqual(2.0, result.Solution![y], 0.001);
     }
 
     [TestMethod]
@@ -259,10 +259,10 @@ public class ModellingTests
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
-        Assert.AreEqual(1.0, result.Solution[x1], 0.01);
-        Assert.AreEqual(4.743, result.Solution[x2], 0.01);
-        Assert.AreEqual(3.821, result.Solution[x3], 0.01);
-        Assert.AreEqual(1.379, result.Solution[x4], 0.01);
+        Assert.AreEqual(1.0, result.Solution![x1], 0.01);
+        Assert.AreEqual(4.743, result.Solution![x2], 0.01);
+        Assert.AreEqual(3.821, result.Solution![x3], 0.01);
+        Assert.AreEqual(1.379, result.Solution![x4], 0.01);
     }
 
     [TestMethod]
@@ -292,10 +292,10 @@ public class ModellingTests
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
-        Assert.AreEqual(1.0, result.Solution[x1], 0.01);
-        Assert.AreEqual(4.743, result.Solution[x2], 0.01);
-        Assert.AreEqual(3.821, result.Solution[x3], 0.01);
-        Assert.AreEqual(1.379, result.Solution[x4], 0.01);
+        Assert.AreEqual(1.0, result.Solution![x1], 0.01);
+        Assert.AreEqual(4.743, result.Solution![x2], 0.01);
+        Assert.AreEqual(3.821, result.Solution![x3], 0.01);
+        Assert.AreEqual(1.379, result.Solution![x4], 0.01);
     }
 
     [TestMethod]
@@ -322,8 +322,8 @@ public class ModellingTests
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         // Expected solution: x=2, y=2 (closest point to (2,3) with x>=y and x+y=4)
-        Assert.AreEqual(2.0, result.Solution[x], 0.01);
-        Assert.AreEqual(2.0, result.Solution[y], 0.01);
+        Assert.AreEqual(2.0, result.Solution![x], 0.01);
+        Assert.AreEqual(2.0, result.Solution![y], 0.01);
     }
 
     [TestMethod]
@@ -522,8 +522,8 @@ public class ModellingTests
 
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
-        Assert.AreEqual(2.0, result.Solution[x], 0.001);
-        Assert.AreEqual(2.0, result.Solution[y], 0.001);
+        Assert.AreEqual(2.0, result.Solution![x], 0.001);
+        Assert.AreEqual(2.0, result.Solution![y], 0.001);
 
         // Verify Start values were updated to solution
         Assert.AreEqual(2.0, x.Start.Value, 0.001);
@@ -577,8 +577,8 @@ public class ModellingTests
 
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
-        Assert.AreEqual(3.0, result.Solution[x], 0.001);
-        Assert.AreEqual(4.0, result.Solution[y], 0.001);
+        Assert.AreEqual(3.0, result.Solution![x], 0.001);
+        Assert.AreEqual(4.0, result.Solution![y], 0.001);
 
         // Verify Start values were NOT updated
         Assert.AreEqual(originalXStart, x.Start);
@@ -676,10 +676,10 @@ public class ModellingTests
         // Should still converge with limited memory approximation
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         Assert.AreEqual(17.014, result.ObjectiveValue, 0.01);
-        Assert.AreEqual(1.0, result.Solution[x1], 0.01);
-        Assert.AreEqual(4.743, result.Solution[x2], 0.01);
-        Assert.AreEqual(3.821, result.Solution[x3], 0.01);
-        Assert.AreEqual(1.379, result.Solution[x4], 0.01);
+        Assert.AreEqual(1.0, result.Solution![x1], 0.01);
+        Assert.AreEqual(4.743, result.Solution![x2], 0.01);
+        Assert.AreEqual(3.821, result.Solution![x3], 0.01);
+        Assert.AreEqual(1.379, result.Solution![x4], 0.01);
     }
 
     [TestMethod]
@@ -961,8 +961,8 @@ public class ModellingTests
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
 
         // Solution should be at bounds
-        Assert.AreEqual(2.0, result.Solution[x], 0.001);
-        Assert.AreEqual(2.0, result.Solution[y], 0.001);
+        Assert.AreEqual(2.0, result.Solution![x], 0.001);
+        Assert.AreEqual(2.0, result.Solution![y], 0.001);
 
         // Upper bound duals should be non-zero (active constraints)
         Assert.AreNotEqual(0.0, x.UpperBoundDualStart);
@@ -991,8 +991,8 @@ public class ModellingTests
 
         AssertDerivativeTestPassed(result.DerivativeTestResult);
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
-        Assert.AreEqual(2.0, result.Solution[x], 0.001);
-        Assert.AreEqual(2.0, result.Solution[y], 0.001);
+        Assert.AreEqual(2.0, result.Solution![x], 0.001);
+        Assert.AreEqual(2.0, result.Solution![y], 0.001);
     }
 
     [TestMethod]
@@ -1301,8 +1301,8 @@ public class ModellingTests
         // Since objective is x + 2*y and constraint is x + y = 3 (so x = 3 - y)
         // Substitute: (3 - y) + 2*y = 3 + y
         // This is minimized when y = 0, giving x = 3
-        Assert.AreEqual(3.0, result.Solution[x], 0.01);
-        Assert.AreEqual(0.0, result.Solution[y], 0.01);
+        Assert.AreEqual(3.0, result.Solution![x], 0.01);
+        Assert.AreEqual(0.0, result.Solution![y], 0.01);
         Assert.AreEqual(3.0, result.ObjectiveValue, 0.01);
     }
 
@@ -1329,8 +1329,8 @@ public class ModellingTests
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         // Unconstrained optimum would be at (2, 3) with objective -13
         // Constrained optimum is at (2, 3) since 2+3=5 satisfies the constraint
-        Assert.AreEqual(2.0, result.Solution[x], 0.01);
-        Assert.AreEqual(3.0, result.Solution[y], 0.01);
+        Assert.AreEqual(2.0, result.Solution![x], 0.01);
+        Assert.AreEqual(3.0, result.Solution![y], 0.01);
         Assert.AreEqual(-13.0, result.ObjectiveValue, 0.01);
     }
 
@@ -1356,8 +1356,8 @@ public class ModellingTests
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
         // Solution is on the circle closest to origin
         var expectedVal = 2.0 - 1.0 / Math.Sqrt(2);
-        Assert.AreEqual(expectedVal, result.Solution[x], 0.01);
-        Assert.AreEqual(expectedVal, result.Solution[y], 0.01);
+        Assert.AreEqual(expectedVal, result.Solution![x], 0.01);
+        Assert.AreEqual(expectedVal, result.Solution![y], 0.01);
     }
 
     [TestMethod]
@@ -2105,7 +2105,7 @@ internal sealed record ModelResultWithDerivativeTest(
 {
     // Forward properties from ModelResult for convenience
     public ApplicationReturnStatus Status => Result.Status;
-    public IReadOnlyDictionary<Variable, double> Solution => Result.Solution;
+    public IReadOnlyDictionary<Variable, double>? Solution => Result.Solution;
     public double ObjectiveValue => Result.ObjectiveValue;
     public SolveStatistics Statistics => Result.Statistics;
 }

@@ -43,7 +43,7 @@ public class SingularityTests
 
         var result = model.Solve();
 
-        System.Console.WriteLine($"Status: {result.Status}, x: {result.Solution[x]}, obj: {result.ObjectiveValue}");
+        System.Console.WriteLine($"Status: {result.Status}, x: {result.Solution![x]}, obj: {result.ObjectiveValue}");
 
         // It should find a solution where x > 0.
         Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
