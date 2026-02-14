@@ -17,8 +17,7 @@ public sealed class Constant : Expr
 
     protected override Expr CloneCore() => new Constant(Value);
 
-    protected override void PrintCore(TextWriter writer, string indent)
-    {
-        writer.WriteLine($"{indent}Constant: {Value}");
-    }
+    protected override string ToStringCore() => Value.ToString();
+
+    internal override bool IsSimpleForPrinting() => true;
 }

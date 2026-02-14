@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace IpoptNet.Modelling;
 
 public sealed class Division : Expr
@@ -210,12 +212,21 @@ public sealed class Division : Expr
         _rIndices = null;
     }
 
-    protected override void PrintCore(TextWriter writer, string indent)
+    protected override string ToStringCore()
     {
-        writer.WriteLine($"{indent}Division:");
-        writer.WriteLine($"{indent}  Left:");
-        Left.Print(writer, indent + "    ");
-        writer.WriteLine($"{indent}  Right:");
-        Right.Print(writer, indent + "    ");
+        // If both operands are simple, format inline
+        if (Left.IsSimpleForPrinting() && Right.IsSimpleForPrinting())
+            return $"Division: {Left}/{Right}";
+
+        // Otherwise, use multi-line tree format
+        var sb = new StringBuilder();
+        sb.AppendLine("Division:");
+        sb.AppendLine("  Left:");
+        foreach (var line in Left.ToString().Split(Environment.NewLine))
+            sb.AppendLine($"    {line}");
+        sb.AppendLine("  Right:");
+        foreach (var line in Right.ToString().Split(Environment.NewLine))
+            sb.AppendLine($"    {line}");
+        return sb.ToString().TrimEnd();
     }
 }

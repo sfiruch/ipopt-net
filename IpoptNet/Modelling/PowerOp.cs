@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace IpoptNet.Modelling;
 
 public sealed class PowerOp : Expr
@@ -90,9 +92,17 @@ public sealed class PowerOp : Expr
         _gradBuffer = null;
     }
 
-    protected override void PrintCore(TextWriter writer, string indent)
+    protected override string ToStringCore()
     {
-        writer.WriteLine($"{indent}PowerOp: ^{Exponent}");
-        Base.Print(writer, indent + "  ");
+        // If base is simple, format inline
+        if (Base.IsSimpleForPrinting())
+            return $"PowerOp: ({Base})^{Exponent}";
+
+        // Otherwise, use multi-line tree format
+        var sb = new StringBuilder();
+        sb.AppendLine($"PowerOp: ^{Exponent}");
+        foreach (var line in Base.ToString().Split(Environment.NewLine))
+            sb.AppendLine($"  {line}");
+        return sb.ToString().TrimEnd();
     }
 }

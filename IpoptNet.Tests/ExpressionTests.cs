@@ -1091,21 +1091,18 @@ public class ExpressionTests
 
         // Test 1: Output to console
         Console.WriteLine("\n========== Model Print Test (Console) ==========");
-        model.Print();
+        Console.WriteLine(model);
         Console.WriteLine("================================================\n");
 
         // Test 2: Output to StringWriter
-        var sw = new StringWriter();
-        model.Print(sw);
-        var output = sw.ToString();
+        var output = model.ToString();
 
         // Verify output contains expected content
-        Assert.IsTrue(output.Contains("=== Model ==="));
         Assert.IsTrue(output.Contains("Variables: 2"));
         Assert.IsTrue(output.Contains("Objective:"));
-        Assert.IsTrue(output.Contains("LinExpr:"));
         Assert.IsTrue(output.Contains("Constraints: 2"));
-        Assert.IsTrue(output.Contains("Variable[0]"));
+        Assert.IsTrue(output.Contains("x[0]"));
+        Assert.IsTrue(output.Contains("x[1]"));
 
         Console.WriteLine("StringWriter output verified successfully");
     }
@@ -1124,14 +1121,10 @@ public class ExpressionTests
         var tempFile = Path.GetTempFileName();
         try
         {
-            using (var writer = new StreamWriter(tempFile))
-            {
-                model.Print(writer);
-            }
+            File.WriteAllText(tempFile, model.ToString());
 
             // Read back and verify
             var content = File.ReadAllText(tempFile);
-            Assert.IsTrue(content.Contains("=== Model ==="));
             Assert.IsTrue(content.Contains("Variables: 2"));
             Assert.IsTrue(content.Contains("Objective:"));
 
@@ -1529,15 +1522,12 @@ public class ExpressionTests
         // Create a quadratic expression
         var expr = new QuadExpr([x * x, 2 * x * y, 3 * x, new Constant(4)]);
 
-        // Test Print to StringWriter
-        var sw = new StringWriter();
-        expr.Print(sw);
-        var output = sw.ToString();
+        // Test ToString
+        var output = expr.ToString();
 
-        Assert.IsTrue(output.Contains("QuadExpr"));
-        Assert.IsTrue(output.Contains("linear"));
-        Assert.IsTrue(output.Contains("quadratic"));
-        Assert.IsTrue(output.Contains("constant=4"));
+        Assert.IsTrue(output.Contains("x[0]"));
+        Assert.IsTrue(output.Contains("x[1]"));
+        Assert.IsTrue(output.Contains("4"));
     }
 
     [TestMethod]

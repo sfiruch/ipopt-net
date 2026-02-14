@@ -37,8 +37,7 @@ public sealed class Variable : Expr
 
     protected override Expr CloneCore() => this; // Variables are singletons - return self
 
-    protected override void PrintCore(TextWriter writer, string indent)
-    {
-        writer.WriteLine($"{indent}x[{Index}]");
-    }
+    protected override string ToStringCore() => $"x[{Index}]";
+
+    internal override bool IsSimpleForPrinting() => true;
 }

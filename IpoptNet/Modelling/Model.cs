@@ -1,9 +1,11 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace IpoptNet.Modelling;
 
+[DebuggerDisplay("Variables: {_variables.Count}, Constraints: {_constraints.Count}")]
 public sealed class Model : IDisposable
 {
     private readonly List<Variable> _variables = new();
@@ -61,20 +63,18 @@ public sealed class Model : IDisposable
     public void AddConstraint(Expr expression, double lowerBound, double upperBound) =>
         _constraints.Add(new Constraint(expression, lowerBound, upperBound));
 
-    /// <summary>
-    /// Prints all expression trees in the model for debugging.
-    /// </summary>
-    /// <param name="writer">The TextWriter to write to. Defaults to Console.Out if null.</param>
-    public void Print(TextWriter? writer = null)
+    public override string ToString()
     {
-        writer ??= Console.Out;
+        var sb = new StringBuilder();
 
-        writer.WriteLine($"Variables: {_variables.Count}");
+        sb.AppendLine($"Variables: {_variables.Count}");
         for (int i = 0; i < _variables.Count; i++)
         {
             var v = _variables[i];
             var bounds = "";
-            if (v.LowerBound > double.NegativeInfinity && v.UpperBound < double.PositiveInfinity)
+            if (Math.Abs(v.LowerBound - v.UpperBound) < 1e-15)
+                bounds = $" == {v.LowerBound}";
+            else if (v.LowerBound > double.NegativeInfinity && v.UpperBound < double.PositiveInfinity)
                 bounds = $" in [{v.LowerBound}, {v.UpperBound}]";
             else if (v.LowerBound > double.NegativeInfinity)
                 bounds = $" >= {v.LowerBound}";
@@ -82,18 +82,18 @@ public sealed class Model : IDisposable
                 bounds = $" <= {v.UpperBound}";
 
             var start = v.Start.HasValue ? $", start={v.Start}" : "";
-            writer.WriteLine($"  x[{i}]{bounds}{start}");
+            sb.AppendLine($"  x[{i}]{bounds}{start}");
         }
 
-        writer.WriteLine();
-        writer.WriteLine("Objective:");
+        sb.AppendLine();
+        sb.AppendLine("Objective:");
         if (_objective is not null)
-            _objective.Print(writer, "  ");
+            sb.AppendLine($"  {_objective}");
         else
-            writer.WriteLine("  (not set)");
+            sb.AppendLine("  (not set)");
 
-        writer.WriteLine();
-        writer.WriteLine($"Constraints: {_constraints.Count}");
+        sb.AppendLine();
+        sb.AppendLine($"Constraints: {_constraints.Count}");
         for (int i = 0; i < _constraints.Count; i++)
         {
             var c = _constraints[i];
@@ -107,9 +107,10 @@ public sealed class Model : IDisposable
             else if (c.UpperBound < double.PositiveInfinity)
                 boundsStr = $" <= {c.UpperBound}";
 
-            writer.WriteLine($"  Constraint[{i}]{boundsStr}:");
-            c.Expression.Print(writer, "    ");
+            sb.AppendLine($"  Constraint[{i}]{boundsStr}: {c.Expression}");
         }
+
+        return sb.ToString();
     }
 
     public ModelResult Solve(bool updateStartValues = true)

@@ -1,3 +1,6 @@
+using System.ComponentModel.Design;
+using System.Text;
+
 namespace IpoptNet.Modelling;
 
 public class QuadExpr : Expr
@@ -57,7 +60,7 @@ public class QuadExpr : Expr
                 {
                     var linTerm = lin.Terms[i];
                     var linWeight = lin.Weights[i];
-                    
+
                     // Check if this term is actually quadratic (shouldn't be in LinExpr!)
                     if (linTerm is Product prod)
                     {
@@ -87,7 +90,7 @@ public class QuadExpr : Expr
                 {
                     var quadLinTerm = quad.LinearTerms[i];
                     var quadLinWeight = quad.LinearWeights[i];
-                    
+
                     // Check if this linear term is actually quadratic (shouldn't be, but might be from old code)
                     if (quadLinTerm is Product prod)
                     {
@@ -124,7 +127,7 @@ public class QuadExpr : Expr
                 {
                     // Expand (LinExpr)^2 into quadratic and linear terms
                     // (a1*t1 + a2*t2 + ... + c)^2 = sum(ai*aj*ti*tj) + 2*sum(ai*ti*c) + c^2
-                    
+
                     // Quadratic cross terms: ai * aj * ti * tj for all i,j pairs
                     for (int i = 0; i < linBase.Terms.Count; i++)
                     {
@@ -132,13 +135,13 @@ public class QuadExpr : Expr
                         {
                             double weight = linBase.Weights[i] * linBase.Weights[j];
                             if (i != j) weight *= 2.0; // Cross terms appear twice
-                            
+
                             quadTerms1.Add(linBase.Terms[i]);
                             quadTerms2.Add(linBase.Terms[j]);
                             quadWeights.Add(weight);
                         }
                     }
-                    
+
                     // Linear terms from 2 * c * sum(ai*ti)
                     if (linBase.ConstantTerm != 0.0)
                     {
@@ -148,7 +151,7 @@ public class QuadExpr : Expr
                             linearWeights.Add(2.0 * linBase.ConstantTerm * linBase.Weights[i]);
                         }
                     }
-                    
+
                     // Constant term: c^2
                     constantSum += linBase.ConstantTerm * linBase.ConstantTerm;
                 }
@@ -196,7 +199,7 @@ public class QuadExpr : Expr
                 // Don't just copy - recursively process each term in case it's a Product
                 var linTerm = lin.Terms[i];
                 var linWeight = lin.Weights[i];
-                
+
                 if (linTerm is Product prod)
                 {
                     ProcessProduct(prod, weight * linWeight, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
@@ -222,7 +225,7 @@ public class QuadExpr : Expr
                 // Don't just copy - recursively process each linear term in case it's a Product
                 var quadLinTerm = quad.LinearTerms[i];
                 var quadLinWeight = quad.LinearWeights[i];
-                
+
                 if (quadLinTerm is Product prod)
                 {
                     ProcessProduct(prod, weight * quadLinWeight, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
@@ -258,7 +261,7 @@ public class QuadExpr : Expr
             {
                 // Expand (LinExpr)^2 into quadratic and linear terms
                 // (a1*t1 + a2*t2 + ... + c)^2 = sum(ai*aj*ti*tj) + 2*sum(ai*ti*c) + c^2
-                
+
                 // Quadratic cross terms: ai * aj * ti * tj for all i,j pairs
                 for (int i = 0; i < linBase.Terms.Count; i++)
                 {
@@ -266,13 +269,13 @@ public class QuadExpr : Expr
                     {
                         double termWeight = weight * linBase.Weights[i] * linBase.Weights[j];
                         if (i != j) termWeight *= 2.0; // Cross terms appear twice
-                        
+
                         quadTerms1.Add(linBase.Terms[i]);
                         quadTerms2.Add(linBase.Terms[j]);
                         quadWeights.Add(termWeight);
                     }
                 }
-                
+
                 // Linear terms from 2 * c * sum(ai*ti)
                 if (linBase.ConstantTerm != 0.0)
                 {
@@ -282,7 +285,7 @@ public class QuadExpr : Expr
                         linearWeights.Add(weight * 2.0 * linBase.ConstantTerm * linBase.Weights[i]);
                     }
                 }
-                
+
                 // Constant term: c^2
                 constantSum += weight * linBase.ConstantTerm * linBase.ConstantTerm;
             }
@@ -349,26 +352,26 @@ public class QuadExpr : Expr
             {
                 // Expand: (Σ a_i * x_i + c1) * (Σ b_j * y_j + c2)
                 // = Σ_i Σ_j (a_i * b_j * x_i * y_j) + Σ_i (a_i * c2 * x_i) + Σ_j (b_j * c1 * y_j) + c1 * c2
-                
+
                 // Constant * Constant
                 constantSum += productWeight * lin1.ConstantTerm * lin2.ConstantTerm;
-                
+
                 // Linear terms from first LinExpr * constant from second
                 for (int i = 0; i < lin1.Terms.Count; i++)
                 {
                     // Don't just add the term - process it in case it's a Product
-                    ProcessTerm(lin1.Terms[i], productWeight * lin1.Weights[i] * lin2.ConstantTerm, 
+                    ProcessTerm(lin1.Terms[i], productWeight * lin1.Weights[i] * lin2.ConstantTerm,
                         ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
                 }
-                
+
                 // Linear terms from second LinExpr * constant from first
                 for (int j = 0; j < lin2.Terms.Count; j++)
                 {
                     // Don't just add the term - process it in case it's a Product
-                    ProcessTerm(lin2.Terms[j], productWeight * lin2.Weights[j] * lin1.ConstantTerm, 
+                    ProcessTerm(lin2.Terms[j], productWeight * lin2.Weights[j] * lin1.ConstantTerm,
                         ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
                 }
-                
+
                 // Quadratic cross terms
                 for (int i = 0; i < lin1.Terms.Count; i++)
                 {
@@ -389,14 +392,14 @@ public class QuadExpr : Expr
                 {
                     ProcessTerm(expr2, productWeight * lin.ConstantTerm, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
                 }
-                
+
                 for (int i = 0; i < lin.Terms.Count; i++)
                 {
                     // Create bilinear term, but the term from LinExpr might itself be a Product
                     // so we need to check
                     var linTerm = lin.Terms[i];
                     var linWeight = lin.Weights[i];
-                    
+
                     if (linTerm is Product nestedProd)
                     {
                         // This is a Product in a LinExpr - we need to expand it with expr2
@@ -407,9 +410,9 @@ public class QuadExpr : Expr
                         var tempQuadTerms2 = new List<Expr>();
                         var tempQuadWeights = new List<double>();
                         var tempConst = 0.0;
-                        
+
                         ProcessProduct(nestedProd, linWeight, ref tempConst, tempLinTerms, tempLinWeights, tempQuadTerms1, tempQuadTerms2, tempQuadWeights);
-                        
+
                         // Now multiply each result by expr2
                         for (int k = 0; k < tempLinTerms.Count; k++)
                         {
@@ -444,13 +447,13 @@ public class QuadExpr : Expr
                 {
                     ProcessTerm(expr1, productWeight * linRight.ConstantTerm, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
                 }
-                
+
                 for (int i = 0; i < linRight.Terms.Count; i++)
                 {
                     // Same as above - check if the term is a Product
                     var linTerm = linRight.Terms[i];
                     var linWeight = linRight.Weights[i];
-                    
+
                     if (linTerm is Product nestedProd)
                     {
                         // Process the nested product and multiply by expr1
@@ -460,9 +463,9 @@ public class QuadExpr : Expr
                         var tempQuadTerms2 = new List<Expr>();
                         var tempQuadWeights = new List<double>();
                         var tempConst = 0.0;
-                        
+
                         ProcessProduct(nestedProd, linWeight, ref tempConst, tempLinTerms, tempLinWeights, tempQuadTerms1, tempQuadTerms2, tempQuadWeights);
-                        
+
                         for (int k = 0; k < tempLinTerms.Count; k++)
                         {
                             quadTerms1.Add(expr1);
@@ -497,8 +500,8 @@ public class QuadExpr : Expr
         {
             // 3+ non-constant factors: this is higher than quadratic
             // Reconstruct the product and add as linear term (will fail IsAtMostQuadratic check later)
-            var reconstructed = nonConstants.Count == prod.Factors.Count 
-                ? (Expr)prod 
+            var reconstructed = nonConstants.Count == prod.Factors.Count
+                ? (Expr)prod
                 : new Product([new Constant(productWeight / weight), .. nonConstants]);
             linearTerms.Add(reconstructed);
             linearWeights.Add(weight);
@@ -541,19 +544,19 @@ public class QuadExpr : Expr
     protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         // Linear terms contribute nothing to Hessian
-        
+
         // Quadratic terms: ∂²/∂x_i∂x_j (w * f * g)
         // For simple variable products (most common case): x_i * x_j → coefficient w
         for (int i = 0; i < QuadraticTerms1.Count; i++)
         {
             var w = multiplier * QuadraticWeights[i];
-            
+
             // Simplified for Variable * Variable case (most common for quadratic expressions)
             if (QuadraticTerms1[i] is Variable v1 && QuadraticTerms2[i] is Variable v2)
             {
                 int idx1 = v1.Index;
                 int idx2 = v2.Index;
-                
+
                 if (idx1 == idx2)
                 {
                     // Diagonal: x^2 → d²/dx² = 2
@@ -589,7 +592,7 @@ public class QuadExpr : Expr
     {
         foreach (var term in LinearTerms)
             term.CollectHessianSparsity(entries);
-        
+
         // Quadratic terms contribute to Hessian sparsity
         for (int i = 0; i < QuadraticTerms1.Count; i++)
         {
@@ -605,15 +608,15 @@ public class QuadExpr : Expr
         }
     }
 
-    protected override bool IsConstantWrtXCore() => 
-        LinearTerms.All(t => t.IsConstantWrtX()) && 
-        QuadraticTerms1.All(t => t.IsConstantWrtX()) && 
+    protected override bool IsConstantWrtXCore() =>
+        LinearTerms.All(t => t.IsConstantWrtX()) &&
+        QuadraticTerms1.All(t => t.IsConstantWrtX()) &&
         QuadraticTerms2.All(t => t.IsConstantWrtX());
-    
+
     protected override bool IsLinearCore() => QuadraticTerms1.Count == 0 && LinearTerms.All(t => t.IsLinear());
-    protected override bool IsAtMostQuadraticCore() => 
-        LinearTerms.All(t => t.IsAtMostQuadratic()) && 
-        QuadraticTerms1.All(t => t.IsLinear()) && 
+    protected override bool IsAtMostQuadraticCore() =>
+        LinearTerms.All(t => t.IsAtMostQuadratic()) &&
+        QuadraticTerms1.All(t => t.IsLinear()) &&
         QuadraticTerms2.All(t => t.IsLinear());
 
     protected override Expr CloneCore()
@@ -648,23 +651,94 @@ public class QuadExpr : Expr
             term.Clear();
     }
 
-    protected override void PrintCore(TextWriter writer, string indent)
+    protected override string ToStringCore()
     {
-        writer.WriteLine($"{indent}QuadExpr: {LinearTerms.Count} linear, {QuadraticTerms1.Count} quadratic, constant={ConstantTerm}");
+        // If all terms are simple (variables/constants), format inline
+        if (LinearTerms.All(t => t.IsSimpleForPrinting()) &&
+               QuadraticTerms1.All(t => t.IsSimpleForPrinting()) &&
+               QuadraticTerms2.All(t => t.IsSimpleForPrinting()))
+        {
+            var result = new StringBuilder();
+            result.Append("QuadExpr: ");
+            result.Append(ConstantTerm.ToString());
+
+            for (int i = 0; i < LinearTerms.Count; i++)
+            {
+                var weight = LinearWeights[i];
+                var termStr = LinearTerms[i].ToString();
+
+                if (weight == 1)
+                    result.Append($" + {termStr}");
+                else if (weight == -1)
+                    result.Append($" - {termStr}");
+                else if (weight >= 0)
+                    result.Append($" + {weight}*{termStr}");
+                else
+                    result.Append($" - {-weight}*{termStr}");
+            }
+
+            for (int i = 0; i < QuadraticTerms1.Count; i++)
+            {
+                var weight = QuadraticWeights[i];
+                var term1Str = QuadraticTerms1[i].ToString();
+                var term2Str = QuadraticTerms2[i].ToString();
+                var quadStr = $"{term1Str}*{term2Str}";
+
+                if (weight == 1)
+                    result.Append($" + {quadStr}");
+                else if (weight == -1)
+                    result.Append($" - {quadStr}");
+                else if (weight >= 0)
+                    result.Append($" + {weight}*{quadStr}");
+                else
+                    result.Append($" - {-weight}*{quadStr}");
+            }
+
+            return result.ToString();
+        }
+
+        // Otherwise, use multi-line tree format
+        var sb = new StringBuilder();
+        sb.AppendLine($"QuadExpr: {LinearTerms.Count} linear, {QuadraticTerms1.Count} quadratic, constant={ConstantTerm}");
 
         for (int i = 0; i < LinearTerms.Count; i++)
         {
-            writer.WriteLine($"{indent}  Linear [{i}] weight={LinearWeights[i]}:");
-            LinearTerms[i].Print(writer, indent + "    ");
+            var termLines = LinearTerms[i].ToString().Split(Environment.NewLine);
+            if (termLines.Length == 1)
+                sb.AppendLine($"  Linear [{i}] weight={LinearWeights[i]}: {termLines[0]}");
+            else
+            {
+                sb.AppendLine($"  Linear [{i}] weight={LinearWeights[i]}:");
+                foreach (var line in termLines)
+                    sb.AppendLine($"    {line}");
+            }
         }
 
         for (int i = 0; i < QuadraticTerms1.Count; i++)
         {
-            writer.WriteLine($"{indent}  Quadratic [{i}] weight={QuadraticWeights[i]}:");
-            writer.WriteLine($"{indent}    Term1:");
-            QuadraticTerms1[i].Print(writer, indent + "      ");
-            writer.WriteLine($"{indent}    Term2:");
-            QuadraticTerms2[i].Print(writer, indent + "      ");
+            var term1Lines = QuadraticTerms1[i].ToString().Split(Environment.NewLine);
+            var term2Lines = QuadraticTerms2[i].ToString().Split(Environment.NewLine);
+
+            sb.AppendLine($"  Quadratic [{i}] weight={QuadraticWeights[i]}:");
+            if (term1Lines.Length == 1)
+                sb.AppendLine($"    Term1: {term1Lines[0]}");
+            else
+            {
+                sb.AppendLine("    Term1:");
+                foreach (var line in term1Lines)
+                    sb.AppendLine($"      {line}");
+            }
+
+            if (term2Lines.Length == 1)
+                sb.AppendLine($"    Term2: {term2Lines[0]}");
+            else
+            {
+                sb.AppendLine("    Term2:");
+                foreach (var line in term2Lines)
+                    sb.AppendLine($"      {line}");
+            }
         }
+
+        return sb.ToString().TrimEnd();
     }
 }

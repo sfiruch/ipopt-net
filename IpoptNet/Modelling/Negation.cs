@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace IpoptNet.Modelling;
 
 public sealed class Negation : Expr
@@ -43,9 +45,17 @@ public sealed class Negation : Expr
         Operand.Clear();
     }
 
-    protected override void PrintCore(TextWriter writer, string indent)
+    protected override string ToStringCore()
     {
-        writer.WriteLine($"{indent}Negation:");
-        Operand.Print(writer, indent + "  ");
+        // If operand is simple, format inline
+        if (Operand.IsSimpleForPrinting())
+            return $"Negation: -({Operand})";
+
+        // Otherwise, use multi-line tree format
+        var sb = new StringBuilder();
+        sb.AppendLine("Negation:");
+        foreach (var line in Operand.ToString().Split(Environment.NewLine))
+            sb.AppendLine($"  {line}");
+        return sb.ToString().TrimEnd();
     }
 }

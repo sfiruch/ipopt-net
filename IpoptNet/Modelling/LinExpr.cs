@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace IpoptNet.Modelling;
 
 public class LinExpr : Expr
@@ -11,7 +13,7 @@ public class LinExpr : Expr
         Terms = [];
         Weights = [];
     }
-    
+
     /// <summary>
     /// Efficiently adds a term to this LinExpr with proper weight extraction.
     /// Used by += operator for O(1) appending instead of O(n) copying.
@@ -22,7 +24,7 @@ public class LinExpr : Expr
         ProcessTerm(term, weight, ref constantSum, Terms, Weights);
         ConstantTerm = constantSum;
     }
-    
+
     public LinExpr(List<Expr> terms)
     {
         var constantSum = 0.0;
@@ -196,13 +198,48 @@ public class LinExpr : Expr
             term.Clear();
     }
 
-    protected override void PrintCore(TextWriter writer, string indent)
+    protected override string ToStringCore()
     {
-        writer.WriteLine($"{indent}LinExpr: {Terms.Count} terms, constant={ConstantTerm}");
+        // If all terms are simple (variables/constants), format inline
+        if (Terms.All(t => t.IsSimpleForPrinting()))
+        {
+            var result = new StringBuilder();
+            result.Append("LinExpr: ");
+            result.Append(ConstantTerm.ToString());
+
+            for (int i = 0; i < Terms.Count; i++)
+            {
+                var weight = Weights[i];
+                var termStr = Terms[i].ToString();
+
+                if (weight == 1)
+                    result.Append($" + {termStr}");
+                else if (weight == -1)
+                    result.Append($" - {termStr}");
+                else if (weight > 0)
+                    result.Append($" + {weight}*{termStr}");
+                else
+                    result.Append($" - {-weight}*{termStr}");
+            }
+
+            return result.ToString();
+        }
+
+        // Otherwise, use multi-line tree format
+        var sb = new StringBuilder();
+        sb.AppendLine($"LinExpr: {Terms.Count} terms, constant={ConstantTerm}");
         for (int i = 0; i < Terms.Count; i++)
         {
-            writer.WriteLine($"{indent}  [{i}] weight={Weights[i]}:");
-            Terms[i].Print(writer, indent + "    ");
+            var termLines = Terms[i].ToString().Split(Environment.NewLine);
+            if (termLines.Length == 1)
+                sb.AppendLine($"  [{i}] weight={Weights[i]}: {termLines[0]}");
+            else
+            {
+                sb.AppendLine($"  [{i}] weight={Weights[i]}:");
+                foreach (var line in termLines)
+                    sb.AppendLine($"    {line}");
+            }
         }
+        return sb.ToString().TrimEnd();
     }
 }

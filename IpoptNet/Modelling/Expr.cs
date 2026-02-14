@@ -630,25 +630,17 @@ public abstract class Expr
     public static Expr Exp(Expr a) => new Exp(a);
     public static Expr Log(Expr a) => new Log(a);
 
-    /// <summary>
-    /// Prints the expression tree for debugging.
-    /// </summary>
-    /// <param name="writer">The TextWriter to write to. Defaults to Console.Out.</param>
-    /// <param name="indent">The indentation string for formatting.</param>
-    public void Print(TextWriter? writer = null, string indent = "")
+    public override string ToString()
     {
-        writer ??= Console.Out;
         if (_replacement is not null)
-        {
-            writer.WriteLine($"{indent}[Replaced with:]");
-            _replacement.Print(writer, indent + "  ");
-            return;
-        }
-        PrintCore(writer, indent);
+            return _replacement.ToString();
+        return ToStringCore();
     }
 
-    protected virtual void PrintCore(TextWriter writer, string indent)
-    {
-        writer.WriteLine($"{indent}{GetType().Name}");
-    }
+    protected virtual string ToStringCore() => GetType().Name;
+
+    /// <summary>
+    /// Returns true if this expression contains only variables and constants (no complex operations).
+    /// </summary>
+    internal virtual bool IsSimpleForPrinting() => false;
 }

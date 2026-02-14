@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace IpoptNet.Modelling;
 
 public sealed class Product : Expr
@@ -214,13 +216,38 @@ public sealed class Product : Expr
         _excludingFactor = null;
     }
 
-    protected override void PrintCore(TextWriter writer, string indent)
+    protected override string ToStringCore()
     {
-        writer.WriteLine($"{indent}Product: {Factors.Count} factors, Factor={Factor}");
+        // If all factors are simple, format inline
+        if (Factors.All(f => f.IsSimpleForPrinting()))
+        {
+            var result = new StringBuilder();
+            result.Append("Product: ");
+            result.Append(Factor == 1.0 ? "" : Factor.ToString());
+            foreach (var factor in Factors)
+            {
+                if (result.Length > 9) // Length of "Product: "
+                    result.Append(" * ");
+                result.Append($"({factor})");
+            }
+            return result.Length > 9 ? result.ToString() : "Product: 1";
+        }
+
+        // Otherwise, use multi-line tree format
+        var sb = new StringBuilder();
+        sb.AppendLine($"Product: {Factors.Count} factors, Factor={Factor}");
         for (int i = 0; i < Factors.Count; i++)
         {
-            writer.WriteLine($"{indent}  [{i}]:");
-            Factors[i].Print(writer, indent + "    ");
+            var factorLines = Factors[i].ToString().Split(Environment.NewLine);
+            if (factorLines.Length == 1)
+                sb.AppendLine($"  [{i}]: {factorLines[0]}");
+            else
+            {
+                sb.AppendLine($"  [{i}]:");
+                foreach (var line in factorLines)
+                    sb.AppendLine($"    {line}");
+            }
         }
+        return sb.ToString().TrimEnd();
     }
 }
