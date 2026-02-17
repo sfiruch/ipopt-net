@@ -90,6 +90,9 @@ public abstract class Expr
 
     public static Expr operator +(Expr a, Expr b)
     {
+        a = a.GetActual();
+        b = b.GetActual();
+
         // If either operand is QuadExpr, result should be QuadExpr
         // BUT only if the other operand is also at most quadratic
         if (a is QuadExpr && b.IsAtMostQuadratic())
@@ -117,6 +120,9 @@ public abstract class Expr
 
     public static Expr operator -(Expr a, Expr b)
     {
+        a = a.GetActual();
+        b = b.GetActual();
+
         // If either operand is QuadExpr, result should be QuadExpr
         // BUT only if the other operand is also at most quadratic
         if (a is QuadExpr && b.IsAtMostQuadratic())
@@ -142,6 +148,9 @@ public abstract class Expr
     }
     public static Expr operator *(Expr a, Expr b)
     {
+        a = a.GetActual();
+        b = b.GetActual();
+
         // If multiplying by a constant, use the optimized scalar multiplication
         if (b is Constant c)
             return a * c.Value;
@@ -176,6 +185,9 @@ public abstract class Expr
     }
     public static Expr operator /(Expr a, Expr b)
     {
+        a = a.GetActual();
+        b = b.GetActual();
+
         // If dividing by a constant, use the optimized scalar division
         if (b is Constant c)
             return a / c.Value;
@@ -185,6 +197,8 @@ public abstract class Expr
 
     public static Expr operator +(Expr a, double b)
     {
+        a = a.GetActual();
+
         // Preserve QuadExpr if present
         if (a is QuadExpr)
         {
@@ -200,6 +214,8 @@ public abstract class Expr
 
     public static Expr operator +(double a, Expr b)
     {
+        b = b.GetActual();
+
         // Preserve QuadExpr if present
         if (b is QuadExpr)
         {
@@ -214,6 +230,8 @@ public abstract class Expr
     }
     public static Expr operator -(Expr a, double b)
     {
+        a = a.GetActual();
+
         // Preserve QuadExpr if present
         if (a is QuadExpr)
         {
@@ -229,6 +247,8 @@ public abstract class Expr
 
     public static Expr operator -(double a, Expr b)
     {
+        b = b.GetActual();
+
         // Preserve QuadExpr if present
         if (b is QuadExpr)
         {
@@ -243,9 +263,7 @@ public abstract class Expr
     }
     public static Expr operator *(Expr a, double b)
     {
-        // Unwrap replacement to operate on the actual expression
-        if (a._replacement is not null)
-            a = a._replacement;
+        a = a.GetActual();
 
         if (a is LinExpr linA)
         {
@@ -280,9 +298,7 @@ public abstract class Expr
 
     public static Expr operator *(double a, Expr b)
     {
-        // Unwrap replacement to operate on the actual expression
-        if (b._replacement is not null)
-            b = b._replacement;
+        b = b.GetActual();
 
         if (b is LinExpr linB)
         {
@@ -316,9 +332,7 @@ public abstract class Expr
     }
     public static Expr operator /(Expr a, double b)
     {
-        // Unwrap replacement to operate on the actual expression
-        if (a._replacement is not null)
-            a = a._replacement;
+        a = a.GetActual();
 
         if (a is LinExpr linA)
         {
@@ -348,6 +362,8 @@ public abstract class Expr
     // C# 14 compound assignment operators - modify expression in-place for efficiency
     public void operator +=(Expr other)
     {
+        other = other.GetActual();
+
         // Check if we've been replaced with a QuadExpr - use efficient AddTerm
         if (_replacement is QuadExpr quad)
         {
@@ -393,6 +409,8 @@ public abstract class Expr
 
     public void operator -=(Expr other)
     {
+        other = other.GetActual();
+
         // Check if we've been replaced with a QuadExpr - use efficient AddTerm
         if (_replacement is QuadExpr quad)
         {
@@ -438,6 +456,8 @@ public abstract class Expr
 
     public void operator *=(Expr other)
     {
+        other = other.GetActual();
+
         // Special handling for LinExpr and QuadExpr multiplying by constant
         if (other is Constant c)
         {
@@ -499,6 +519,8 @@ public abstract class Expr
 
     public void operator /=(Expr other)
     {
+        other = other.GetActual();
+
         // Special handling for LinExpr and QuadExpr dividing by constant
         if (other is Constant c)
         {

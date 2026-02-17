@@ -18,10 +18,11 @@ public sealed class Product : Expr
         Factors = [];
         foreach (var f in factors)
         {
-            if (f is Constant c)
+            var actual = f.GetActual();
+            if (actual is Constant c)
                 Factor *= c.Value;
             else
-                Factors.Add(f);
+                Factors.Add(actual);
         }
     }
 

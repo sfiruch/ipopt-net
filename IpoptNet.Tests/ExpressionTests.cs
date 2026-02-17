@@ -2707,6 +2707,67 @@ public class ExpressionTests
         Assert.IsTrue(variables.Contains(x3), "x3 should be present");
         Assert.IsTrue(variables.Contains(x4), "x4 should be present");
     }
+
+    [TestMethod]
+    public void AllOperators_WithReplacedConstant_ResolveCorrectly()
+    {
+        // Regression test for _replacement resolution at operator boundaries.
+        // Tests that all operators call GetActual() before type-checking operands.
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        // Create a Constant(0) with a _replacement pointing to a LinExpr
+        var replacedExpr = (Expr)0;
+        replacedExpr += x + y; // Now replacedExpr is Constant(0) with _replacement=LinExpr
+
+        // Test binary operators with Expr operands
+        var addExpr = replacedExpr + (x * 2);
+        var subExpr = replacedExpr - (x * 2);
+        var mulExpr = replacedExpr * y;
+        var divExpr = replacedExpr / (y + 1);
+
+        // Test binary operators with double operands
+        var addDouble1 = replacedExpr + 5.0;
+        var addDouble2 = 5.0 + replacedExpr;
+        var subDouble1 = replacedExpr - 5.0;
+        var subDouble2 = 5.0 - replacedExpr;
+        var mulDouble1 = replacedExpr * 2.0;
+        var mulDouble2 = 2.0 * replacedExpr;
+        var divDouble = replacedExpr / 2.0;
+
+        // Test Product constructor
+        var product = new Product([replacedExpr, y]);
+
+        // Test compound operators
+        var compound1 = (Expr)0;
+        compound1 += replacedExpr;
+        var compound2 = (Expr)0;
+        compound2 -= replacedExpr;
+        var compound3 = (Expr)1;
+        compound3 *= replacedExpr;
+        var compound4 = (Expr)10;
+        compound4 /= replacedExpr;
+
+        // Verify all expressions have correct variables (x and y should be present)
+        var expressions = new[] { addExpr, subExpr, mulExpr, divExpr, addDouble1, addDouble2,
+            subDouble1, subDouble2, mulDouble1, mulDouble2, divDouble, product,
+            compound1, compound2, compound3, compound4 };
+
+        foreach (var expr in expressions)
+        {
+            var variables = new HashSet<Variable>();
+            expr.CollectVariables(variables);
+            Assert.IsTrue(variables.Contains(x), $"{expr.GetType().Name}: x should be present");
+            Assert.IsTrue(variables.Contains(y), $"{expr.GetType().Name}: y should be present");
+        }
+
+        // Verify gradient correctness for a few key cases
+        double[] point = [2.0, 3.0];
+        AssertGradientMatchesFiniteDifference(addExpr, point);
+        AssertGradientMatchesFiniteDifference(mulExpr, point);
+        AssertGradientMatchesFiniteDifference(product, point);
+    }
 }
 
 /// <summary>
