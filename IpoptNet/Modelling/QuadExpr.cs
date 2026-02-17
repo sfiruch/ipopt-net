@@ -44,15 +44,18 @@ public sealed class QuadExpr : Expr
 
         foreach (var term in terms)
         {
-            if (term is Constant c)
+            // Follow replacement to get actual expression
+            var actualTerm = term.GetActual();
+
+            if (actualTerm is Constant c)
             {
                 constantSum += c.Value;
             }
-            else if (term is Negation neg)
+            else if (actualTerm is Negation neg)
             {
                 ProcessTerm(neg.Operand, -1.0, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
             }
-            else if (term is LinExpr lin)
+            else if (actualTerm is LinExpr lin)
             {
                 // Merge LinExpr - but check each term to see if it's actually quadratic
                 constantSum += lin.ConstantTerm;
@@ -82,7 +85,7 @@ public sealed class QuadExpr : Expr
                     }
                 }
             }
-            else if (term is QuadExpr quad)
+            else if (actualTerm is QuadExpr quad)
             {
                 // Merge QuadExpr - must check linear terms for Products!
                 constantSum += quad.ConstantTerm;
@@ -116,11 +119,11 @@ public sealed class QuadExpr : Expr
                     quadWeights.Add(quadWeight);
                 }
             }
-            else if (term is Product prod)
+            else if (actualTerm is Product prod)
             {
                 ProcessProduct(prod, 1.0, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
             }
-            else if (term is PowerOp { Exponent: 2 } pow)
+            else if (actualTerm is PowerOp { Exponent: 2 } pow)
             {
                 // x^2 → quadratic term
                 // But if base is a LinExpr, we need to expand it: (a*x + b*y + c)^2
@@ -168,7 +171,7 @@ public sealed class QuadExpr : Expr
             else
             {
                 // Fallback: add as linear term
-                linearTerms.Add(term);
+                linearTerms.Add(actualTerm);
                 linearWeights.Add(1.0);
             }
         }

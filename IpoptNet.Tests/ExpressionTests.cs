@@ -2429,6 +2429,242 @@ public class ExpressionTests
         Assert.IsFalse(result.DerivativeTestResult.Passed, "Derivative test should fail for wrong Hessian");
         Assert.IsTrue(result.DerivativeTestResult.ErrorCount > 0, "Should report Hessian errors");
     }
+
+    [TestMethod]
+    public void ConstantPlusProduct_CreatesCorrectType()
+    {
+        // Test what happens when adding a Product to Constant(0)
+        var model = new Model();
+        var x = model.AddVariable(0);
+        var y = model.AddVariable(0);
+
+        var constant = (Expr)0; // Creates Constant(0)
+        var product = x * y; // Creates Product
+
+        Console.WriteLine($"Before addition:");
+        Console.WriteLine($"  constant type: {constant.GetType().Name}");
+        Console.WriteLine($"  constant.ToString(): {constant}");
+        Console.WriteLine($"  product type: {product.GetType().Name}");
+        Console.WriteLine($"  product.ToString(): {product}");
+
+        var result = constant + product;
+
+        Console.WriteLine($"\nAfter constant + product:");
+        Console.WriteLine($"  result type: {result.GetType().Name}");
+        Console.WriteLine($"  result.ToString(): {result}");
+
+        // Check variables in result
+        var variables = new HashSet<Variable>();
+        result.CollectVariables(variables);
+        Console.WriteLine($"  Variables in result:");
+        foreach (var v in variables.OrderBy(v => v.Index))
+            Console.WriteLine($"    {v}");
+
+        // Verify type is NOT Constant
+        Assert.IsFalse(result is Constant,
+            "Result of Constant(0) + Product should NOT be a Constant");
+
+        // Verify both variables are present
+        Assert.IsTrue(variables.Contains(x),
+            "x should be present in result");
+        Assert.IsTrue(variables.Contains(y),
+            "y should be present in result");
+
+        // Verify it's quadratic
+        Assert.IsTrue(result.IsAtMostQuadratic(),
+            "Result should be at most quadratic");
+        Assert.IsFalse(result.IsLinear(),
+            "Result should NOT be linear");
+    }
+
+    [TestMethod]
+    public void ConstantWithReplacement_ShouldFollowReplacement()
+    {
+        // Test that Constant with _replacement is handled correctly in LinExpr/QuadExpr constructors
+        // This is the root cause of the bug where variables disappear
+        var model = new Model();
+        var x = model.AddVariable(0);
+        var y = model.AddVariable(0);
+
+        var expr = (Expr)0; // Creates Constant(0)
+        var product = x * y; // Creates Product
+
+        expr += product; // expr is now Constant with _replacement = Product
+
+        // expr is still a Constant (by design), but has _replacement pointing to Product
+        Assert.IsTrue(expr is Constant,
+            "expr should still be Constant type (optimization)");
+        Assert.AreEqual(product, expr.GetActual(),
+            "expr.GetActual() should return the replacement (Product)");
+
+        // Now add this "Constant-with-replacement" to another expression
+        var z = model.AddVariable(0);
+        var sum = z + expr; // BUG: LinExpr/QuadExpr constructor should follow _replacement
+
+        // Verify all variables are present in sum
+        var variables = new HashSet<Variable>();
+        sum.CollectVariables(variables);
+
+        Assert.IsTrue(variables.Contains(x),
+            "x should be present in sum (from the Product that expr redirects to)");
+        Assert.IsTrue(variables.Contains(y),
+            "y should be present in sum (from the Product that expr redirects to)");
+        Assert.IsTrue(variables.Contains(z),
+            "z should be present in sum");
+    }
+
+    [TestMethod]
+    public void ConstantWithReplacement_QuadExprConstructor_ShouldFollowReplacement()
+    {
+        // Test that QuadExpr constructor also follows _replacement
+        var model = new Model();
+        var fixedVar = model.AddVariable(60, 60); // Fixed variable
+        var freeVar = model.AddVariable(0); // Free variable
+        var x1 = model.AddVariable(0);
+        var x2 = model.AddVariable(0);
+
+        // Create a "Constant-with-replacement" like in actual optimization code
+        var eSurfaceTreatment = (Expr)0;
+        eSurfaceTreatment += fixedVar * freeVar; // Now eSurfaceTreatment is Constant with _replacement = Product
+
+        // Create complex expressions that will result in QuadExpr
+        var eMachineCost = fixedVar * (x1 * 2.0 + 5.0); // Quadratic
+        var eMachinePersonCost = x2 * (x1 * 3.0 + 1.0); // Quadratic
+
+        // Add them together - should create QuadExpr that properly handles eSurfaceTreatment
+        var predictedPrice = eMachineCost + eMachinePersonCost + eSurfaceTreatment;
+
+        Assert.IsTrue(predictedPrice is QuadExpr,
+            "predictedPrice should be QuadExpr");
+
+        // Verify all variables are present
+        var variables = new HashSet<Variable>();
+        predictedPrice.CollectVariables(variables);
+
+        Assert.IsTrue(variables.Contains(fixedVar),
+            "fixedVar should be present");
+        Assert.IsTrue(variables.Contains(freeVar),
+            "freeVar should be present (BUG: QuadExpr constructor doesn't follow _replacement)");
+        Assert.IsTrue(variables.Contains(x1),
+            "x1 should be present");
+        Assert.IsTrue(variables.Contains(x2),
+            "x2 should be present");
+    }
+
+    [TestMethod]
+    public void ComplexAddition_PreservesAllVariables()
+    {
+        // Reproduces bug where Product of fixed*free variable disappears when added to complex expressions
+        var model = new Model();
+
+        // Create variables like in the sheet metal optimization
+        var fixedVar = model.AddVariable(60, 60); // Fixed variable (like CHE salary)
+        var freeVar = model.AddVariable(0); // Free variable (like vAdditionalProcecedure)
+        var x1 = model.AddVariable(0);
+        var x2 = model.AddVariable(0);
+        var x3 = model.AddVariable(0);
+
+        // Create complex expressions like in actual optimization code
+        var eMaterial = x1 * 2.0; // Linear expression
+        var eMachineTime = x2 * 3.0 + 5.0; // Linear expression
+        var eMachineCost = fixedVar * eMachineTime; // Product: fixedVar * eMachineTime (beyond linear)
+        var eMachinePersonCost = x3 * eMachineTime; // Product: x3 * eMachineTime (beyond linear)
+
+        // Build eSurfaceTreatment using += like in actual code
+        var eSurfaceTreatment = (Expr)0;
+        var product = fixedVar * freeVar;
+        Console.WriteLine($"product type: {product.GetType().Name}");
+        Console.WriteLine($"product: {product}");
+
+        Console.WriteLine($"Before +=: eSurfaceTreatment type: {eSurfaceTreatment.GetType().Name}");
+        eSurfaceTreatment += product; // Product: fixedVar * freeVar (quadratic)
+        Console.WriteLine($"After +=: eSurfaceTreatment type: {eSurfaceTreatment.GetType().Name}");
+        Console.WriteLine($"eSurfaceTreatment: {eSurfaceTreatment}");
+
+        // Check if product variables are in eSurfaceTreatment
+        var stVars = new HashSet<Variable>();
+        eSurfaceTreatment.CollectVariables(stVars);
+        Console.WriteLine($"Variables in eSurfaceTreatment after +=:");
+        foreach (var v in stVars.OrderBy(v => v.Index))
+            Console.WriteLine($"  {v}");
+
+        // Add them together like in actual code: (eMaterial + eMachineCost + eMachinePersonCost + eSurfaceTreatment)
+        var predictedPrice = eMaterial + eMachineCost + eMachinePersonCost + eSurfaceTreatment;
+        Console.WriteLine($"predictedPrice type: {predictedPrice.GetType().Name}");
+        Console.WriteLine($"predictedPrice: {predictedPrice}");
+
+        // Verify the result type
+        Assert.IsTrue(predictedPrice is QuadExpr || predictedPrice is LinExpr,
+            $"Result should be QuadExpr or LinExpr, but got {predictedPrice.GetType().Name}");
+
+        // CRITICAL: Verify all variables are present in the result
+        var variables = new HashSet<Variable>();
+        predictedPrice.CollectVariables(variables);
+
+        Console.WriteLine($"Variables in predictedPrice:");
+        foreach (var v in variables.OrderBy(v => v.Index))
+            Console.WriteLine($"  {v}");
+
+        Assert.IsTrue(variables.Contains(fixedVar),
+            "Fixed variable should be present in result");
+        Assert.IsTrue(variables.Contains(freeVar),
+            $"Free variable x[{freeVar.Index}] should be present in result - THIS IS THE BUG");
+        Assert.IsTrue(variables.Contains(x1),
+            "x1 should be present in result");
+        Assert.IsTrue(variables.Contains(x2),
+            "x2 should be present in result");
+        Assert.IsTrue(variables.Contains(x3),
+            "x3 should be present in result");
+
+        // Verify it's actually quadratic (not linear) since we have Product terms
+        Assert.IsTrue(predictedPrice.IsAtMostQuadratic(),
+            "Result should be at most quadratic");
+        Assert.IsFalse(predictedPrice.IsLinear(),
+            "Result should NOT be linear since it contains Product terms");
+    }
+
+    [TestMethod]
+    public void ComplexAddition_WithMultipleConditionalTerms_PreservesAllVariables()
+    {
+        // More complex test that exactly mimics the actual optimization structure
+        var model = new Model();
+
+        var fixedVar = model.AddVariable(60, 60); // CHE salary
+        var freeVar = model.AddVariable(0); // vAdditionalProcecedure
+        var x1 = model.AddVariable(0);
+        var x2 = model.AddVariable(0);
+        var x3 = model.AddVariable(0);
+        var x4 = model.AddVariable(0);
+
+        var eMaterial = x1 * 2.0;
+        var eMachineTime = x2 * 3.0 + 5.0;
+        var eMachineCost = fixedVar * eMachineTime;
+        var eMachinePersonCost = x3 * eMachineTime;
+
+        // Build surface treatment with multiple conditional additions (like actual code)
+        var eSurfaceTreatment = (Expr)0;
+        // Some parts have coating
+        eSurfaceTreatment += fixedVar * x4 * 0.5; // Example: coating
+        // This part has additional procedure
+        eSurfaceTreatment += fixedVar * freeVar; // The problematic term
+
+        // Create predictedPrice
+        var predictedPrice = (eMaterial + eMachineCost + eMachinePersonCost + eSurfaceTreatment);
+
+        // Collect variables
+        var variables = new HashSet<Variable>();
+        predictedPrice.CollectVariables(variables);
+
+        // Verify all variables are present
+        Assert.IsTrue(variables.Contains(freeVar),
+            "Free variable (vAdditionalProcecedure) should be present in predictedPrice");
+        Assert.IsTrue(variables.Contains(fixedVar),
+            "Fixed variable should be present");
+        Assert.IsTrue(variables.Contains(x1), "x1 should be present");
+        Assert.IsTrue(variables.Contains(x2), "x2 should be present");
+        Assert.IsTrue(variables.Contains(x3), "x3 should be present");
+        Assert.IsTrue(variables.Contains(x4), "x4 should be present");
+    }
 }
 
 /// <summary>

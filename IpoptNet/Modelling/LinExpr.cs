@@ -33,18 +33,21 @@ public sealed class LinExpr : Expr
 
         foreach (var term in terms)
         {
-            if (term is Constant c)
+            // Follow replacement to get actual expression
+            var actualTerm = term.GetActual();
+
+            if (actualTerm is Constant c)
             {
                 constantSum += c.Value;
             }
             // Extract weight from Negation
-            else if (term is Negation neg)
+            else if (actualTerm is Negation neg)
             {
                 // Recursively process the negated operand with weight -1
                 ProcessTerm(neg.Operand, -1.0, ref constantSum, nonConstantTerms, weights);
             }
             // Merge nested LinExpr
-            else if (term is LinExpr lin)
+            else if (actualTerm is LinExpr lin)
             {
                 constantSum += lin.ConstantTerm;
                 for (int i = 0; i < lin.Terms.Count; i++)
@@ -54,7 +57,7 @@ public sealed class LinExpr : Expr
                 }
             }
             // Extract weight from Product with Factor field
-            else if (term is Product prod)
+            else if (actualTerm is Product prod)
             {
                 // Product now extracts Constants into Factor field
                 // If it has exactly 1 factor, we can flatten it
@@ -69,13 +72,13 @@ public sealed class LinExpr : Expr
                 }
                 else
                 {
-                    nonConstantTerms.Add(term);
+                    nonConstantTerms.Add(actualTerm);
                     weights.Add(1.0);
                 }
             }
             else
             {
-                nonConstantTerms.Add(term);
+                nonConstantTerms.Add(actualTerm);
                 weights.Add(1.0);
             }
         }
