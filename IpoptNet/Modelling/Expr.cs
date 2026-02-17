@@ -3,280 +3,251 @@ using System.Buffers;
 
 namespace IpoptNet.Modelling;
 
-public abstract class Expr
+public sealed class Expr
 {
-    protected Expr? _replacement;
-    internal HashSet<Variable>? _cachedVariables;
-    internal int[]? _sortedVarIndices;
+    internal ExprNode _node;
 
-    /// <summary>
-    /// Gets the actual expression, following any replacements. For testing purposes.
-    /// </summary>
-    public Expr GetActual() => _replacement ?? this;
+    internal Expr(ExprNode node)
+    {
+        _node = node;
+    }
 
-    public double Evaluate(ReadOnlySpan<double> x) => _replacement?.Evaluate(x) ?? EvaluateCore(x);
+    public double Evaluate(ReadOnlySpan<double> x) => _node.Evaluate(x);
 
     public void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad)
     {
-        var expr = _replacement ?? this;
-
         // Allocate compact buffer and compute compact gradient
-        var compactGrad = ArrayPool<double>.Shared.Rent(expr._cachedVariables!.Count);
-        Array.Clear(compactGrad, 0, expr._cachedVariables!.Count);
-        expr.AccumulateGradientCompactCore(x, compactGrad, 1.0, expr._sortedVarIndices!);
+        var compactGrad = ArrayPool<double>.Shared.Rent(_node._cachedVariables!.Count);
+        Array.Clear(compactGrad, 0, _node._cachedVariables!.Count);
+        _node.AccumulateGradientCompact(x, compactGrad, 1.0, _node._sortedVarIndices!);
 
         // Expand compact gradient to full-sized array
-        for (int i = 0; i < expr._sortedVarIndices!.Length; i++)
-            grad[expr._sortedVarIndices[i]] += compactGrad[i];
+        for (int i = 0; i < _node._sortedVarIndices!.Length; i++)
+            grad[_node._sortedVarIndices[i]] += compactGrad[i];
 
         ArrayPool<double>.Shared.Return(compactGrad);
     }
 
     public void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) =>
-        (_replacement ?? this).AccumulateHessianCore(x, hess, multiplier);
+        _node.AccumulateHessian(x, hess, multiplier);
     public void CollectVariables(HashSet<Variable> variables) =>
-        (_replacement ?? this).CollectVariablesCore(variables);
+        _node.CollectVariables(variables);
     public void CollectHessianSparsity(HashSet<(int row, int col)> entries) =>
-        (_replacement ?? this).CollectHessianSparsityCore(entries);
-
-    internal void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices) =>
-        (_replacement ?? this).AccumulateGradientCompactCore(x, compactGrad, multiplier, sortedVarIndices);
+        _node.CollectHessianSparsity(entries);
 
     /// <summary>
     /// Returns true if this expression contains no variables (is a constant value).
     /// </summary>
-    public bool IsConstantWrtX() => (_replacement ?? this).IsConstantWrtXCore();
+    public bool IsConstantWrtX() => _node.IsConstantWrtX();
 
     /// <summary>
     /// Returns true if this expression is linear (constant gradient, zero Hessian).
     /// Examples: 2*x + 3*y - 5, x, Constant
     /// </summary>
-    public bool IsLinear() => (_replacement ?? this).IsLinearCore();
+    public bool IsLinear() => _node.IsLinear();
 
     /// <summary>
     /// Returns true if this expression is at most quadratic (constant Hessian).
     /// Examples: x*y, x^2, 2*x + 3*y - 5
     /// </summary>
-    public bool IsAtMostQuadratic() => (_replacement ?? this).IsAtMostQuadraticCore();
-
-    protected abstract double EvaluateCore(ReadOnlySpan<double> x);
-    protected abstract void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices);
-    protected abstract void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier);
-    protected abstract void CollectVariablesCore(HashSet<Variable> variables);
-    protected abstract void CollectHessianSparsityCore(HashSet<(int row, int col)> entries);
-    protected abstract bool IsConstantWrtXCore();
-    protected abstract bool IsLinearCore();
-    protected abstract bool IsAtMostQuadraticCore();
-
-    protected static void AddSparsityEntry(HashSet<(int row, int col)> entries, int i, int j)
-    {
-        if (i < j) (i, j) = (j, i);
-        entries.Add((i, j));
-    }
-
-    protected static void AddClique(HashSet<(int row, int col)> entries, HashSet<Variable> variables)
-    {
-        var vars = variables.ToArray();
-        for (int i = 0; i < vars.Length; i++)
-            for (int j = 0; j <= i; j++)
-                AddSparsityEntry(entries, vars[i].Index, vars[j].Index);
-    }
+    public bool IsAtMostQuadratic() => _node.IsAtMostQuadratic();
 
     public override bool Equals(object? obj) => ReferenceEquals(this, obj);
     public override int GetHashCode() => RuntimeHelpers.GetHashCode(this);
 
-    public static implicit operator Expr(int value) => new Constant(value);
-    public static implicit operator Expr(double value) => new Constant(value);
+    public static implicit operator Expr(int value) => new Expr(new ConstantNode(value));
+    public static implicit operator Expr(double value) => new Expr(new ConstantNode(value));
+    public static implicit operator Expr(Variable v) => v._expr;
 
     public static Expr operator +(Expr a, Expr b)
     {
-        a = a.GetActual();
-        b = b.GetActual();
+        var na = a._node;
+        var nb = b._node;
 
         // If either operand is QuadExpr, result should be QuadExpr
         // BUT only if the other operand is also at most quadratic
-        if (a is QuadExpr && b.IsAtMostQuadratic())
+        if (na is QuadExprNode && nb.IsAtMostQuadratic())
         {
-            return new QuadExpr([a, b]);
+            return new Expr(new QuadExprNode([na, nb]));
         }
-        if (b is QuadExpr && a.IsAtMostQuadratic())
+        if (nb is QuadExprNode && na.IsAtMostQuadratic())
         {
-            return new QuadExpr([a, b]);
+            return new Expr(new QuadExprNode([na, nb]));
         }
 
         // Auto-create QuadExpr if BOTH operands are at most quadratic
         // and at least one is actually quadratic (non-linear)
-        bool aIsQuadratic = !a.IsLinear() && a.IsAtMostQuadratic();
-        bool bIsQuadratic = !b.IsLinear() && b.IsAtMostQuadratic();
+        bool aIsQuadratic = !na.IsLinear() && na.IsAtMostQuadratic();
+        bool bIsQuadratic = !nb.IsLinear() && nb.IsAtMostQuadratic();
 
-        if ((aIsQuadratic || bIsQuadratic) && a.IsAtMostQuadratic() && b.IsAtMostQuadratic())
+        if ((aIsQuadratic || bIsQuadratic) && na.IsAtMostQuadratic() && nb.IsAtMostQuadratic())
         {
-            return new QuadExpr([a, b]);
+            return new Expr(new QuadExprNode([na, nb]));
         }
 
         // Always create a new LinExpr to ensure proper merging
-        return new LinExpr([a, b]);
+        return new Expr(new LinExprNode([na, nb]));
     }
 
     public static Expr operator -(Expr a, Expr b)
     {
-        a = a.GetActual();
-        b = b.GetActual();
+        var na = a._node;
+        var nb = b._node;
 
         // If either operand is QuadExpr, result should be QuadExpr
         // BUT only if the other operand is also at most quadratic
-        if (a is QuadExpr && b.IsAtMostQuadratic())
+        if (na is QuadExprNode && nb.IsAtMostQuadratic())
         {
-            return new QuadExpr([a, -b]);
+            return new Expr(new QuadExprNode([na, new NegationNode(nb)]));
         }
-        if (b is QuadExpr && a.IsAtMostQuadratic())
+        if (nb is QuadExprNode && na.IsAtMostQuadratic())
         {
-            return new QuadExpr([a, -b]);
+            return new Expr(new QuadExprNode([na, new NegationNode(nb)]));
         }
 
         // Auto-create QuadExpr if BOTH operands are at most quadratic
-        bool aIsQuadratic = !a.IsLinear() && a.IsAtMostQuadratic();
-        bool bIsQuadratic = !b.IsLinear() && b.IsAtMostQuadratic();
+        bool aIsQuadratic = !na.IsLinear() && na.IsAtMostQuadratic();
+        bool bIsQuadratic = !nb.IsLinear() && nb.IsAtMostQuadratic();
 
-        if ((aIsQuadratic || bIsQuadratic) && a.IsAtMostQuadratic() && b.IsAtMostQuadratic())
+        if ((aIsQuadratic || bIsQuadratic) && na.IsAtMostQuadratic() && nb.IsAtMostQuadratic())
         {
-            return new QuadExpr([a, -b]);
+            return new Expr(new QuadExprNode([na, new NegationNode(nb)]));
         }
 
         // Always create a new LinExpr to ensure proper merging
-        return new LinExpr([a, -b]);
+        return new Expr(new LinExprNode([na, new NegationNode(nb)]));
     }
     public static Expr operator *(Expr a, Expr b)
     {
-        a = a.GetActual();
-        b = b.GetActual();
+        var na = a._node;
+        var nb = b._node;
 
         // If multiplying by a constant, use the optimized scalar multiplication
-        if (b is Constant c)
+        if (nb is ConstantNode c)
             return a * c.Value;
-        if (a is Constant c2)
+        if (na is ConstantNode c2)
             return c2.Value * b;
 
         // If left operand is already a Product, extend it with the right operand
-        if (a is Product prodA)
+        if (na is ProductNode prodA)
         {
-            return new Product([.. prodA.Factors, b])
+            return new Expr(new ProductNode([.. prodA.Factors, nb])
             {
                 Factor = prodA.Factor
-            };
+            });
         }
         // If right operand is a Product, prepend the left operand to it
-        else if (b is Product prodB)
+        else if (nb is ProductNode prodB)
         {
-            return new Product([a, .. prodB.Factors])
+            return new Expr(new ProductNode([na, .. prodB.Factors])
             {
                 Factor = prodB.Factor
-            };
+            });
         }
-        else if (ReferenceEquals(a, b))
+        else if (ReferenceEquals(na, nb))
         {
-            return new PowerOp(a, 2);
+            return new Expr(new PowerOpNode(na, 2));
         }
         // Always use Product for multiplication to avoid building deep trees
         else
         {
-            return new Product([a, b]);
+            return new Expr(new ProductNode([na, nb]));
         }
     }
     public static Expr operator /(Expr a, Expr b)
     {
-        a = a.GetActual();
-        b = b.GetActual();
+        var na = a._node;
+        var nb = b._node;
 
         // If dividing by a constant, use the optimized scalar division
-        if (b is Constant c)
+        if (nb is ConstantNode c)
             return a / c.Value;
-        return new Division(a, b);
+        return new Expr(new DivisionNode(na, nb));
     }
-    public static Expr operator -(Expr a) => new Negation(a);
+    public static Expr operator -(Expr a) => new Expr(new NegationNode(a._node));
 
     public static Expr operator +(Expr a, double b)
     {
-        a = a.GetActual();
+        var na = a._node;
 
         // Preserve QuadExpr if present
-        if (a is QuadExpr)
+        if (na is QuadExprNode)
         {
-            return new QuadExpr([a, new Constant(b)]);
+            return new Expr(new QuadExprNode([na, new ConstantNode(b)]));
         }
         // Auto-create QuadExpr for quadratic expressions
-        if (!a.IsLinear() && a.IsAtMostQuadratic())
+        if (!na.IsLinear() && na.IsAtMostQuadratic())
         {
-            return new QuadExpr([a, new Constant(b)]);
+            return new Expr(new QuadExprNode([na, new ConstantNode(b)]));
         }
-        return new LinExpr([a, new Constant(b)]);
+        return new Expr(new LinExprNode([na, new ConstantNode(b)]));
     }
 
     public static Expr operator +(double a, Expr b)
     {
-        b = b.GetActual();
+        var nb = b._node;
 
         // Preserve QuadExpr if present
-        if (b is QuadExpr)
+        if (nb is QuadExprNode)
         {
-            return new QuadExpr([new Constant(a), b]);
+            return new Expr(new QuadExprNode([new ConstantNode(a), nb]));
         }
         // Auto-create QuadExpr for quadratic expressions
-        if (!b.IsLinear() && b.IsAtMostQuadratic())
+        if (!nb.IsLinear() && nb.IsAtMostQuadratic())
         {
-            return new QuadExpr([new Constant(a), b]);
+            return new Expr(new QuadExprNode([new ConstantNode(a), nb]));
         }
-        return new LinExpr([new Constant(a), b]);
+        return new Expr(new LinExprNode([new ConstantNode(a), nb]));
     }
     public static Expr operator -(Expr a, double b)
     {
-        a = a.GetActual();
+        var na = a._node;
 
         // Preserve QuadExpr if present
-        if (a is QuadExpr)
+        if (na is QuadExprNode)
         {
-            return new QuadExpr([a, new Constant(-b)]);
+            return new Expr(new QuadExprNode([na, new ConstantNode(-b)]));
         }
         // Auto-create QuadExpr for quadratic expressions
-        if (!a.IsLinear() && a.IsAtMostQuadratic())
+        if (!na.IsLinear() && na.IsAtMostQuadratic())
         {
-            return new QuadExpr([a, new Constant(-b)]);
+            return new Expr(new QuadExprNode([na, new ConstantNode(-b)]));
         }
-        return new LinExpr([a, new Constant(-b)]);
+        return new Expr(new LinExprNode([na, new ConstantNode(-b)]));
     }
 
     public static Expr operator -(double a, Expr b)
     {
-        b = b.GetActual();
+        var nb = b._node;
 
         // Preserve QuadExpr if present
-        if (b is QuadExpr)
+        if (nb is QuadExprNode)
         {
-            return new QuadExpr([new Constant(a), -b]);
+            return new Expr(new QuadExprNode([new ConstantNode(a), new NegationNode(nb)]));
         }
         // Auto-create QuadExpr for quadratic expressions
-        if (!b.IsLinear() && b.IsAtMostQuadratic())
+        if (!nb.IsLinear() && nb.IsAtMostQuadratic())
         {
-            return new QuadExpr([new Constant(a), -b]);
+            return new Expr(new QuadExprNode([new ConstantNode(a), new NegationNode(nb)]));
         }
-        return new LinExpr([new Constant(a), -b]);
+        return new Expr(new LinExprNode([new ConstantNode(a), new NegationNode(nb)]));
     }
     public static Expr operator *(Expr a, double b)
     {
-        a = a.GetActual();
+        var na = a._node;
 
-        if (a is LinExpr linA)
+        if (na is LinExprNode linA)
         {
-            return new LinExpr()
+            return new Expr(new LinExprNode()
             {
                 Terms = [.. linA.Terms],
                 Weights = linA.Weights.Select(w => w * b).ToList(),
                 ConstantTerm = linA.ConstantTerm * b
-            };
+            });
         }
-        if (a is QuadExpr quadA)
+        if (na is QuadExprNode quadA)
         {
-            return new QuadExpr()
+            return new Expr(new QuadExprNode()
             {
                 LinearTerms = [.. quadA.LinearTerms],
                 LinearWeights = quadA.LinearWeights.Select(w => w * b).ToList(),
@@ -284,34 +255,34 @@ public abstract class Expr
                 QuadraticTerms2 = [.. quadA.QuadraticTerms2],
                 QuadraticWeights = quadA.QuadraticWeights.Select(w => w * b).ToList(),
                 ConstantTerm = quadA.ConstantTerm * b
-            };
+            });
         }
-        if (a is Product prodA)
+        if (na is ProductNode prodA)
         {
-            return new Product([.. prodA.Factors])
+            return new Expr(new ProductNode([.. prodA.Factors])
             {
                 Factor = prodA.Factor * b
-            };
+            });
         }
-        return new Product([a, new Constant(b)]);
+        return new Expr(new ProductNode([na, new ConstantNode(b)]));
     }
 
     public static Expr operator *(double a, Expr b)
     {
-        b = b.GetActual();
+        var nb = b._node;
 
-        if (b is LinExpr linB)
+        if (nb is LinExprNode linB)
         {
-            return new LinExpr()
+            return new Expr(new LinExprNode()
             {
                 Terms = [.. linB.Terms],
                 Weights = linB.Weights.Select(w => w * a).ToList(),
                 ConstantTerm = linB.ConstantTerm * a
-            };
+            });
         }
-        if (b is QuadExpr quadB)
+        if (nb is QuadExprNode quadB)
         {
-            return new QuadExpr()
+            return new Expr(new QuadExprNode()
             {
                 LinearTerms = [.. quadB.LinearTerms],
                 LinearWeights = quadB.LinearWeights.Select(w => w * a).ToList(),
@@ -319,33 +290,33 @@ public abstract class Expr
                 QuadraticTerms2 = [.. quadB.QuadraticTerms2],
                 QuadraticWeights = quadB.QuadraticWeights.Select(w => w * a).ToList(),
                 ConstantTerm = quadB.ConstantTerm * a
-            };
+            });
         }
-        if (b is Product prodB)
+        if (nb is ProductNode prodB)
         {
-            return new Product([.. prodB.Factors])
+            return new Expr(new ProductNode([.. prodB.Factors])
             {
                 Factor = prodB.Factor * a
-            };
+            });
         }
-        return new Product([new Constant(a), b]);
+        return new Expr(new ProductNode([new ConstantNode(a), nb]));
     }
     public static Expr operator /(Expr a, double b)
     {
-        a = a.GetActual();
+        var na = a._node;
 
-        if (a is LinExpr linA)
+        if (na is LinExprNode linA)
         {
-            return new LinExpr()
+            return new Expr(new LinExprNode()
             {
                 Terms = [.. linA.Terms],
                 Weights = linA.Weights.Select(w => w / b).ToList(),
                 ConstantTerm = linA.ConstantTerm / b
-            };
+            });
         }
-        if (a is QuadExpr quadA)
+        if (na is QuadExprNode quadA)
         {
-            return new QuadExpr()
+            return new Expr(new QuadExprNode()
             {
                 LinearTerms = [.. quadA.LinearTerms],
                 LinearWeights = quadA.LinearWeights.Select(w => w / b).ToList(),
@@ -353,243 +324,167 @@ public abstract class Expr
                 QuadraticTerms2 = [.. quadA.QuadraticTerms2],
                 QuadraticWeights = quadA.QuadraticWeights.Select(w => w / b).ToList(),
                 ConstantTerm = quadA.ConstantTerm / b
-            };
+            });
         }
         return a * (1.0 / b);
     }
-    public static Expr operator /(double a, Expr b) => new Division(new Constant(a), b);
+    public static Expr operator /(double a, Expr b) => new Expr(new DivisionNode(new ConstantNode(a), b._node));
 
     // C# 14 compound assignment operators - modify expression in-place for efficiency
     public void operator +=(Expr other)
     {
-        other = other.GetActual();
+        var no = other._node;
 
-        // Check if we've been replaced with a QuadExpr - use efficient AddTerm
-        if (_replacement is QuadExpr quad)
+        // Check if node is a QuadExpr - use efficient AddTerm
+        if (_node is QuadExprNode quad)
         {
-            quad.AddTerm(other, 1.0);
+            quad.AddTerm(no, 1.0);
         }
-        // Check if we've been replaced with a LinExpr - use efficient AddTerm
-        else if (_replacement is LinExpr lin)
+        // Check if node is a LinExpr - use efficient AddTerm
+        else if (_node is LinExprNode lin)
         {
-            lin.AddTerm(other, 1.0);
+            lin.AddTerm(no, 1.0);
         }
-        // Check if this is directly a QuadExpr (no replacement) - use efficient AddTerm
-        else if (_replacement is null && this is QuadExpr thisQuad)
+        // Check if this is a zero constant
+        else if (_node is ConstantNode { Value: 0 })
         {
-            thisQuad.AddTerm(other, 1.0);
-        }
-        // Check if this is directly a LinExpr (no replacement) - use efficient AddTerm
-        else if (_replacement is null && this is LinExpr thisLin)
-        {
-            thisLin.AddTerm(other, 1.0);
-        }
-        // Check if this is a zero constant with no replacement yet
-        else if (_replacement is null && this is Constant { Value: 0 })
-        {
-            ReplaceWith(other);
+            _node = no;
         }
         // Otherwise create appropriate expression type
         else
         {
-            var current = Clone();
+            var current = _node;
             // Use QuadExpr if either operand is quadratic
             if ((!current.IsLinear() && current.IsAtMostQuadratic()) ||
-                (!other.IsLinear() && other.IsAtMostQuadratic()) ||
-                current is QuadExpr || other is QuadExpr)
+                (!no.IsLinear() && no.IsAtMostQuadratic()) ||
+                current is QuadExprNode || no is QuadExprNode)
             {
-                ReplaceWith(new QuadExpr([current, other]));
+                _node = new QuadExprNode([current, no]);
             }
             else
             {
-                ReplaceWith(new LinExpr([current, other]));
+                _node = new LinExprNode([current, no]);
             }
         }
     }
 
     public void operator -=(Expr other)
     {
-        other = other.GetActual();
+        var no = other._node;
 
-        // Check if we've been replaced with a QuadExpr - use efficient AddTerm
-        if (_replacement is QuadExpr quad)
+        // Check if node is a QuadExpr - use efficient AddTerm
+        if (_node is QuadExprNode quad)
         {
-            quad.AddTerm(other, -1.0);
+            quad.AddTerm(no, -1.0);
         }
-        // Check if we've been replaced with a LinExpr - use efficient AddTerm
-        else if (_replacement is LinExpr lin)
+        // Check if node is a LinExpr - use efficient AddTerm
+        else if (_node is LinExprNode lin)
         {
-            lin.AddTerm(other, -1.0);
+            lin.AddTerm(no, -1.0);
         }
-        // Check if this is directly a QuadExpr (no replacement) - use efficient AddTerm
-        else if (_replacement is null && this is QuadExpr thisQuad)
+        // Check if this is a zero constant
+        else if (_node is ConstantNode { Value: 0 })
         {
-            thisQuad.AddTerm(other, -1.0);
-        }
-        // Check if this is directly a LinExpr (no replacement) - use efficient AddTerm
-        else if (_replacement is null && this is LinExpr thisLin)
-        {
-            thisLin.AddTerm(other, -1.0);
-        }
-        // Check if this is a zero constant with no replacement yet
-        else if (_replacement is null && this is Constant { Value: 0 })
-        {
-            ReplaceWith(-other);
+            _node = new NegationNode(no);
         }
         // Otherwise create appropriate expression type
         else
         {
-            var current = Clone();
+            var current = _node;
             // Use QuadExpr if either operand is quadratic
             if ((!current.IsLinear() && current.IsAtMostQuadratic()) ||
-                (!other.IsLinear() && other.IsAtMostQuadratic()) ||
-                current is QuadExpr || other is QuadExpr)
+                (!no.IsLinear() && no.IsAtMostQuadratic()) ||
+                current is QuadExprNode || no is QuadExprNode)
             {
-                ReplaceWith(new QuadExpr([current, -other]));
+                _node = new QuadExprNode([current, new NegationNode(no)]);
             }
             else
             {
-                ReplaceWith(new LinExpr([current, -other]));
+                _node = new LinExprNode([current, new NegationNode(no)]);
             }
         }
     }
 
     public void operator *=(Expr other)
     {
-        other = other.GetActual();
+        var no = other._node;
 
         // Special handling for LinExpr and QuadExpr multiplying by constant
-        if (other is Constant c)
+        if (no is ConstantNode c)
         {
-            if (_replacement is LinExpr replacementLin)
+            if (_node is LinExprNode lin)
             {
-                for (int i = 0; i < replacementLin.Weights.Count; i++)
-                    replacementLin.Weights[i] *= c.Value;
-                replacementLin.ConstantTerm *= c.Value;
+                for (int i = 0; i < lin.Weights.Count; i++)
+                    lin.Weights[i] *= c.Value;
+                lin.ConstantTerm *= c.Value;
                 return;
             }
-            if (_replacement is QuadExpr replacementQuad)
+            if (_node is QuadExprNode quad)
             {
-                for (int i = 0; i < replacementQuad.LinearWeights.Count; i++)
-                    replacementQuad.LinearWeights[i] *= c.Value;
-                for (int i = 0; i < replacementQuad.QuadraticWeights.Count; i++)
-                    replacementQuad.QuadraticWeights[i] *= c.Value;
-                replacementQuad.ConstantTerm *= c.Value;
-                return;
-            }
-            if (_replacement is null && this is LinExpr thisLin)
-            {
-                for (int i = 0; i < thisLin.Weights.Count; i++)
-                    thisLin.Weights[i] *= c.Value;
-                thisLin.ConstantTerm *= c.Value;
-                return;
-            }
-            if (_replacement is null && this is QuadExpr thisQuad)
-            {
-                for (int i = 0; i < thisQuad.LinearWeights.Count; i++)
-                    thisQuad.LinearWeights[i] *= c.Value;
-                for (int i = 0; i < thisQuad.QuadraticWeights.Count; i++)
-                    thisQuad.QuadraticWeights[i] *= c.Value;
-                thisQuad.ConstantTerm *= c.Value;
+                for (int i = 0; i < quad.LinearWeights.Count; i++)
+                    quad.LinearWeights[i] *= c.Value;
+                for (int i = 0; i < quad.QuadraticWeights.Count; i++)
+                    quad.QuadraticWeights[i] *= c.Value;
+                quad.ConstantTerm *= c.Value;
                 return;
             }
         }
 
-        // Check if we've been replaced with a Product
-        if (_replacement is Product replacementProduct)
+        // Check if node is a Product
+        if (_node is ProductNode prod)
         {
-            replacementProduct.Factors.Add(other);
+            prod.Factors.Add(no);
         }
-        // Check if this is directly a Product (no replacement)
-        else if (_replacement is null && this is Product thisProduct)
+        // Check if this is a one constant
+        else if (_node is ConstantNode { Value: 1 })
         {
-            thisProduct.Factors.Add(other);
-        }
-        // Check if this is a one constant with no replacement yet
-        else if (_replacement is null && this is Constant { Value: 1 })
-        {
-            ReplaceWith(other);
+            _node = no;
         }
         // Otherwise create a new Product with current value and new factor
         else
         {
-            ReplaceWith(new Product([Clone(), other]));
+            _node = new ProductNode([_node, no]);
         }
     }
 
     public void operator /=(Expr other)
     {
-        other = other.GetActual();
+        var no = other._node;
 
         // Special handling for LinExpr and QuadExpr dividing by constant
-        if (other is Constant c)
+        if (no is ConstantNode c)
         {
-            if (_replacement is LinExpr replacementLin)
+            if (_node is LinExprNode lin)
             {
-                for (int i = 0; i < replacementLin.Weights.Count; i++)
-                    replacementLin.Weights[i] /= c.Value;
-                replacementLin.ConstantTerm /= c.Value;
+                for (int i = 0; i < lin.Weights.Count; i++)
+                    lin.Weights[i] /= c.Value;
+                lin.ConstantTerm /= c.Value;
                 return;
             }
-            if (_replacement is QuadExpr replacementQuad)
+            if (_node is QuadExprNode quad)
             {
-                for (int i = 0; i < replacementQuad.LinearWeights.Count; i++)
-                    replacementQuad.LinearWeights[i] /= c.Value;
-                for (int i = 0; i < replacementQuad.QuadraticWeights.Count; i++)
-                    replacementQuad.QuadraticWeights[i] /= c.Value;
-                replacementQuad.ConstantTerm /= c.Value;
-                return;
-            }
-            if (_replacement is null && this is LinExpr thisLin)
-            {
-                for (int i = 0; i < thisLin.Weights.Count; i++)
-                    thisLin.Weights[i] /= c.Value;
-                thisLin.ConstantTerm /= c.Value;
-                return;
-            }
-            if (_replacement is null && this is QuadExpr thisQuad)
-            {
-                for (int i = 0; i < thisQuad.LinearWeights.Count; i++)
-                    thisQuad.LinearWeights[i] /= c.Value;
-                for (int i = 0; i < thisQuad.QuadraticWeights.Count; i++)
-                    thisQuad.QuadraticWeights[i] /= c.Value;
-                thisQuad.ConstantTerm /= c.Value;
+                for (int i = 0; i < quad.LinearWeights.Count; i++)
+                    quad.LinearWeights[i] /= c.Value;
+                for (int i = 0; i < quad.QuadraticWeights.Count; i++)
+                    quad.QuadraticWeights[i] /= c.Value;
+                quad.ConstantTerm /= c.Value;
                 return;
             }
         }
 
-        // Check if we've been replaced with a Product (add reciprocal)
-        if (_replacement is Product replacementProduct)
+        // Check if node is a Product (add reciprocal)
+        if (_node is ProductNode prod)
         {
-            replacementProduct.Factors.Add(new Division(1, other));
-        }
-        // Check if this is directly a Product (no replacement)
-        else if (_replacement is null && this is Product thisProduct)
-        {
-            thisProduct.Factors.Add(new Division(1, other));
+            prod.Factors.Add(new DivisionNode(new ConstantNode(1), no));
         }
         // Otherwise create a division
         else
         {
-            ReplaceWith(new Division(Clone(), other));
+            _node = new DivisionNode(_node, no);
         }
     }
 
     public Constraint Between(double lower, double upper) => new Constraint(this, lower, upper);
-
-    protected Expr Clone()
-    {
-        if (_replacement is not null)
-            return _replacement.Clone();
-        return CloneCore();
-    }
-
-    protected abstract Expr CloneCore();
-
-    protected void ReplaceWith(Expr other)
-    {
-        _replacement = other;
-    }
 
     /// <summary>
     /// Caches variables for this expression and all children to optimize repeated Hessian evaluations.
@@ -597,29 +492,7 @@ public abstract class Expr
     /// </summary>
     internal void Prepare()
     {
-        if (_replacement is not null)
-        {
-            _replacement.Prepare();
-            return;
-        }
-
-        if (_cachedVariables is not null)
-            return;
-
-        _cachedVariables = new HashSet<Variable>();
-        CollectVariablesCore(_cachedVariables);
-
-        // Build sorted variable indices
-        _sortedVarIndices = new int[_cachedVariables.Count];
-        {
-            var i = 0;
-            foreach (var v in _cachedVariables)
-                _sortedVarIndices[i++] = v.Index;
-        }
-        Array.Sort(_sortedVarIndices);
-
-        // Recursively cache for children
-        PrepareChildren();
+        _node.Prepare();
     }
 
     /// <summary>
@@ -627,17 +500,8 @@ public abstract class Expr
     /// </summary>
     internal void Clear()
     {
-        if (_replacement is not null)
-            _replacement.Clear();
-
-        _cachedVariables = null;
-        _sortedVarIndices = null;
-        ClearChildren();
+        _node.Clear();
     }
-
-    protected virtual void PrepareChildren() { }
-
-    protected virtual void ClearChildren() { }
 
     public static Constraint operator >=(Expr expr, double value) => new(expr, value, double.PositiveInfinity);
     public static Constraint operator <=(Expr expr, double value) => new(expr, double.NegativeInfinity, value);
@@ -654,26 +518,14 @@ public abstract class Expr
     public static Constraint operator ==(Expr left, Expr right) => new(left - right, 0, 0);
     public static Constraint operator !=(Expr left, Expr right) => throw new NotSupportedException("Inequality constraints (!=) are not supported in optimization models.");
 
-    public static Expr Pow(Expr @base, double exponent) => new PowerOp(@base, exponent);
+    public static Expr Pow(Expr @base, double exponent) => new Expr(new PowerOpNode(@base._node, exponent));
     public static Expr Pow(Expr @base, Expr exponent) => Exp(exponent * Log(@base));
-    public static Expr Sqrt(Expr a) => new PowerOp(a, 0.5);
-    public static Expr Sin(Expr a) => new Sin(a);
-    public static Expr Cos(Expr a) => new Cos(a);
-    public static Expr Tan(Expr a) => new Tan(a);
-    public static Expr Exp(Expr a) => new Exp(a);
-    public static Expr Log(Expr a) => new Log(a);
+    public static Expr Sqrt(Expr a) => new Expr(new PowerOpNode(a._node, 0.5));
+    public static Expr Sin(Expr a) => new Expr(new SinNode(a._node));
+    public static Expr Cos(Expr a) => new Expr(new CosNode(a._node));
+    public static Expr Tan(Expr a) => new Expr(new TanNode(a._node));
+    public static Expr Exp(Expr a) => new Expr(new ExpNode(a._node));
+    public static Expr Log(Expr a) => new Expr(new LogNode(a._node));
 
-    public override string ToString()
-    {
-        if (_replacement is not null)
-            return _replacement.ToString();
-        return ToStringCore();
-    }
-
-    protected virtual string ToStringCore() => GetType().Name;
-
-    /// <summary>
-    /// Returns true if this expression contains only variables and constants (no complex operations).
-    /// </summary>
-    internal virtual bool IsSimpleForPrinting() => false;
+    public override string ToString() => _node.ToString() ?? string.Empty;
 }

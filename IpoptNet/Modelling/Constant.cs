@@ -1,23 +1,21 @@
 namespace IpoptNet.Modelling;
 
-public sealed class Constant : Expr
+internal sealed class ConstantNode : ExprNode
 {
     public double Value { get; set; }
 
-    public Constant(double value) => Value = value;
+    public ConstantNode(double value) => Value = value;
 
-    protected override double EvaluateCore(ReadOnlySpan<double> x) => Value;
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices) { }
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) { }
-    protected override void CollectVariablesCore(HashSet<Variable> variables) { }
-    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries) { }
-    protected override bool IsConstantWrtXCore() => true;
-    protected override bool IsLinearCore() => true;
-    protected override bool IsAtMostQuadraticCore() => true;
+    internal override double Evaluate(ReadOnlySpan<double> x) => Value;
+    internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices) { }
+    internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) { }
+    internal override void CollectVariables(HashSet<Variable> variables) { }
+    internal override void CollectHessianSparsity(HashSet<(int row, int col)> entries) { }
+    internal override bool IsConstantWrtX() => true;
+    internal override bool IsLinear() => true;
+    internal override bool IsAtMostQuadratic() => true;
 
-    protected override Expr CloneCore() => new Constant(Value);
-
-    protected override string ToStringCore() => Value.ToString();
+    public override string ToString() => Value.ToString();
 
     internal override bool IsSimpleForPrinting() => true;
 }

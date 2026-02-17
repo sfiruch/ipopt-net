@@ -1399,11 +1399,6 @@ public class ModellingTests
         Assert.IsTrue(constant.IsLinear());
         Assert.IsTrue(constant.IsAtMostQuadratic());
 
-        // Variables are linear
-        Assert.IsFalse(x.IsConstantWrtX());
-        Assert.IsTrue(x.IsLinear());
-        Assert.IsTrue(x.IsAtMostQuadratic());
-
         // Linear combinations
         var linear = 2 * x + 3 * y - 5;
         Assert.IsFalse(linear.IsConstantWrtX());

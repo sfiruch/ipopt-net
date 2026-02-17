@@ -2,28 +2,28 @@ using System.Text;
 
 namespace IpoptNet.Modelling;
 
-public sealed class Division : Expr
+internal sealed class DivisionNode : ExprNode
 {
-    public Expr Left { get; set; }
-    public Expr Right { get; set; }
+    public ExprNode Left { get; set; }
+    public ExprNode Right { get; set; }
     private double[]? _gradLBuffer;
     private double[]? _gradRBuffer;
     private int[]? _allVarsSorted;
     private int[]? _lIndices; // Index in _gradLBuffer for each var in _allVarsSorted, or -1 if not in L
     private int[]? _rIndices; // Index in _gradRBuffer for each var in _allVarsSorted, or -1 if not in R
 
-    public Division(Expr left, Expr right)
+    public DivisionNode(ExprNode left, ExprNode right)
     {
         Left = left;
         Right = right;
     }
 
-    protected override double EvaluateCore(ReadOnlySpan<double> x)
+    internal override double Evaluate(ReadOnlySpan<double> x)
     {
         return Left.Evaluate(x) / Right.Evaluate(x);
     }
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
+    internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         var rVal = Right.Evaluate(x);
         var lVal = Left.Evaluate(x);
@@ -31,7 +31,7 @@ public sealed class Division : Expr
         Right.AccumulateGradientCompact(x, compactGrad, -multiplier * lVal / (rVal * rVal), sortedVarIndices);
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
+    internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         // f = l / r
         // df/dx = (l'r - lr') / r²
@@ -90,13 +90,13 @@ public sealed class Division : Expr
     }
 
 
-    protected override void CollectVariablesCore(HashSet<Variable> variables)
+    internal override void CollectVariables(HashSet<Variable> variables)
     {
         Left.CollectVariables(variables);
         Right.CollectVariables(variables);
     }
 
-    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    internal override void CollectHessianSparsity(HashSet<(int row, int col)> entries)
     {
         if (Right.IsConstantWrtX())
         {
@@ -113,23 +113,21 @@ public sealed class Division : Expr
         }
     }
 
-    protected override bool IsConstantWrtXCore() => Left.IsConstantWrtX() && Right.IsConstantWrtX();
+    internal override bool IsConstantWrtX() => Left.IsConstantWrtX() && Right.IsConstantWrtX();
 
-    protected override bool IsLinearCore()
+    internal override bool IsLinear()
     {
         // Linear if numerator is linear and denominator is constant
         return Left.IsLinear() && Right.IsConstantWrtX();
     }
 
-    protected override bool IsAtMostQuadraticCore()
+    internal override bool IsAtMostQuadratic()
     {
         // At most quadratic if numerator is at most quadratic and denominator is constant
         return Left.IsAtMostQuadratic() && Right.IsConstantWrtX();
     }
 
-    protected override Expr CloneCore() => new Division(Left, Right);
-
-    protected override void PrepareChildren()
+    internal override void PrepareChildren()
     {
         Left.Prepare();
         Right.Prepare();
@@ -191,7 +189,7 @@ public sealed class Division : Expr
         _rIndices = rIndicesList.ToArray();
     }
 
-    protected override void ClearChildren()
+    internal override void ClearChildren()
     {
         Left.Clear();
         Right.Clear();
@@ -202,7 +200,7 @@ public sealed class Division : Expr
         _rIndices = null;
     }
 
-    protected override string ToStringCore()
+    public override string ToString()
     {
         // If both operands are simple, format inline
         if (Left.IsSimpleForPrinting() && Right.IsSimpleForPrinting())
@@ -212,10 +210,10 @@ public sealed class Division : Expr
         var sb = new StringBuilder();
         sb.AppendLine("Division:");
         sb.AppendLine("  Left:");
-        foreach (var line in Left.ToString().Split(Environment.NewLine))
+        foreach (var line in Left.ToString()!.Split(Environment.NewLine))
             sb.AppendLine($"    {line}");
         sb.AppendLine("  Right:");
-        foreach (var line in Right.ToString().Split(Environment.NewLine))
+        foreach (var line in Right.ToString()!.Split(Environment.NewLine))
             sb.AppendLine($"    {line}");
         return sb.ToString().TrimEnd();
     }

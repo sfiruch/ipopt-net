@@ -10,6 +10,21 @@ public class ExpressionTests
     private const double GradientTolerance = 1e-4;
     private const double HessianTolerance = 5e-3;
 
+    private static Expr Const(double value) => value;
+    private static Expr Neg(Expr a) => -a;
+
+    private static Expr Lin(params Expr[] terms) => new(new LinExprNode(terms.Select(t => t._node).ToList()));
+    private static Expr Quad(params Expr[] terms) => new(new QuadExprNode(terms.Select(t => t._node).ToList()));
+    private static Expr Prod(params Expr[] factors) => new(new ProductNode(factors.Select(f => f._node).ToList()));
+
+    private static ExprNode N(Expr e) => e._node;
+    private static ExprNode N(Variable v) => v._expr._node;
+
+    private static LinExprNode LinNode(Expr e) => (LinExprNode)e._node;
+    private static QuadExprNode QuadNode(Expr e) => (QuadExprNode)e._node;
+    private static ProductNode ProdNode(Expr e) => (ProductNode)e._node;
+    private static ConstantNode ConstNode(Expr e) => (ConstantNode)e._node;
+
     [TestMethod]
     public void Gradient_Addition_MatchesFiniteDifference()
     {
@@ -165,7 +180,7 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create a Product directly with repeated factors: x * x * y
-        var product = new Product([x, x, y]);
+        var product = Prod([x, x, y]);
         double[] point = [2, 3];
 
         // d(x²y)/dx = 2xy = 2*2*3 = 12
@@ -181,7 +196,7 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create a Product directly with repeated factors: x * x
-        var product = new Product([x, x]);
+        var product = Prod([x, x]);
         double[] point = [2, 3];
 
         // d²(x²)/dx² = 2
@@ -405,8 +420,8 @@ public class ExpressionTests
         var expr = x * y * z;
         double[] point = [2.0, 3.0, 5.0];
 
-        // First verify this is actually creating a Product
-        Assert.IsInstanceOfType(expr, typeof(Product), "x*y*z should create a Product");
+        // First verify this is actually creating a ProductNode
+        Assert.IsInstanceOfType(expr._node, typeof(ProductNode), "x*y*z should create a ProductNode");
 
         // Cache variables before computing Hessian
         expr.Prepare();
@@ -487,19 +502,20 @@ public class ExpressionTests
         var v137 = model.AddVariable(0);
         var v138 = model.AddVariable(0);
 
-        // Build QuadExpr with zero-weight terms
-        var quad = new QuadExpr();
-        quad.LinearTerms.Add(v138);
-        quad.LinearWeights.Add(1.0);
-        quad.QuadraticTerms1.Add(v129);
-        quad.QuadraticTerms2.Add(v134);
-        quad.QuadraticWeights.Add(0); // Zero weight!
-        quad.QuadraticTerms1.Add(v136);
-        quad.QuadraticTerms2.Add(v129);
-        quad.QuadraticWeights.Add(0.042);
-        quad.QuadraticTerms1.Add(v129);
-        quad.QuadraticTerms2.Add(v137);
-        quad.QuadraticWeights.Add(1.0);
+        // Build QuadExprNode with zero-weight terms
+        var quad = Quad();
+        var quadNode = QuadNode(quad);
+        quadNode.LinearTerms.Add(N(v138));
+        quadNode.LinearWeights.Add(1.0);
+        quadNode.QuadraticTerms1.Add(N(v129));
+        quadNode.QuadraticTerms2.Add(N(v134));
+        quadNode.QuadraticWeights.Add(0); // Zero weight!
+        quadNode.QuadraticTerms1.Add(N(v136));
+        quadNode.QuadraticTerms2.Add(N(v129));
+        quadNode.QuadraticWeights.Add(0.042);
+        quadNode.QuadraticTerms1.Add(N(v129));
+        quadNode.QuadraticTerms2.Add(N(v137));
+        quadNode.QuadraticWeights.Add(1.0);
 
         // Build LinExpr: constant - v96*v73 - v96*v139*quad - v113*quad
         var linExpr = 3.27 - 0.001 * v96 * v73 - v96 * v139 * quad - v113 * quad;
@@ -783,9 +799,9 @@ public class ExpressionTests
         for (int i = 1; i < 100; i++)
             sum = sum + variables[i];
 
-        // Verify it creates a LinExpr expression, not a deep tree of expressions
-        Assert.IsInstanceOfType(sum, typeof(LinExpr));
-        var linExpr = (LinExpr)sum;
+        // Verify it creates a LinExprNode expression, not a deep tree of expressions
+        Assert.IsInstanceOfType(sum._node, typeof(LinExprNode));
+        var linExpr = LinNode(sum);
         Assert.AreEqual(100, linExpr.Terms.Count);
 
         // Verify it evaluates correctly
@@ -814,9 +830,9 @@ public class ExpressionTests
         for (int i = 1; i < 50; i++)
             product = product * variables[i];
 
-        // Verify it creates a Product expression, not a deep tree of Divisions
-        Assert.IsInstanceOfType(product, typeof(Product));
-        var productExpr = (Product)product;
+        // Verify it creates a ProductNode expression, not a deep tree of Divisions
+        Assert.IsInstanceOfType(product._node, typeof(ProductNode));
+        var productExpr = ProdNode(product);
         Assert.AreEqual(50, productExpr.Factors.Count);
 
         // Verify it evaluates correctly (use small values to avoid overflow)
@@ -839,13 +855,13 @@ public class ExpressionTests
         Expr one = 1;
         Expr five = 5;
 
-        Assert.IsInstanceOfType(zero, typeof(Constant));
-        Assert.IsInstanceOfType(one, typeof(Constant));
-        Assert.IsInstanceOfType(five, typeof(Constant));
+        Assert.IsInstanceOfType(zero._node, typeof(ConstantNode));
+        Assert.IsInstanceOfType(one._node, typeof(ConstantNode));
+        Assert.IsInstanceOfType(five._node, typeof(ConstantNode));
 
-        Assert.AreEqual(0.0, ((Constant)zero).Value);
-        Assert.AreEqual(1.0, ((Constant)one).Value);
-        Assert.AreEqual(5.0, ((Constant)five).Value);
+        Assert.AreEqual(0.0, ConstNode(zero).Value);
+        Assert.AreEqual(1.0, ConstNode(one).Value);
+        Assert.AreEqual(5.0, ConstNode(five).Value);
     }
 
     [TestMethod]
@@ -856,14 +872,16 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create a sum with multiple constants: x + 2 + y + 3 + 5
-        var sum = new LinExpr([x, new Constant(2), y, new Constant(3), new Constant(5)]);
+        var sum = Lin([x, Const(2), y, Const(3), Const(5)]);
+
+        var sumNode = LinNode(sum);
 
         // Constants should be automatically consolidated during construction
-        Assert.AreEqual(2, sum.Terms.Count, "Should have 2 non-constant terms (x and y)");
-        Assert.AreEqual(10.0, sum.ConstantTerm, 1e-10, "ConstantTerm should be 2 + 3 + 5 = 10");
+        Assert.AreEqual(2, sumNode.Terms.Count, "Should have 2 non-constant terms (x and y)");
+        Assert.AreEqual(10.0, sumNode.ConstantTerm, 1e-10, "ConstantTerm should be 2 + 3 + 5 = 10");
 
         // Verify no Constants in Terms
-        Assert.IsFalse(sum.Terms.Any(t => t is Constant), "Sum.Terms should not contain any Constant expressions");
+        Assert.IsFalse(sumNode.Terms.Any(t => t is ConstantNode), "Sum.Terms should not contain any ConstantNode terms");
 
         // Verify evaluation still works correctly
         double[] point = [1, 2];
@@ -879,17 +897,19 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create: 2*x + 3*y + 5
-        var lin = new LinExpr([new Product([new Constant(2), x]),
-                                new Product([new Constant(3), y]),
-                                new Constant(5)]);
+        var lin = Lin([Prod([Const(2), x]),
+                                Prod([Const(3), y]),
+                                Const(5)]);
 
-        Assert.AreEqual(2, lin.Terms.Count, "Should have 2 weighted terms");
-        Assert.AreEqual(2.0, lin.Weights[0], 1e-10, "First weight should be 2");
-        Assert.AreEqual(3.0, lin.Weights[1], 1e-10, "Second weight should be 3");
-        Assert.AreEqual(5.0, lin.ConstantTerm, 1e-10, "Constant term should be 5");
+        var linNode = LinNode(lin);
 
-        // Verify no Product expressions in Terms
-        Assert.IsFalse(lin.Terms.Any(t => t is Product), "LinExpr.Terms should not contain Product expressions for weighted terms");
+        Assert.AreEqual(2, linNode.Terms.Count, "Should have 2 weighted terms");
+        Assert.AreEqual(2.0, linNode.Weights[0], 1e-10, "First weight should be 2");
+        Assert.AreEqual(3.0, linNode.Weights[1], 1e-10, "Second weight should be 3");
+        Assert.AreEqual(5.0, linNode.ConstantTerm, 1e-10, "Constant term should be 5");
+
+        // Verify no ProductNode terms in Terms
+        Assert.IsFalse(linNode.Terms.Any(t => t is ProductNode), "LinExprNode.Terms should not contain ProductNode terms for weighted terms");
 
         // Verify evaluation: 2*x + 3*y + 5 = 2(1) + 3(2) + 5 = 13
         double[] point = [1, 2];
@@ -904,11 +924,13 @@ public class ExpressionTests
         var x = model.AddVariable();
 
         // Create: x*2 (constant on right)
-        var lin = new LinExpr([new Product([x, new Constant(2)])]);
+        var lin = Lin([Prod([x, Const(2)])]);
 
-        Assert.AreEqual(1, lin.Terms.Count);
-        Assert.AreEqual(2.0, lin.Weights[0], 1e-10, "Weight should be 2");
-        Assert.AreSame(x, lin.Terms[0], "Term should be x");
+        var linNode = LinNode(lin);
+
+        Assert.AreEqual(1, linNode.Terms.Count);
+        Assert.AreEqual(2.0, linNode.Weights[0], 1e-10, "Weight should be 2");
+        Assert.AreSame(N(x), linNode.Terms[0], "Term should be x");
     }
 
     [TestMethod]
@@ -919,8 +941,8 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create: 2*x + 3*y
-        var lin = new LinExpr([new Product([new Constant(2), x]),
-                                new Product([new Constant(3), y])]);
+        var lin = Lin([Prod([Const(2), x]),
+                                Prod([Const(3), y])]);
 
         lin.Prepare();
 
@@ -943,8 +965,8 @@ public class ExpressionTests
         // Build: 2*x + 3*y using operator
         var expr = 2 * x + 3 * y;
 
-        Assert.IsInstanceOfType(expr, typeof(LinExpr), "Should create LinExpr");
-        var lin = (LinExpr)expr;
+        Assert.IsInstanceOfType(expr._node, typeof(LinExprNode), "Should create LinExprNode");
+        var lin = LinNode(expr);
 
         Assert.AreEqual(2, lin.Terms.Count);
         Assert.AreEqual(2.0, lin.Weights[0], 1e-10);
@@ -988,24 +1010,26 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create: 2*x + 3*y + 5
-        var lin1 = new LinExpr([new Product([new Constant(2), x]),
-                                 new Product([new Constant(3), y]),
-                                 new Constant(5)]);
+        var lin1 = Lin([Prod([Const(2), x]),
+                                 Prod([Const(3), y]),
+                                 Const(5)]);
 
         // Create identical expression
-        var lin2 = new LinExpr([new Product([new Constant(2), x]),
-                                 new Product([new Constant(3), y]),
-                                 new Constant(5)]);
+        var lin2 = Lin([Prod([Const(2), x]),
+                                 Prod([Const(3), y]),
+                                 Const(5)]);
 
         double[] point = [1, 2];
         Assert.AreEqual(lin1.Evaluate(point), lin2.Evaluate(point), 1e-10, "Identical expressions should evaluate identically");
 
         // Verify both have correct structure
-        Assert.AreEqual(2, lin1.Terms.Count);
-        Assert.AreEqual(2, lin2.Terms.Count);
-        Assert.AreEqual(2.0, lin1.Weights[0], 1e-10);
-        Assert.AreEqual(3.0, lin1.Weights[1], 1e-10);
-        Assert.AreEqual(5.0, lin1.ConstantTerm, 1e-10);
+        var lin1Node = LinNode(lin1);
+        var lin2Node = LinNode(lin2);
+        Assert.AreEqual(2, lin1Node.Terms.Count);
+        Assert.AreEqual(2, lin2Node.Terms.Count);
+        Assert.AreEqual(2.0, lin1Node.Weights[0], 1e-10);
+        Assert.AreEqual(3.0, lin1Node.Weights[1], 1e-10);
+        Assert.AreEqual(5.0, lin1Node.ConstantTerm, 1e-10);
     }
 
     [TestMethod]
@@ -1015,9 +1039,10 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var sum = new LinExpr([x, y]);
-        Assert.AreEqual(2, sum.Terms.Count);
-        Assert.AreEqual(0.0, sum.ConstantTerm, 1e-10, "ConstantTerm should be 0 when no constants present");
+        var sum = Lin([x, y]);
+        var sumNode = LinNode(sum);
+        Assert.AreEqual(2, sumNode.Terms.Count);
+        Assert.AreEqual(0.0, sumNode.ConstantTerm, 1e-10, "ConstantTerm should be 0 when no constants present");
     }
 
     [TestMethod]
@@ -1026,19 +1051,21 @@ public class ExpressionTests
         var model = new Model();
         var x = model.AddVariable();
 
-        var sum = new LinExpr([x, new Constant(5)]);
-        Assert.AreEqual(1, sum.Terms.Count, "Should have 1 non-constant term (x)");
-        Assert.AreEqual(5.0, sum.ConstantTerm, 1e-10);
-        Assert.IsFalse(sum.Terms.Any(t => t is Constant), "Sum.Terms should not contain any Constant expressions");
+        var sum = Lin([x, Const(5)]);
+        var sumNode = LinNode(sum);
+        Assert.AreEqual(1, sumNode.Terms.Count, "Should have 1 non-constant term (x)");
+        Assert.AreEqual(5.0, sumNode.ConstantTerm, 1e-10);
+        Assert.IsFalse(sumNode.Terms.Any(t => t is ConstantNode), "Sum.Terms should not contain any ConstantNode terms");
     }
 
     [TestMethod]
     public void Sum_HandlesOnlyConstants()
     {
         // Sum with only constants: 2 + 3 + 5
-        var sum = new LinExpr([new Constant(2), new Constant(3), new Constant(5)]);
-        Assert.AreEqual(0, sum.Terms.Count, "Should have 0 non-constant terms");
-        Assert.AreEqual(10.0, sum.ConstantTerm, 1e-10);
+        var sum = Lin([Const(2), Const(3), Const(5)]);
+        var sumNode = LinNode(sum);
+        Assert.AreEqual(0, sumNode.Terms.Count, "Should have 0 non-constant terms");
+        Assert.AreEqual(10.0, sumNode.ConstantTerm, 1e-10);
 
         double[] point = [];
         var result = sum.Evaluate(point);
@@ -1052,7 +1079,7 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var sum = new LinExpr([x, new Constant(2), y, new Constant(3), new Constant(5)]);
+        var sum = Lin([x, Const(2), y, Const(3), Const(5)]);
         sum.Prepare();
 
         double[] point = [1.5, 2.5];
@@ -1072,13 +1099,13 @@ public class ExpressionTests
         var model = new Model();
         var x = model.AddVariable();
 
-        var sum = new LinExpr([x, new Constant(5)]);
+        var sum = Lin([x, Const(5)]);
 
         // Verify by evaluation instead of accessing protected CloneCore
         double[] point = [3];
         var expected = sum.Evaluate(point);
 
-        var sum2 = new LinExpr([x, new Constant(5)]);
+        var sum2 = Lin([x, Const(5)]);
         Assert.AreEqual(expected, sum2.Evaluate(point), 1e-10, "Clone should evaluate identically");
     }
 
@@ -1151,11 +1178,12 @@ public class ExpressionTests
         var x = model.AddVariable();
 
         // Create: -x
-        var lin = new LinExpr([new Negation(x)]);
+        var lin = Lin([Neg(x)]);
+        var linNode = LinNode(lin);
 
-        Assert.AreEqual(1, lin.Terms.Count, "Should have 1 term");
-        Assert.AreEqual(-1.0, lin.Weights[0], 1e-10, "Weight should be -1");
-        Assert.AreSame(x, lin.Terms[0], "Term should be x (without Negation wrapper)");
+        Assert.AreEqual(1, linNode.Terms.Count, "Should have 1 term");
+        Assert.AreEqual(-1.0, linNode.Weights[0], 1e-10, "Weight should be -1");
+        Assert.AreSame(N(x), linNode.Terms[0], "Term should be x (without Negation wrapper)");
 
         // Verify evaluation: -x = -1 * 2 = -2
         double[] point = [2];
@@ -1170,11 +1198,12 @@ public class ExpressionTests
         var x = model.AddVariable();
 
         // Create: -(2*x) which is Negation(Product([Constant(2), x]))
-        var lin = new LinExpr([new Negation(new Product([new Constant(2), x]))]);
+        var lin = Lin([Neg(Prod([Const(2), x]))]);
+        var linNode = LinNode(lin);
 
-        Assert.AreEqual(1, lin.Terms.Count);
-        Assert.AreEqual(-2.0, lin.Weights[0], 1e-10, "Weight should be -2");
-        Assert.AreSame(x, lin.Terms[0], "Term should be x");
+        Assert.AreEqual(1, linNode.Terms.Count);
+        Assert.AreEqual(-2.0, linNode.Weights[0], 1e-10, "Weight should be -2");
+        Assert.AreSame(N(x), linNode.Terms[0], "Term should be x");
 
         // Verify evaluation: -2*x = -2 * 3 = -6
         double[] point = [3];
@@ -1188,11 +1217,12 @@ public class ExpressionTests
         var x = model.AddVariable();
 
         // Create: -(-x) which should become +x
-        var lin = new LinExpr([new Negation(new Negation(x))]);
+        var lin = Lin([Neg(Neg(x))]);
+        var linNode = LinNode(lin);
 
-        Assert.AreEqual(1, lin.Terms.Count);
-        Assert.AreEqual(1.0, lin.Weights[0], 1e-10, "Weight should be 1 (double negation cancels)");
-        Assert.AreSame(x, lin.Terms[0]);
+        Assert.AreEqual(1, linNode.Terms.Count);
+        Assert.AreEqual(1.0, linNode.Weights[0], 1e-10, "Weight should be 1 (double negation cancels)");
+        Assert.AreSame(N(x), linNode.Terms[0]);
 
         double[] point = [5];
         Assert.AreEqual(5.0, lin.Evaluate(point), 1e-10);
@@ -1205,11 +1235,12 @@ public class ExpressionTests
         var x = model.AddVariable();
 
         // Create: x + (-5) which is x + Negation(Constant(5))
-        var lin = new LinExpr([x, new Negation(new Constant(5))]);
+        var lin = Lin([x, Neg(Const(5))]);
+        var linNode = LinNode(lin);
 
-        Assert.AreEqual(1, lin.Terms.Count, "Should have 1 non-constant term");
-        Assert.AreEqual(-5.0, lin.ConstantTerm, 1e-10, "Constant term should be -5");
-        Assert.AreSame(x, lin.Terms[0]);
+        Assert.AreEqual(1, linNode.Terms.Count, "Should have 1 non-constant term");
+        Assert.AreEqual(-5.0, linNode.ConstantTerm, 1e-10, "Constant term should be -5");
+        Assert.AreSame(N(x), linNode.Terms[0]);
 
         double[] point = [10];
         Assert.AreEqual(5.0, lin.Evaluate(point), 1e-10); // 10 + (-5) = 5
@@ -1222,15 +1253,16 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        // Create LinExpr with zero-weight term
-        var lin = new LinExpr();
-        lin.AddTerm(x, 2.0);
-        lin.AddTerm(y, 0.0); // Should be filtered out
-        lin.AddTerm(x, 0.0); // Should be filtered out
+        // Create LinExprNode with zero-weight term
+        var lin = Lin();
+        var linNode = LinNode(lin);
+        linNode.AddTerm(N(x), 2.0);
+        linNode.AddTerm(N(y), 0.0); // Should be filtered out
+        linNode.AddTerm(N(x), 0.0); // Should be filtered out
 
-        Assert.AreEqual(1, lin.Terms.Count, "Should only have 1 term (zero-weight terms filtered)");
-        Assert.AreEqual(2.0, lin.Weights[0], 1e-10);
-        Assert.AreSame(x, lin.Terms[0]);
+        Assert.AreEqual(1, linNode.Terms.Count, "Should only have 1 term (zero-weight terms filtered)");
+        Assert.AreEqual(2.0, linNode.Weights[0], 1e-10);
+        Assert.AreSame(N(x), linNode.Terms[0]);
 
         double[] point = [5, 3];
         Assert.AreEqual(10.0, lin.Evaluate(point), 1e-10);
@@ -1243,18 +1275,19 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        // Create QuadExpr with zero-weight terms
-        var quad = new QuadExpr();
-        quad.AddTerm(x, 2.0);
-        quad.AddTerm(y, 0.0); // Should be filtered out
-        quad.AddTerm(x * y, 3.0);
-        quad.AddTerm(x * x, 0.0); // Should be filtered out
+        // Create QuadExprNode with zero-weight terms
+        var quad = Quad();
+        var quadNode = QuadNode(quad);
+        quadNode.AddTerm(N(x), 2.0);
+        quadNode.AddTerm(N(y), 0.0); // Should be filtered out
+        quadNode.AddTerm(N(x * y), 3.0);
+        quadNode.AddTerm(N(x * x), 0.0); // Should be filtered out
 
-        Assert.AreEqual(1, quad.LinearTerms.Count, "Should only have 1 linear term");
-        Assert.AreEqual(1, quad.QuadraticTerms1.Count, "Should only have 1 quadratic term");
-        Assert.AreEqual(2.0, quad.LinearWeights[0], 1e-10);
-        Assert.AreSame(x, quad.LinearTerms[0]);
-        Assert.AreEqual(3.0, quad.QuadraticWeights[0], 1e-10);
+        Assert.AreEqual(1, quadNode.LinearTerms.Count, "Should only have 1 linear term");
+        Assert.AreEqual(1, quadNode.QuadraticTerms1.Count, "Should only have 1 quadratic term");
+        Assert.AreEqual(2.0, quadNode.LinearWeights[0], 1e-10);
+        Assert.AreSame(N(x), quadNode.LinearTerms[0]);
+        Assert.AreEqual(3.0, quadNode.QuadraticWeights[0], 1e-10);
 
         double[] point = [5, 3];
         Assert.AreEqual(2.0 * 5 + 3.0 * 5 * 3, quad.Evaluate(point), 1e-10);
@@ -1270,12 +1303,12 @@ public class ExpressionTests
         // Create: 2*x - 3*y + 5 using operators (which creates Negation nodes)
         var expr = 2 * x - 3 * y + 5;
 
-        Assert.IsInstanceOfType(expr, typeof(LinExpr));
-        var lin = (LinExpr)expr;
+        Assert.IsInstanceOfType(expr._node, typeof(LinExprNode));
+        var lin = LinNode(expr);
 
-        // Verify no Negation or nested LinExpr nodes stored in Terms
-        Assert.IsFalse(lin.Terms.Any(t => t is Negation), "LinExpr.Terms should not contain Negation nodes");
-        Assert.IsFalse(lin.Terms.Any(t => t is LinExpr), "LinExpr.Terms should not contain nested LinExpr nodes");
+        // Verify no NegationNode or nested LinExprNode stored in Terms
+        Assert.IsFalse(lin.Terms.Any(t => t is NegationNode), "LinExprNode.Terms should not contain NegationNode terms");
+        Assert.IsFalse(lin.Terms.Any(t => t is LinExprNode), "LinExprNode.Terms should not contain nested LinExprNode terms");
         Assert.AreEqual(5.0, lin.ConstantTerm, 1e-10);
 
         // Verify evaluation: 2*1 - 3*2 + 5 = 2 - 6 + 5 = 1
@@ -1291,17 +1324,18 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create two LinExprs and add them
-        var lin1 = new LinExpr([new Product([new Constant(2), x]), new Constant(3)]);
-        var lin2 = new LinExpr([new Product([new Constant(4), y]), new Constant(5)]);
+        var lin1 = Lin([Prod([Const(2), x]), Const(3)]);
+        var lin2 = Lin([Prod([Const(4), y]), Const(5)]);
 
         // Add them together: (2*x + 3) + (4*y + 5)
-        var combined = new LinExpr([lin1, lin2]);
+        var combined = Lin([lin1, lin2]);
+        var combinedNode = LinNode(combined);
 
-        Assert.AreEqual(2, combined.Terms.Count, "Should have 2 terms (x and y)");
-        Assert.AreEqual(8.0, combined.ConstantTerm, 1e-10, "Constant should be 3 + 5 = 8");
+        Assert.AreEqual(2, combinedNode.Terms.Count, "Should have 2 terms (x and y)");
+        Assert.AreEqual(8.0, combinedNode.ConstantTerm, 1e-10, "Constant should be 3 + 5 = 8");
 
-        // Verify no nested LinExpr
-        Assert.IsFalse(combined.Terms.Any(t => t is LinExpr), "Should not contain nested LinExpr");
+        // Verify no nested LinExprNode
+        Assert.IsFalse(combinedNode.Terms.Any(t => t is LinExprNode), "Should not contain nested LinExprNode terms");
 
         // Verify evaluation: 2*1 + 4*2 + 8 = 2 + 8 + 8 = 18
         double[] point = [1, 2];
@@ -1316,16 +1350,17 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create: (2*x + 3) - (4*y + 5) = 2*x - 4*y + (3 - 5) = 2*x - 4*y - 2
-        var lin1 = new LinExpr([new Product([new Constant(2), x]), new Constant(3)]);
-        var lin2 = new LinExpr([new Product([new Constant(4), y]), new Constant(5)]);
+        var lin1 = Lin([Prod([Const(2), x]), Const(3)]);
+        var lin2 = Lin([Prod([Const(4), y]), Const(5)]);
 
-        var combined = new LinExpr([lin1, new Negation(lin2)]);
+        var combined = Lin([lin1, Neg(lin2)]);
+        var combinedNode = LinNode(combined);
 
-        Assert.AreEqual(2, combined.Terms.Count, "Should have 2 terms");
-        Assert.AreEqual(-2.0, combined.ConstantTerm, 1e-10, "Constant should be 3 - 5 = -2");
+        Assert.AreEqual(2, combinedNode.Terms.Count, "Should have 2 terms");
+        Assert.AreEqual(-2.0, combinedNode.ConstantTerm, 1e-10, "Constant should be 3 - 5 = -2");
 
         // Find weights (order may vary)
-        var weights = combined.Weights.OrderBy(w => w).ToList();
+        var weights = combinedNode.Weights.OrderBy(w => w).ToList();
         Assert.AreEqual(-4.0, weights[0], 1e-10, "Should have weight -4");
         Assert.AreEqual(2.0, weights[1], 1e-10, "Should have weight 2");
 
@@ -1342,18 +1377,19 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create: 3 * (2*x + 4*y + 5) = 6*x + 12*y + 15
-        var inner = new LinExpr([new Product([new Constant(2), x]),
-                                  new Product([new Constant(4), y]),
-                                  new Constant(5)]);
-        var weighted = new Product([new Constant(3), inner]);
+        var inner = Lin([Prod([Const(2), x]),
+                                  Prod([Const(4), y]),
+                                  Const(5)]);
+        var weighted = Prod([Const(3), inner]);
 
-        var combined = new LinExpr([weighted]);
+        var combined = Lin([weighted]);
+        var combinedNode = LinNode(combined);
 
-        Assert.AreEqual(2, combined.Terms.Count);
-        Assert.AreEqual(15.0, combined.ConstantTerm, 1e-10, "Constant should be 3 * 5 = 15");
+        Assert.AreEqual(2, combinedNode.Terms.Count);
+        Assert.AreEqual(15.0, combinedNode.ConstantTerm, 1e-10, "Constant should be 3 * 5 = 15");
 
         // Find weights
-        var weights = combined.Weights.OrderBy(w => w).ToList();
+        var weights = combinedNode.Weights.OrderBy(w => w).ToList();
         Assert.AreEqual(6.0, weights[0], 1e-10, "Should have weight 6 (3 * 2)");
         Assert.AreEqual(12.0, weights[1], 1e-10, "Should have weight 12 (3 * 4)");
 
@@ -1375,11 +1411,12 @@ public class ExpressionTests
         // Create: x + (2*x + 3) - (4*x + 5) + 6
         var expr = x + term1 - term2 + 6;
 
-        var lin = (LinExpr)expr;
+        Assert.IsInstanceOfType(expr._node, typeof(LinExprNode));
+        var lin = LinNode(expr);
 
-        // Verify no nested LinExpr (main goal of this optimization)
-        Assert.IsFalse(lin.Terms.Any(t => t is LinExpr), "Should not contain nested LinExpr");
-        Assert.IsFalse(lin.Terms.Any(t => t is Negation), "Should not contain Negation");
+        // Verify no nested LinExprNode (main goal of this optimization)
+        Assert.IsFalse(lin.Terms.Any(t => t is LinExprNode), "Should not contain nested LinExprNode terms");
+        Assert.IsFalse(lin.Terms.Any(t => t is NegationNode), "Should not contain NegationNode terms");
 
         // Note: The expression might have duplicate variable terms which is OK
         // The important optimizations are: no nesting, negations handled, constants consolidated
@@ -1394,14 +1431,15 @@ public class ExpressionTests
         // x^2
         var expr = Expr.Pow(x, 2);
 
-        Assert.IsInstanceOfType(expr, typeof(PowerOp)); // Pow itself is not QuadExpr
+        Assert.IsInstanceOfType(expr._node, typeof(PowerOpNode)); // Pow itself is not QuadExprNode
 
-        // But wrapping in QuadExpr should recognize it
-        var quad = new QuadExpr([expr]);
-        Assert.AreEqual(1, quad.QuadraticTerms1.Count);
-        Assert.AreEqual(0, quad.LinearTerms.Count);
-        Assert.AreEqual(0.0, quad.ConstantTerm);
-        Assert.AreEqual(1.0, quad.QuadraticWeights[0]);
+        // But wrapping in QuadExprNode should recognize it
+        var quad = Quad([expr]);
+        var quadNode = QuadNode(quad);
+        Assert.AreEqual(1, quadNode.QuadraticTerms1.Count);
+        Assert.AreEqual(0, quadNode.LinearTerms.Count);
+        Assert.AreEqual(0.0, quadNode.ConstantTerm);
+        Assert.AreEqual(1.0, quadNode.QuadraticWeights[0]);
 
         // Evaluate: x=3 → 3^2 = 9
         double[] point = [3];
@@ -1415,10 +1453,11 @@ public class ExpressionTests
         var x = model.AddVariable();
 
         // 3*x^2
-        var expr = new QuadExpr([3 * Expr.Pow(x, 2)]);
+        var expr = Quad([3 * Expr.Pow(x, 2)]);
+        var exprNode = QuadNode(expr);
 
-        Assert.AreEqual(1, expr.QuadraticTerms1.Count);
-        Assert.AreEqual(3.0, expr.QuadraticWeights[0]);
+        Assert.AreEqual(1, exprNode.QuadraticTerms1.Count);
+        Assert.AreEqual(3.0, exprNode.QuadraticWeights[0]);
 
         // Evaluate: x=2 → 3*4 = 12
         double[] point = [2];
@@ -1433,11 +1472,12 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // x*y
-        var expr = new QuadExpr([x * y]);
+        var expr = Quad([x * y]);
+        var exprNode = QuadNode(expr);
 
-        Assert.AreEqual(1, expr.QuadraticTerms1.Count);
-        Assert.AreEqual(0, expr.LinearTerms.Count);
-        Assert.AreEqual(1.0, expr.QuadraticWeights[0]);
+        Assert.AreEqual(1, exprNode.QuadraticTerms1.Count);
+        Assert.AreEqual(0, exprNode.LinearTerms.Count);
+        Assert.AreEqual(1.0, exprNode.QuadraticWeights[0]);
 
         // Evaluate: x=3, y=4 → 12
         double[] point = [3, 4];
@@ -1452,11 +1492,12 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // 2*x^2 + 3*x*y + 4*x + 5
-        var expr = new QuadExpr([2 * Expr.Pow(x, 2), 3 * x * y, 4 * x, new Constant(5)]);
+        var expr = Quad([2 * Expr.Pow(x, 2), 3 * x * y, 4 * x, Const(5)]);
+        var exprNode = QuadNode(expr);
 
-        Assert.AreEqual(2, expr.QuadraticTerms1.Count); // x^2 and x*y
-        Assert.AreEqual(1, expr.LinearTerms.Count); // x
-        Assert.AreEqual(5.0, expr.ConstantTerm);
+        Assert.AreEqual(2, exprNode.QuadraticTerms1.Count); // x^2 and x*y
+        Assert.AreEqual(1, exprNode.LinearTerms.Count); // x
+        Assert.AreEqual(5.0, exprNode.ConstantTerm);
 
         // Evaluate: x=2, y=3 → 2*4 + 3*2*3 + 4*2 + 5 = 8 + 18 + 8 + 5 = 39
         double[] point = [2, 3];
@@ -1471,14 +1512,16 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // (2*x + 3) * (4*y + 5)
-        var lin1 = new LinExpr([2 * x, new Constant(3)]);
-        var lin2 = new LinExpr([4 * y, new Constant(5)]);
-        var expr = new QuadExpr([lin1 * lin2]);
+        var lin1 = Lin([2 * x, Const(3)]);
+        var lin2 = Lin([4 * y, Const(5)]);
+        var expr = Quad([lin1 * lin2]);
+
+        var exprNode = QuadNode(expr);
 
         // Expansion: 2*x*4*y + 2*x*5 + 3*4*y + 3*5 = 8*x*y + 10*x + 12*y + 15
-        Assert.AreEqual(1, expr.QuadraticTerms1.Count); // x*y
-        Assert.AreEqual(2, expr.LinearTerms.Count); // x and y
-        Assert.AreEqual(15.0, expr.ConstantTerm);
+        Assert.AreEqual(1, exprNode.QuadraticTerms1.Count); // x*y
+        Assert.AreEqual(2, exprNode.LinearTerms.Count); // x and y
+        Assert.AreEqual(15.0, exprNode.ConstantTerm);
 
         // Evaluate: x=1, y=2 → (2+3)*(8+5) = 5*13 = 65
         double[] point = [1, 2];
@@ -1492,10 +1535,11 @@ public class ExpressionTests
         var x = model.AddVariable();
 
         // x*x (should be recognized as x^2)
-        var expr = new QuadExpr([x * x]);
+        var expr = Quad([x * x]);
+        var exprNode = QuadNode(expr);
 
-        Assert.AreEqual(1, expr.QuadraticTerms1.Count);
-        Assert.AreSame(expr.QuadraticTerms1[0], expr.QuadraticTerms2[0]); // Same variable
+        Assert.AreEqual(1, exprNode.QuadraticTerms1.Count);
+        Assert.AreSame(exprNode.QuadraticTerms1[0], exprNode.QuadraticTerms2[0]); // Same variable
 
         // Evaluate: x=5 → 25
         double[] point = [5];
@@ -1509,20 +1553,21 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var quad1 = new QuadExpr([x * x, 2 * x]);
-        var quad2 = new QuadExpr([y * y, 3 * y]);
+        var quad1 = Quad([x * x, 2 * x]);
+        var quad2 = Quad([y * y, 3 * y]);
 
         // Combine them
-        var combined = new QuadExpr([quad1, quad2, new Constant(5)]);
+        var combined = Quad([quad1, quad2, Const(5)]);
+        var combinedNode = QuadNode(combined);
 
-        Assert.AreEqual(2, combined.QuadraticTerms1.Count); // x^2 and y^2
-        Assert.AreEqual(2, combined.LinearTerms.Count); // x and y
-        Assert.AreEqual(5.0, combined.ConstantTerm);
+        Assert.AreEqual(2, combinedNode.QuadraticTerms1.Count); // x^2 and y^2
+        Assert.AreEqual(2, combinedNode.LinearTerms.Count); // x and y
+        Assert.AreEqual(5.0, combinedNode.ConstantTerm);
 
-        // Verify no nested QuadExprs
-        Assert.IsFalse(combined.LinearTerms.Any(t => t is QuadExpr));
-        Assert.IsFalse(combined.QuadraticTerms1.Any(t => t is QuadExpr));
-        Assert.IsFalse(combined.QuadraticTerms2.Any(t => t is QuadExpr));
+        // Verify no nested QuadExprNode
+        Assert.IsFalse(combinedNode.LinearTerms.Any(t => t is QuadExprNode));
+        Assert.IsFalse(combinedNode.QuadraticTerms1.Any(t => t is QuadExprNode));
+        Assert.IsFalse(combinedNode.QuadraticTerms2.Any(t => t is QuadExprNode));
     }
 
     [TestMethod]
@@ -1532,10 +1577,11 @@ public class ExpressionTests
         var x = model.AddVariable();
 
         // -(x^2)
-        var expr = new QuadExpr([-Expr.Pow(x, 2)]);
+        var expr = Quad([-Expr.Pow(x, 2)]);
+        var exprNode = QuadNode(expr);
 
-        Assert.AreEqual(1, expr.QuadraticTerms1.Count);
-        Assert.AreEqual(-1.0, expr.QuadraticWeights[0]);
+        Assert.AreEqual(1, exprNode.QuadraticTerms1.Count);
+        Assert.AreEqual(-1.0, exprNode.QuadraticWeights[0]);
 
         // Evaluate: x=3 → -9
         double[] point = [3];
@@ -1551,13 +1597,14 @@ public class ExpressionTests
         var z = model.AddVariable();
 
         // (x + y) * (y + z) = x*y + x*z + y*y + y*z
-        var lin1 = new LinExpr([x, y]);
-        var lin2 = new LinExpr([y, z]);
-        var expr = new QuadExpr([lin1 * lin2]);
+        var lin1 = Lin([x, y]);
+        var lin2 = Lin([y, z]);
+        var expr = Quad([lin1 * lin2]);
+        var exprNode = QuadNode(expr);
 
         // Should have 4 quadratic terms
-        Assert.AreEqual(4, expr.QuadraticTerms1.Count);
-        Assert.AreEqual(0.0, expr.ConstantTerm);
+        Assert.AreEqual(4, exprNode.QuadraticTerms1.Count);
+        Assert.AreEqual(0.0, exprNode.ConstantTerm);
 
         // Evaluate: x=1, y=2, z=3 → (1+2)*(2+3) = 3*5 = 15
         double[] point = [1, 2, 3];
@@ -1572,7 +1619,7 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create a quadratic expression
-        var expr = new QuadExpr([x * x, 2 * x * y, 3 * x, new Constant(4)]);
+        var expr = Quad([x * x, 2 * x * y, 3 * x, Const(4)]);
 
         // Test ToString
         var output = expr.ToString();
@@ -1589,25 +1636,25 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        // x * y creates Product
+        // x * y creates ProductNode
         var xy = x * y;
-        Assert.IsInstanceOfType(xy, typeof(Product), "x*y alone is Product");
+        Assert.IsInstanceOfType(xy._node, typeof(ProductNode), "x*y alone is ProductNode");
 
-        // x * y + 5 should be QuadExpr (Product with 2 non-constants triggers QuadExpr)
+        // x * y + 5 should be QuadExprNode (Product with 2 non-constants triggers QuadExpr)
         var expr1 = x * y + 5;
-        Assert.IsInstanceOfType(expr1, typeof(QuadExpr), "x*y + 5 should be QuadExpr");
+        Assert.IsInstanceOfType(expr1._node, typeof(QuadExprNode), "x*y + 5 should be QuadExprNode");
 
-        // 2*x + 3*y should be LinExpr
+        // 2*x + 3*y should be LinExprNode
         var expr2 = 2 * x + 3 * y;
-        Assert.IsInstanceOfType(expr2, typeof(LinExpr), "2*x + 3*y should be LinExpr");
+        Assert.IsInstanceOfType(expr2._node, typeof(LinExprNode), "2*x + 3*y should be LinExprNode");
 
-        // x*x + 2*x + 1 should be QuadExpr
+        // x*x + 2*x + 1 should be QuadExprNode
         var expr3 = x * x + 2 * x + 1;
-        Assert.IsInstanceOfType(expr3, typeof(QuadExpr), "x*x + 2*x + 1 should be QuadExpr");
+        Assert.IsInstanceOfType(expr3._node, typeof(QuadExprNode), "x*x + 2*x + 1 should be QuadExprNode");
 
-        // Pow(x, 2) + 1 should be QuadExpr
+        // Pow(x, 2) + 1 should be QuadExprNode
         var expr4 = Expr.Pow(x, 2) + 1;
-        Assert.IsInstanceOfType(expr4, typeof(QuadExpr), "x^2 + 1 should be QuadExpr");
+        Assert.IsInstanceOfType(expr4._node, typeof(QuadExprNode), "x^2 + 1 should be QuadExprNode");
     }
 
     [TestMethod]
@@ -1617,15 +1664,15 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var linExpr = new LinExpr([2 * x, 3 * y, new Constant(4)]);
+        var linExpr = Lin([2 * x, 3 * y, Const(4)]);
 
         // Multiply by constant
         var scaled = linExpr * 5.0;
 
-        // Should still be LinExpr, not Product
-        Assert.IsInstanceOfType(scaled, typeof(LinExpr), "LinExpr * constant should return LinExpr");
+        // Should still be LinExprNode, not ProductNode
+        Assert.IsInstanceOfType(scaled._node, typeof(LinExprNode), "LinExpr * constant should return LinExprNode");
 
-        var scaledLin = (LinExpr)scaled;
+        var scaledLin = LinNode(scaled);
         Assert.AreEqual(2, scaledLin.Terms.Count, "Should have 2 terms");
         Assert.AreEqual(10.0, scaledLin.Weights[0], 1e-10, "First weight should be 2*5=10");
         Assert.AreEqual(15.0, scaledLin.Weights[1], 1e-10, "Second weight should be 3*5=15");
@@ -1633,8 +1680,8 @@ public class ExpressionTests
 
         // Test double * LinExpr as well
         var scaled2 = 5.0 * linExpr;
-        Assert.IsInstanceOfType(scaled2, typeof(LinExpr), "constant * LinExpr should return LinExpr");
-        var scaledLin2 = (LinExpr)scaled2;
+        Assert.IsInstanceOfType(scaled2._node, typeof(LinExprNode), "constant * LinExpr should return LinExprNode");
+        var scaledLin2 = LinNode(scaled2);
         Assert.AreEqual(10.0, scaledLin2.Weights[0], 1e-10);
         Assert.AreEqual(15.0, scaledLin2.Weights[1], 1e-10);
         Assert.AreEqual(20.0, scaledLin2.ConstantTerm, 1e-10);
@@ -1647,15 +1694,15 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var linExpr = new LinExpr([2 * x, 3 * y, new Constant(6)]);
+        var linExpr = Lin([2 * x, 3 * y, Const(6)]);
 
         // Divide by constant
         var divided = linExpr / 2.0;
 
-        // Should still be LinExpr, not Division
-        Assert.IsInstanceOfType(divided, typeof(LinExpr), "LinExpr / constant should return LinExpr");
+        // Should still be LinExprNode, not DivisionNode
+        Assert.IsInstanceOfType(divided._node, typeof(LinExprNode), "LinExpr / constant should return LinExprNode");
 
-        var dividedLin = (LinExpr)divided;
+        var dividedLin = LinNode(divided);
         Assert.AreEqual(2, dividedLin.Terms.Count, "Should have 2 terms");
         Assert.AreEqual(1.0, dividedLin.Weights[0], 1e-10, "First weight should be 2/2=1");
         Assert.AreEqual(1.5, dividedLin.Weights[1], 1e-10, "Second weight should be 3/2=1.5");
@@ -1669,15 +1716,15 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var quadExpr = new QuadExpr([x * y, 2 * x, new Constant(3)]);
+        var quadExpr = Quad([x * y, 2 * x, Const(3)]);
 
         // Multiply by constant
         var scaled = quadExpr * 4.0;
 
-        // Should still be QuadExpr, not Product
-        Assert.IsInstanceOfType(scaled, typeof(QuadExpr), "QuadExpr * constant should return QuadExpr");
+        // Should still be QuadExprNode, not ProductNode
+        Assert.IsInstanceOfType(scaled._node, typeof(QuadExprNode), "QuadExpr * constant should return QuadExprNode");
 
-        var scaledQuad = (QuadExpr)scaled;
+        var scaledQuad = QuadNode(scaled);
         Assert.AreEqual(1, scaledQuad.LinearTerms.Count, "Should have 1 linear term");
         Assert.AreEqual(1, scaledQuad.QuadraticTerms1.Count, "Should have 1 quadratic term");
         Assert.AreEqual(8.0, scaledQuad.LinearWeights[0], 1e-10, "Linear weight should be 2*4=8");
@@ -1686,8 +1733,8 @@ public class ExpressionTests
 
         // Test double * QuadExpr as well
         var scaled2 = 4.0 * quadExpr;
-        Assert.IsInstanceOfType(scaled2, typeof(QuadExpr), "constant * QuadExpr should return QuadExpr");
-        var scaledQuad2 = (QuadExpr)scaled2;
+        Assert.IsInstanceOfType(scaled2._node, typeof(QuadExprNode), "constant * QuadExpr should return QuadExprNode");
+        var scaledQuad2 = QuadNode(scaled2);
         Assert.AreEqual(8.0, scaledQuad2.LinearWeights[0], 1e-10);
         Assert.AreEqual(4.0, scaledQuad2.QuadraticWeights[0], 1e-10);
         Assert.AreEqual(12.0, scaledQuad2.ConstantTerm, 1e-10);
@@ -1700,15 +1747,15 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var quadExpr = new QuadExpr([x * y, 4 * x, new Constant(8)]);
+        var quadExpr = Quad([x * y, 4 * x, Const(8)]);
 
         // Divide by constant
         var divided = quadExpr / 2.0;
 
-        // Should still be QuadExpr, not Division
-        Assert.IsInstanceOfType(divided, typeof(QuadExpr), "QuadExpr / constant should return QuadExpr");
+        // Should still be QuadExprNode, not DivisionNode
+        Assert.IsInstanceOfType(divided._node, typeof(QuadExprNode), "QuadExpr / constant should return QuadExprNode");
 
-        var dividedQuad = (QuadExpr)divided;
+        var dividedQuad = QuadNode(divided);
         Assert.AreEqual(1, dividedQuad.LinearTerms.Count, "Should have 1 linear term");
         Assert.AreEqual(1, dividedQuad.QuadraticTerms1.Count, "Should have 1 quadratic term");
         Assert.AreEqual(2.0, dividedQuad.LinearWeights[0], 1e-10, "Linear weight should be 4/2=2");
@@ -1722,13 +1769,12 @@ public class ExpressionTests
         var model = new Model();
         var x = model.AddVariable();
 
-        var linExpr = new LinExpr([2 * x, new Constant(5)]);
+        var linExpr = Lin([2 * x, Const(5)]);
         linExpr *= 3.0;
 
-        var actual = linExpr.GetActual();
-        Assert.IsInstanceOfType(actual, typeof(LinExpr), "LinExpr after *= constant should still be LinExpr");
+        Assert.IsInstanceOfType(linExpr._node, typeof(LinExprNode), "LinExpr after *= constant should still be LinExprNode");
 
-        var lin = (LinExpr)actual;
+        var lin = LinNode(linExpr);
         Assert.AreEqual(1, lin.Terms.Count, "Should have 1 term");
         Assert.AreEqual(6.0, lin.Weights[0], 1e-10, "Weight should be 2*3=6");
         Assert.AreEqual(15.0, lin.ConstantTerm, 1e-10, "Constant should be 5*3=15");
@@ -1740,13 +1786,12 @@ public class ExpressionTests
         var model = new Model();
         var x = model.AddVariable();
 
-        var linExpr = new LinExpr([6 * x, new Constant(12)]);
+        var linExpr = Lin([6 * x, Const(12)]);
         linExpr /= 3.0;
 
-        var actual = linExpr.GetActual();
-        Assert.IsInstanceOfType(actual, typeof(LinExpr), "LinExpr after /= constant should still be LinExpr");
+        Assert.IsInstanceOfType(linExpr._node, typeof(LinExprNode), "LinExpr after /= constant should still be LinExprNode");
 
-        var lin = (LinExpr)actual;
+        var lin = LinNode(linExpr);
         Assert.AreEqual(1, lin.Terms.Count, "Should have 1 term");
         Assert.AreEqual(2.0, lin.Weights[0], 1e-10, "Weight should be 6/3=2");
         Assert.AreEqual(4.0, lin.ConstantTerm, 1e-10, "Constant should be 12/3=4");
@@ -1759,13 +1804,12 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var quadExpr = new QuadExpr([x * y, 2 * x, new Constant(4)]);
+        var quadExpr = Quad([x * y, 2 * x, Const(4)]);
         quadExpr *= 2.0;
 
-        var actual = quadExpr.GetActual();
-        Assert.IsInstanceOfType(actual, typeof(QuadExpr), "QuadExpr after *= constant should still be QuadExpr");
+        Assert.IsInstanceOfType(quadExpr._node, typeof(QuadExprNode), "QuadExpr after *= constant should still be QuadExprNode");
 
-        var quad = (QuadExpr)actual;
+        var quad = QuadNode(quadExpr);
         Assert.AreEqual(1, quad.LinearTerms.Count, "Should have 1 linear term");
         Assert.AreEqual(1, quad.QuadraticTerms1.Count, "Should have 1 quadratic term");
         Assert.AreEqual(4.0, quad.LinearWeights[0], 1e-10, "Linear weight should be 2*2=4");
@@ -1805,13 +1849,13 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var expr = new LinExpr([2 * x, 4 * y]);
+        var expr = Lin([2 * x, 4 * y]);
         Expr divisor = 2.0; // Implicitly converts to Constant
 
         var result = expr / divisor;
 
-        Assert.IsInstanceOfType<LinExpr>(result);
-        var lin = (LinExpr)result;
+        Assert.IsInstanceOfType(result._node, typeof(LinExprNode));
+        var lin = LinNode(result);
         Assert.AreEqual(1.0, lin.Weights[0], 1e-10);
         Assert.AreEqual(2.0, lin.Weights[1], 1e-10);
     }
@@ -1825,13 +1869,13 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var expr = new LinExpr([2 * x, 4 * y]);
+        var expr = Lin([2 * x, 4 * y]);
         Expr multiplier = 3.0; // Implicitly converts to Constant
 
         var result = expr * multiplier;
 
-        Assert.IsInstanceOfType<LinExpr>(result);
-        var lin = (LinExpr)result;
+        Assert.IsInstanceOfType(result._node, typeof(LinExprNode));
+        var lin = LinNode(result);
         Assert.AreEqual(6.0, lin.Weights[0], 1e-10);
         Assert.AreEqual(12.0, lin.Weights[1], 1e-10);
     }
@@ -1846,12 +1890,12 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         Expr multiplier = 3.0; // Implicitly converts to Constant
-        var expr = new LinExpr([2 * x, 4 * y]);
+        var expr = Lin([2 * x, 4 * y]);
 
         var result = multiplier * expr;
 
-        Assert.IsInstanceOfType<LinExpr>(result);
-        var lin = (LinExpr)result;
+        Assert.IsInstanceOfType(result._node, typeof(LinExprNode));
+        var lin = LinNode(result);
         Assert.AreEqual(6.0, lin.Weights[0], 1e-10);
         Assert.AreEqual(12.0, lin.Weights[1], 1e-10);
     }
@@ -1865,13 +1909,13 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var expr = new LinExpr([4 * x, 8 * y]);
+        var expr = Lin([4 * x, 8 * y]);
         int divisor = 2;
 
         var result = expr / divisor;
 
-        Assert.IsInstanceOfType<LinExpr>(result);
-        var lin = (LinExpr)result;
+        Assert.IsInstanceOfType(result._node, typeof(LinExprNode));
+        var lin = LinNode(result);
         Assert.AreEqual(2.0, lin.Weights[0], 1e-10);
         Assert.AreEqual(4.0, lin.Weights[1], 1e-10);
     }
@@ -1884,13 +1928,13 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var quad = new QuadExpr([6 * x * y, 4 * x]);
+        var quad = Quad([6 * x * y, 4 * x]);
 
         Expr divisor = 2.0;
         var result = quad / divisor;
 
-        Assert.IsInstanceOfType<QuadExpr>(result);
-        var resultQuad = (QuadExpr)result;
+        Assert.IsInstanceOfType(result._node, typeof(QuadExprNode));
+        var resultQuad = QuadNode(result);
         Assert.AreEqual(3.0, resultQuad.QuadraticWeights[0], 1e-10);
         Assert.AreEqual(2.0, resultQuad.LinearWeights[0], 1e-10);
     }
@@ -1903,13 +1947,13 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var quad = new QuadExpr([2 * x * y, 3 * x]);
+        var quad = Quad([2 * x * y, 3 * x]);
 
         Expr multiplier = 3.0;
         var result = quad * multiplier;
 
-        Assert.IsInstanceOfType<QuadExpr>(result);
-        var resultQuad = (QuadExpr)result;
+        Assert.IsInstanceOfType(result._node, typeof(QuadExprNode));
+        var resultQuad = QuadNode(result);
         Assert.AreEqual(6.0, resultQuad.QuadraticWeights[0], 1e-10);
         Assert.AreEqual(9.0, resultQuad.LinearWeights[0], 1e-10);
     }
@@ -1931,9 +1975,9 @@ public class ExpressionTests
         int count = 3;
         var result = obj / count;
 
-        // Should create a QuadExpr (or LinExpr if optimized), not a Division
-        Assert.IsTrue(result is QuadExpr || result is LinExpr,
-            $"Expected QuadExpr or LinExpr but got {result.GetType().Name}");
+        // Should create a QuadExprNode (or LinExprNode if optimized), not a DivisionNode
+        Assert.IsTrue(result._node is QuadExprNode || result._node is LinExprNode,
+            $"Expected QuadExprNode or LinExprNode but got {result._node.GetType().Name}");
 
         // Verify it evaluates correctly
         double[] point = [2.0, 3.0];
@@ -1948,31 +1992,34 @@ public class ExpressionTests
         var model = new Model();
         var x = model.AddVariable();
 
-        var prod = new Product([new Constant(2), x, new Constant(3)]);
+        var prod = Prod([Const(2), x, Const(3)]);
+        var prodNode = ProdNode(prod);
 
-        Assert.AreEqual(1, prod.Factors.Count, "Should have 1 non-constant factor");
-        Assert.AreEqual(6.0, prod.Factor, 1e-10, "Factor should be 2 * 3 = 6");
-        Assert.IsFalse(prod.Factors.Any(f => f is Constant), "Factors should not contain Constants");
+        Assert.AreEqual(1, prodNode.Factors.Count, "Should have 1 non-constant factor");
+        Assert.AreEqual(6.0, prodNode.Factor, 1e-10, "Factor should be 2 * 3 = 6");
+        Assert.IsFalse(prodNode.Factors.Any(f => f is ConstantNode), "Factors should not contain ConstantNode factors");
     }
 
     [TestMethod]
     public void Product_MultipleConstantsMultiplied()
     {
         // Multiple constants should be multiplied together
-        var prod = new Product([new Constant(2), new Constant(3), new Constant(5)]);
+        var prod = Prod([Const(2), Const(3), Const(5)]);
+        var prodNode = ProdNode(prod);
 
-        Assert.AreEqual(0, prod.Factors.Count, "Should have no non-constant factors");
-        Assert.AreEqual(30.0, prod.Factor, 1e-10, "Factor should be 2 * 3 * 5 = 30");
+        Assert.AreEqual(0, prodNode.Factors.Count, "Should have no non-constant factors");
+        Assert.AreEqual(30.0, prodNode.Factor, 1e-10, "Factor should be 2 * 3 * 5 = 30");
     }
 
     [TestMethod]
     public void Product_OnlyConstant_ExtractedToFactor()
     {
         // Single constant should be extracted to Factor
-        var prod = new Product([new Constant(7)]);
+        var prod = Prod([Const(7)]);
+        var prodNode = ProdNode(prod);
 
-        Assert.AreEqual(0, prod.Factors.Count, "Should have no factors");
-        Assert.AreEqual(7.0, prod.Factor, 1e-10, "Factor should be 7");
+        Assert.AreEqual(0, prodNode.Factors.Count, "Should have no factors");
+        Assert.AreEqual(7.0, prodNode.Factor, 1e-10, "Factor should be 7");
     }
 
     [TestMethod]
@@ -1983,10 +2030,11 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var prod = new Product([x, y]);
+        var prod = Prod([x, y]);
+        var prodNode = ProdNode(prod);
 
-        Assert.AreEqual(2, prod.Factors.Count);
-        Assert.AreEqual(1.0, prod.Factor, 1e-10, "Factor should be 1.0 when no constants");
+        Assert.AreEqual(2, prodNode.Factors.Count);
+        Assert.AreEqual(1.0, prodNode.Factor, 1e-10, "Factor should be 1.0 when no constants");
     }
 
     [TestMethod]
@@ -1998,11 +2046,11 @@ public class ExpressionTests
         var y = model.AddVariable();
         var z = model.AddVariable();
 
-        var prod1 = new Product([new Constant(2), x]);
+        var prod1 = Prod([Const(2), x]);
         var prod2 = prod1 * y; // Extend with y
 
-        Assert.IsInstanceOfType<Product>(prod2);
-        var prod2Product = (Product)prod2;
+        Assert.IsInstanceOfType(prod2._node, typeof(ProductNode));
+        var prod2Product = ProdNode(prod2);
         Assert.AreEqual(2.0, prod2Product.Factor, 1e-10, "Factor should be preserved");
         Assert.AreEqual(2, prod2Product.Factors.Count, "Should have x and y");
     }
@@ -2015,7 +2063,7 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var prod = new Product([new Constant(2), x, y, new Constant(3)]);
+        var prod = Prod([Const(2), x, y, Const(3)]);
 
         double[] point = [5.0, 7.0];
         double expected = 2.0 * 5.0 * 7.0 * 3.0; // 210
@@ -2031,7 +2079,7 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create 2 * x * y * 3 = 6 * x * y
-        var prod = new Product([new Constant(2), x, y, new Constant(3)]);
+        var prod = Prod([Const(2), x, y, Const(3)]);
         prod.Prepare();
 
         double[] point = [5.0, 7.0];
@@ -2051,14 +2099,14 @@ public class ExpressionTests
         var model = new Model();
         var x = model.AddVariable();
 
-        var prod = new Product([new Constant(2), x]);
+        var prod = Prod([Const(2), x]);
         var result = prod * 3.0;
 
-        Assert.IsInstanceOfType<Product>(result);
-        var resultProd = (Product)result;
+        Assert.IsInstanceOfType(result._node, typeof(ProductNode));
+        var resultProd = ProdNode(result);
         Assert.AreEqual(6.0, resultProd.Factor, 1e-10, "Factor should be 2 * 3 = 6");
         Assert.AreEqual(1, resultProd.Factors.Count, "Should still have 1 factor");
-        Assert.IsFalse(resultProd.Factors.Any(f => f is Constant), "Should not contain Constants");
+        Assert.IsFalse(resultProd.Factors.Any(f => f is ConstantNode), "Should not contain Constants");
     }
 
     [TestMethod]
@@ -2070,12 +2118,11 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         Expr expr = 0;
-        expr += new Product([new Constant(3), x, y]);
+        expr += Prod([Const(3), x, y]);
 
-        var actual = expr.GetActual();
         double[] point = [2.0, 4.0];
         double expected = 3.0 * 2.0 * 4.0; // 24
-        Assert.AreEqual(expected, actual.Evaluate(point), 1e-10);
+        Assert.AreEqual(expected, expr.Evaluate(point), 1e-10);
     }
 
     [TestMethod]
@@ -2085,13 +2132,12 @@ public class ExpressionTests
         var x = model.AddVariable();
         var y = model.AddVariable();
 
-        var quadExpr = new QuadExpr([x * y, 8 * x, new Constant(16)]);
+        var quadExpr = Quad([x * y, 8 * x, Const(16)]);
         quadExpr /= 4.0;
 
-        var actual = quadExpr.GetActual();
-        Assert.IsInstanceOfType(actual, typeof(QuadExpr), "QuadExpr after /= constant should still be QuadExpr");
+        Assert.IsInstanceOfType(quadExpr._node, typeof(QuadExprNode), "QuadExpr after /= constant should still be QuadExpr");
 
-        var quad = (QuadExpr)actual;
+        var quad = QuadNode(quadExpr);
         Assert.AreEqual(1, quad.LinearTerms.Count, "Should have 1 linear term");
         Assert.AreEqual(1, quad.QuadraticTerms1.Count, "Should have 1 quadratic term");
         Assert.AreEqual(2.0, quad.LinearWeights[0], 1e-10, "Linear weight should be 8/4=2");
@@ -2106,7 +2152,7 @@ public class ExpressionTests
         var x = model.AddVariable();
 
         // Create LinExpr directly (not through replacement)
-        var linExpr = new LinExpr([2 * x, new Constant(5)]);
+        var linExpr = Lin([2 * x, Const(5)]);
         var originalReference = linExpr;
 
         // Multiply by constant using compound assignment
@@ -2114,11 +2160,8 @@ public class ExpressionTests
 
         // Verify the object was modified in-place (no replacement created)
         Assert.AreSame(originalReference, linExpr, "Should be the same object reference");
-        Assert.AreEqual(6.0, linExpr.Weights[0], 1e-10, "Weight should be updated in-place");
-        Assert.AreEqual(15.0, linExpr.ConstantTerm, 1e-10, "Constant should be updated in-place");
-
-        // Verify no replacement was created
-        Assert.AreSame(linExpr, linExpr.GetActual(), "GetActual should return the same object (no replacement)");
+        Assert.AreEqual(6.0, LinNode(linExpr).Weights[0], 1e-10, "Weight should be updated in-place");
+        Assert.AreEqual(15.0, LinNode(linExpr).ConstantTerm, 1e-10, "Constant should be updated in-place");
     }
 
     [TestMethod]
@@ -2129,7 +2172,7 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Create QuadExpr directly (not through replacement)
-        var quadExpr = new QuadExpr([x * y, 2 * x, new Constant(4)]);
+        var quadExpr = Quad([x * y, 2 * x, Const(4)]);
         var originalReference = quadExpr;
 
         // Divide by constant using compound assignment
@@ -2137,12 +2180,9 @@ public class ExpressionTests
 
         // Verify the object was modified in-place (no replacement created)
         Assert.AreSame(originalReference, quadExpr, "Should be the same object reference");
-        Assert.AreEqual(1.0, quadExpr.LinearWeights[0], 1e-10, "Linear weight should be updated in-place");
-        Assert.AreEqual(0.5, quadExpr.QuadraticWeights[0], 1e-10, "Quadratic weight should be updated in-place");
-        Assert.AreEqual(2.0, quadExpr.ConstantTerm, 1e-10, "Constant should be updated in-place");
-
-        // Verify no replacement was created
-        Assert.AreSame(quadExpr, quadExpr.GetActual(), "GetActual should return the same object (no replacement)");
+        Assert.AreEqual(1.0, QuadNode(quadExpr).LinearWeights[0], 1e-10, "Linear weight should be updated in-place");
+        Assert.AreEqual(0.5, QuadNode(quadExpr).QuadraticWeights[0], 1e-10, "Quadratic weight should be updated in-place");
+        Assert.AreEqual(2.0, QuadNode(quadExpr).ConstantTerm, 1e-10, "Constant should be updated in-place");
     }
 
     [TestMethod]
@@ -2153,23 +2193,24 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Manually create a LinExpr with Product terms (simulating old code path)
-        var linWithProducts = new LinExpr();
-        linWithProducts.Terms.Add(x * y);  // Product
-        linWithProducts.Weights.Add(1.0);
-        linWithProducts.ConstantTerm = 5.0;
+        var linWithProducts = Lin();
+        LinNode(linWithProducts).Terms.Add(N(x * y));  // Product
+        LinNode(linWithProducts).Weights.Add(1.0);
+        LinNode(linWithProducts).ConstantTerm = 5.0;
 
         // Create QuadExpr from this LinExpr - should extract the Product into quadratic terms
-        var quad = new QuadExpr([linWithProducts]);
+        var quad = Quad([linWithProducts]);
+        var quadN = QuadNode(quad);
 
         // The Product should have been moved to quadratic terms, not left in linear terms
-        Assert.AreEqual(0, quad.LinearTerms.Count, "Should have no linear terms");
-        Assert.AreEqual(1, quad.QuadraticTerms1.Count, "Should have 1 quadratic term");
-        Assert.AreEqual(5.0, quad.ConstantTerm);
+        Assert.AreEqual(0, quadN.LinearTerms.Count, "Should have no linear terms");
+        Assert.AreEqual(1, quadN.QuadraticTerms1.Count, "Should have 1 quadratic term");
+        Assert.AreEqual(5.0, quadN.ConstantTerm);
 
         // Verify no nested Products in linear terms
-        foreach (var term in quad.LinearTerms)
+        foreach (var term in quadN.LinearTerms)
         {
-            Assert.IsFalse(term is Product, "LinearTerms should not contain Product nodes");
+            Assert.IsFalse(term is ProductNode, "LinearTerms should not contain Product nodes");
         }
 
         // Verify evaluation: x*y + 5 at [2, 3] = 6 + 5 = 11
@@ -2184,11 +2225,11 @@ public class ExpressionTests
         var variable = model.AddVariable();
 
         // Simulate: obj += (variable - 5)^2
-        Expr obj = new Constant(0);
+        Expr obj = Const(0);
         var residual = variable - 5.0;
 
-        Console.WriteLine("residual type: " + residual.GetType().Name);
-        if (residual is LinExpr lin)
+        Console.WriteLine("residual type: " + residual._node.GetType().Name);
+        if (residual._node is LinExprNode lin)
         {
             Console.WriteLine("  LinExpr with " + lin.Terms.Count + " terms");
             for (int i = 0; i < lin.Terms.Count; i++)
@@ -2200,8 +2241,8 @@ public class ExpressionTests
 
         obj += residual * residual;
 
-        Console.WriteLine("\nobj type after +=: " + obj.GetType().Name);
-        if (obj is QuadExpr quad)
+        Console.WriteLine("\nobj type after +=: " + obj._node.GetType().Name);
+        if (obj._node is QuadExprNode quad)
         {
             Console.WriteLine("QuadExpr details:");
             Console.WriteLine("  LinearTerms: " + quad.LinearTerms.Count);
@@ -2215,7 +2256,7 @@ public class ExpressionTests
             // Should have NO Product nodes in LinearTerms
             foreach (var term in quad.LinearTerms)
             {
-                Assert.IsFalse(term is Product, "LinearTerms should not contain Product nodes");
+                Assert.IsFalse(term is ProductNode, "LinearTerms should not contain Product nodes");
             }
 
             // Should have 1 quadratic term (variable * variable)
@@ -2223,7 +2264,7 @@ public class ExpressionTests
 
             // Verify evaluation: (x - 5)^2 at x=3 → (-2)^2 = 4
             double[] point = [3];
-            Assert.AreEqual(4.0, quad.Evaluate(point), 1e-10);
+            Assert.AreEqual(4.0, obj.Evaluate(point), 1e-10);
         }
     }
 
@@ -2245,12 +2286,9 @@ public class ExpressionTests
             obj += residual * residual;
         }
 
-        // Get the actual expression (might be behind _replacement)
-        var actualExpr = obj.GetActual();
-
         // MUST be QuadExpr
-        Assert.IsInstanceOfType(actualExpr, typeof(QuadExpr), $"Expected QuadExpr but got {actualExpr.GetType().Name}");
-        var quad = (QuadExpr)actualExpr;
+        Assert.IsInstanceOfType(obj._node, typeof(QuadExprNode), $"Expected QuadExprNode but got {obj._node.GetType().Name}");
+        var quad = QuadNode(obj);
 
         // CRITICAL: Verify NO Product nodes anywhere in LinearTerms
         Console.WriteLine($"\n=== QuadExpr Structure ===");
@@ -2265,13 +2303,13 @@ public class ExpressionTests
             Console.WriteLine($"  Linear[{i}]: {term.GetType().Name} (weight={weight})");
 
             // FAIL if we find a Product
-            if (term is Product prod)
+            if (term is ProductNode prod)
             {
                 Console.WriteLine($"    ERROR: Product found with {prod.Factors.Count} factors:");
                 for (int j = 0; j < prod.Factors.Count; j++)
                 {
                     Console.WriteLine($"      Factor[{j}]: {prod.Factors[j].GetType().Name}");
-                    if (prod.Factors[j] is LinExpr linExpr)
+                    if (prod.Factors[j] is LinExprNode linExpr)
                     {
                         Console.WriteLine($"        LinExpr with {linExpr.Terms.Count} terms, constant={linExpr.ConstantTerm}");
                     }
@@ -2280,8 +2318,8 @@ public class ExpressionTests
             }
 
             // Linear terms should only be Variable or similar simple expressions
-            Assert.IsTrue(term is Variable || term is Negation,
-                $"Linear term should be Variable or Negation, not {term.GetType().Name}");
+            Assert.IsTrue(term is VariableNode || term is NegationNode,
+                $"Linear term should be VariableNode or NegationNode, not {term.GetType().Name}");
         }
 
         // Verify quadratic structure: (v[i] - 5)^2 = v[i]^2 - 10*v[i] + 25
@@ -2291,10 +2329,10 @@ public class ExpressionTests
         // All quadratic terms should be v[i] * v[i] (same variable squared)
         for (int i = 0; i < quad.QuadraticTerms1.Count; i++)
         {
-            Assert.IsInstanceOfType(quad.QuadraticTerms1[i], typeof(Variable),
-                $"QuadraticTerm1[{i}] should be Variable");
-            Assert.IsInstanceOfType(quad.QuadraticTerms2[i], typeof(Variable),
-                $"QuadraticTerm2[{i}] should be Variable");
+            Assert.IsInstanceOfType(quad.QuadraticTerms1[i], typeof(VariableNode),
+                $"QuadraticTerm1[{i}] should be VariableNode");
+            Assert.IsInstanceOfType(quad.QuadraticTerms2[i], typeof(VariableNode),
+                $"QuadraticTerm2[{i}] should be VariableNode");
             Assert.AreEqual(quad.QuadraticTerms1[i], quad.QuadraticTerms2[i],
                 $"QuadraticTerm {i} should be same variable squared");
         }
@@ -2310,32 +2348,32 @@ public class ExpressionTests
         var y = model.AddVariable();
 
         // Test LinExpr directly (not via Expr = 0)
-        var linExpr = new LinExpr();
+        var linExpr = Lin();
         linExpr += 2 * x;
         linExpr += 3 * y;
 
         // Verify it worked efficiently (should have 2 terms)
-        Assert.AreEqual(2, linExpr.Terms.Count);
-        Assert.AreEqual(2.0, linExpr.Weights[0]);
-        Assert.AreEqual(3.0, linExpr.Weights[1]);
+        Assert.AreEqual(2, LinNode(linExpr).Terms.Count);
+        Assert.AreEqual(2.0, LinNode(linExpr).Weights[0]);
+        Assert.AreEqual(3.0, LinNode(linExpr).Weights[1]);
 
         // Test QuadExpr directly
-        var quadExpr = new QuadExpr();
+        var quadExpr = Quad();
         quadExpr += x * y;
         quadExpr += x * x;
 
         // Should have 2 quadratic terms
-        Assert.AreEqual(2, quadExpr.QuadraticTerms1.Count);
-        Assert.AreEqual(0, quadExpr.LinearTerms.Count);
+        Assert.AreEqual(2, QuadNode(quadExpr).QuadraticTerms1.Count);
+        Assert.AreEqual(0, QuadNode(quadExpr).LinearTerms.Count);
 
         // Test Product directly
-        var prod = new Product([new Constant(2)]);
+        var prod = Prod([Const(2)]);
         prod *= x;
         prod *= y;
 
         // Should have 2 factors (Constants are extracted to Factor field)
-        Assert.AreEqual(2, prod.Factors.Count);
-        Assert.AreEqual(2.0, prod.Factor, 1e-10, "Factor should be 2");
+        Assert.AreEqual(2, ProdNode(prod).Factors.Count);
+        Assert.AreEqual(2.0, ProdNode(prod).Factor, 1e-10, "Factor should be 2");
 
         Console.WriteLine("Compound operators work efficiently on direct types!");
     }
@@ -2356,11 +2394,9 @@ public class ExpressionTests
 
         var obj = xSq + ySq;
 
-        Console.WriteLine("obj type: " + obj.GetType().Name);
-        Console.WriteLine("obj actual: " + obj.GetActual().GetType().Name);
+        Console.WriteLine("obj type: " + obj._node.GetType().Name);
 
-        var actualObj = obj.GetActual();
-        if (actualObj is QuadExpr quad)
+        if (obj._node is QuadExprNode quad)
         {
             Console.WriteLine("QuadExpr:");
             Console.WriteLine("  LinearTerms: " + quad.LinearTerms.Count);
@@ -2373,12 +2409,12 @@ public class ExpressionTests
             // Verify no Products in LinearTerms
             foreach (var term in quad.LinearTerms)
             {
-                Assert.IsFalse(term is Product, "LinearTerms should not contain Products");
+                Assert.IsFalse(term is ProductNode, "LinearTerms should not contain Products");
             }
         }
         else
         {
-            Assert.Fail("Expected QuadExpr, got " + actualObj.GetType().Name);
+            Assert.Fail("Expected QuadExprNode, got " + obj._node.GetType().Name);
         }
     }
 
@@ -2395,7 +2431,7 @@ public class ExpressionTests
         x.Start = 2.0;
 
         // Use a custom expression with intentionally wrong gradient
-        var wrongExpr = new WrongGradientExpr(x);
+        var wrongExpr = new Expr(new WrongGradientNode(x));
         model.SetObjective(wrongExpr);
 
         var result = ModellingTests.SolveWithDerivativeTest(model);
@@ -2419,7 +2455,7 @@ public class ExpressionTests
         x.Start = 2.0;
 
         // Use a custom expression with correct gradient but wrong Hessian
-        var wrongExpr = new WrongHessianExpr(x);
+        var wrongExpr = new Expr(new WrongHessianNode(x));
         model.SetObjective(wrongExpr);
 
         var result = ModellingTests.SolveWithDerivativeTest(model);
@@ -2461,7 +2497,7 @@ public class ExpressionTests
             Console.WriteLine($"    {v}");
 
         // Verify type is NOT Constant
-        Assert.IsFalse(result is Constant,
+        Assert.IsFalse(result._node is ConstantNode,
             "Result of Constant(0) + Product should NOT be a Constant");
 
         // Verify both variables are present
@@ -2489,13 +2525,11 @@ public class ExpressionTests
         var expr = (Expr)0; // Creates Constant(0)
         var product = x * y; // Creates Product
 
-        expr += product; // expr is now Constant with _replacement = Product
+        expr += product; // expr's _node is now the Product node (compound operator replaces zero constant)
 
-        // expr is still a Constant (by design), but has _replacement pointing to Product
-        Assert.IsTrue(expr is Constant,
-            "expr should still be Constant type (optimization)");
-        Assert.AreEqual(product, expr.GetActual(),
-            "expr.GetActual() should return the replacement (Product)");
+        // After +=, the node should be the Product (not a Constant anymore)
+        Assert.IsInstanceOfType(expr._node, typeof(ProductNode),
+            "expr._node should be ProductNode after += from zero");
 
         // Now add this "Constant-with-replacement" to another expression
         var z = model.AddVariable(0);
@@ -2534,7 +2568,7 @@ public class ExpressionTests
         // Add them together - should create QuadExpr that properly handles eSurfaceTreatment
         var predictedPrice = eMachineCost + eMachinePersonCost + eSurfaceTreatment;
 
-        Assert.IsTrue(predictedPrice is QuadExpr,
+        Assert.IsInstanceOfType(predictedPrice._node, typeof(QuadExprNode),
             "predictedPrice should be QuadExpr");
 
         // Verify all variables are present
@@ -2576,8 +2610,8 @@ public class ExpressionTests
         // Add them exactly like in actual code
         var predictedPrice = eMaterial + eMachineCost + eMachinePersonCost + eSurfaceTreatment;
 
-        Console.WriteLine($"eSurfaceTreatment type: {eSurfaceTreatment.GetType().Name}");
-        Console.WriteLine($"eSurfaceTreatment.GetActual() type: {eSurfaceTreatment.GetActual().GetType().Name}");
+        Console.WriteLine($"eSurfaceTreatment type: {eSurfaceTreatment._node.GetType().Name}");
+        Console.WriteLine($"eSurfaceTreatment node type: {eSurfaceTreatment._node.GetType().Name}");
 
         var varsInST = new HashSet<Variable>();
         eSurfaceTreatment.CollectVariables(varsInST);
@@ -2636,8 +2670,8 @@ public class ExpressionTests
         Console.WriteLine($"predictedPrice: {predictedPrice}");
 
         // Verify the result type
-        Assert.IsTrue(predictedPrice is QuadExpr || predictedPrice is LinExpr,
-            $"Result should be QuadExpr or LinExpr, but got {predictedPrice.GetType().Name}");
+        Assert.IsTrue(predictedPrice._node is QuadExprNode || predictedPrice._node is LinExprNode,
+            $"Result should be QuadExprNode or LinExprNode, but got {predictedPrice._node.GetType().Name}");
 
         // CRITICAL: Verify all variables are present in the result
         var variables = new HashSet<Variable>();
@@ -2737,7 +2771,7 @@ public class ExpressionTests
         var divDouble = replacedExpr / 2.0;
 
         // Test Product constructor
-        var product = new Product([replacedExpr, y]);
+        var product = Prod([replacedExpr, y]);
 
         // Test compound operators
         var compound1 = (Expr)0;
@@ -2773,85 +2807,81 @@ public class ExpressionTests
 /// <summary>
 /// Custom expression that returns x^2 but claims gradient is 3*x (wrong - should be 2*x)
 /// </summary>
-internal class WrongGradientExpr : Expr
+internal class WrongGradientNode : ExprNode
 {
     private readonly Variable _x;
 
-    public WrongGradientExpr(Variable x)
+    public WrongGradientNode(Variable x)
     {
         _x = x;
     }
 
-    protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
+    internal override double Evaluate(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
+    internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         // Correct would be: compactGrad[Array.BinarySearch(sortedVarIndices, _x.Index)] += multiplier * 2 * x[_x.Index];
         // But we intentionally return wrong derivative:
         compactGrad[Array.BinarySearch(sortedVarIndices, _x.Index)] += multiplier * 3 * x[_x.Index]; // WRONG!
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
+    internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         hess.Add(_x.Index, _x.Index, multiplier * 2.0);
     }
 
-    protected override void CollectVariablesCore(HashSet<Variable> variables)
+    internal override void CollectVariables(HashSet<Variable> variables)
     {
         variables.Add(_x);
     }
 
-    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    internal override void CollectHessianSparsity(HashSet<(int row, int col)> entries)
     {
         entries.Add((_x.Index, _x.Index));
     }
 
-    protected override bool IsConstantWrtXCore() => false;
-    protected override bool IsLinearCore() => false;
-    protected override bool IsAtMostQuadraticCore() => true;
-
-    protected override Expr CloneCore() => new WrongGradientExpr(_x);
+    internal override bool IsConstantWrtX() => false;
+    internal override bool IsLinear() => false;
+    internal override bool IsAtMostQuadratic() => true;
 }
 
 /// <summary>
 /// Custom expression that returns x^2 with correct gradient 2*x but claims Hessian is 5 (wrong - should be 2)
 /// </summary>
-internal class WrongHessianExpr : Expr
+internal class WrongHessianNode : ExprNode
 {
     private readonly Variable _x;
 
-    public WrongHessianExpr(Variable x)
+    public WrongHessianNode(Variable x)
     {
         _x = x;
     }
 
-    protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
+    internal override double Evaluate(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
+    internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         compactGrad[Array.BinarySearch(sortedVarIndices, _x.Index)] += multiplier * 2 * x[_x.Index]; // Correct
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
+    internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         // Correct would be: hess.Add(_x.Index, _x.Index, multiplier * 2.0);
         // But we intentionally return wrong second derivative:
         hess.Add(_x.Index, _x.Index, multiplier * 5.0); // WRONG!
     }
 
-    protected override void CollectVariablesCore(HashSet<Variable> variables)
+    internal override void CollectVariables(HashSet<Variable> variables)
     {
         variables.Add(_x);
     }
 
-    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    internal override void CollectHessianSparsity(HashSet<(int row, int col)> entries)
     {
         entries.Add((_x.Index, _x.Index));
     }
 
-    protected override bool IsConstantWrtXCore() => false;
-    protected override bool IsLinearCore() => false;
-    protected override bool IsAtMostQuadraticCore() => true;
-
-    protected override Expr CloneCore() => new WrongHessianExpr(_x);
+    internal override bool IsConstantWrtX() => false;
+    internal override bool IsLinear() => false;
+    internal override bool IsAtMostQuadratic() => true;
 }

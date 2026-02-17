@@ -1,21 +1,21 @@
 namespace IpoptNet.Modelling;
 
-public sealed class Cos : Expr
+internal sealed class CosNode : ExprNode
 {
-    public Expr Argument { get; set; }
+    public ExprNode Argument { get; set; }
     private double[]? _gradBuffer;
 
-    public Cos(Expr argument) => Argument = argument;
+    public CosNode(ExprNode argument) => Argument = argument;
 
-    protected override double EvaluateCore(ReadOnlySpan<double> x) => Math.Cos(Argument.Evaluate(x));
+    internal override double Evaluate(ReadOnlySpan<double> x) => Math.Cos(Argument.Evaluate(x));
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
+    internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         var arg = Argument.Evaluate(x);
         Argument.AccumulateGradientCompact(x, compactGrad, multiplier * -Math.Sin(arg), sortedVarIndices);
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
+    internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         var arg = Argument.Evaluate(x);
         Argument.AccumulateHessian(x, hess, multiplier * -Math.Sin(arg));
@@ -34,27 +34,25 @@ public sealed class Cos : Expr
         }
     }
 
-    protected override void CollectVariablesCore(HashSet<Variable> variables) => Argument.CollectVariables(variables);
-    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    internal override void CollectVariables(HashSet<Variable> variables) => Argument.CollectVariables(variables);
+    internal override void CollectHessianSparsity(HashSet<(int row, int col)> entries)
     {
         if (!Argument.IsConstantWrtX())
         {
             AddClique(entries, Argument._cachedVariables!);
         }
     }
-    protected override bool IsConstantWrtXCore() => Argument.IsConstantWrtX();
-    protected override bool IsLinearCore() => Argument.IsConstantWrtX();
-    protected override bool IsAtMostQuadraticCore() => Argument.IsConstantWrtX();
+    internal override bool IsConstantWrtX() => Argument.IsConstantWrtX();
+    internal override bool IsLinear() => Argument.IsConstantWrtX();
+    internal override bool IsAtMostQuadratic() => Argument.IsConstantWrtX();
 
-    protected override Expr CloneCore() => new Cos(Argument);
-
-    protected override void PrepareChildren()
+    internal override void PrepareChildren()
     {
         Argument.Prepare();
         _gradBuffer = new double[Argument._cachedVariables!.Count];
     }
 
-    protected override void ClearChildren()
+    internal override void ClearChildren()
     {
         Argument.Clear();
         _gradBuffer = null;

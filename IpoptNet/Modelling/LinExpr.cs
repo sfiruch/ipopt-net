@@ -2,13 +2,13 @@ using System.Text;
 
 namespace IpoptNet.Modelling;
 
-public sealed class LinExpr : Expr
+internal sealed class LinExprNode : ExprNode
 {
-    public List<Expr> Terms { get; set; }
+    public List<ExprNode> Terms { get; set; }
     public List<double> Weights { get; set; }
     public double ConstantTerm { get; set; }
 
-    public LinExpr()
+    public LinExprNode()
     {
         Terms = [];
         Weights = [];
@@ -18,36 +18,33 @@ public sealed class LinExpr : Expr
     /// Efficiently adds a term to this LinExpr with proper weight extraction.
     /// Used by += operator for O(1) appending instead of O(n) copying.
     /// </summary>
-    public void AddTerm(Expr term, double weight = 1.0)
+    public void AddTerm(ExprNode term, double weight = 1.0)
     {
         var constantSum = ConstantTerm;
         ProcessTerm(term, weight, ref constantSum, Terms, Weights);
         ConstantTerm = constantSum;
     }
 
-    public LinExpr(List<Expr> terms)
+    public LinExprNode(List<ExprNode> terms)
     {
         var constantSum = 0.0;
-        var nonConstantTerms = new List<Expr>(terms.Count);
+        var nonConstantTerms = new List<ExprNode>(terms.Count);
         var weights = new List<double>(terms.Count);
 
         foreach (var term in terms)
         {
-            // Follow replacement to get actual expression
-            var actualTerm = term.GetActual();
-
-            if (actualTerm is Constant c)
+            if (term is ConstantNode c)
             {
                 constantSum += c.Value;
             }
             // Extract weight from Negation
-            else if (actualTerm is Negation neg)
+            else if (term is NegationNode neg)
             {
                 // Recursively process the negated operand with weight -1
                 ProcessTerm(neg.Operand, -1.0, ref constantSum, nonConstantTerms, weights);
             }
             // Merge nested LinExpr
-            else if (actualTerm is LinExpr lin)
+            else if (term is LinExprNode lin)
             {
                 constantSum += lin.ConstantTerm;
                 for (int i = 0; i < lin.Terms.Count; i++)
@@ -57,7 +54,7 @@ public sealed class LinExpr : Expr
                 }
             }
             // Extract weight from Product with Factor field
-            else if (actualTerm is Product prod)
+            else if (term is ProductNode prod)
             {
                 // Product now extracts Constants into Factor field
                 // If it has exactly 1 factor, we can flatten it
@@ -72,13 +69,13 @@ public sealed class LinExpr : Expr
                 }
                 else
                 {
-                    nonConstantTerms.Add(actualTerm);
+                    nonConstantTerms.Add(term);
                     weights.Add(1.0);
                 }
             }
             else
             {
-                nonConstantTerms.Add(actualTerm);
+                nonConstantTerms.Add(term);
                 weights.Add(1.0);
             }
         }
@@ -88,24 +85,21 @@ public sealed class LinExpr : Expr
         ConstantTerm = constantSum;
     }
 
-    private static void ProcessTerm(Expr term, double weight, ref double constantSum, List<Expr> nonConstantTerms, List<double> weights)
+    private static void ProcessTerm(ExprNode term, double weight, ref double constantSum, List<ExprNode> nonConstantTerms, List<double> weights)
     {
         // Skip terms with zero weight
         if (weight == 0)
             return;
 
-        // Follow replacement to get actual expression
-        var actualTerm = term.GetActual();
-
         // Handle nested structures
-        if (actualTerm is Constant c)
+        if (term is ConstantNode c)
             constantSum += weight * c.Value;
-        else if (actualTerm is Negation neg)
+        else if (term is NegationNode neg)
         {
             // Negate weight and continue
             ProcessTerm(neg.Operand, -weight, ref constantSum, nonConstantTerms, weights);
         }
-        else if (actualTerm is LinExpr lin)
+        else if (term is LinExprNode lin)
         {
             // Merge LinExpr: add all its terms with weights scaled by our weight
             constantSum += weight * lin.ConstantTerm;
@@ -116,7 +110,7 @@ public sealed class LinExpr : Expr
                 weights.Add(scaledWeight);
             }
         }
-        else if (actualTerm is Product prod)
+        else if (term is ProductNode prod)
         {
             // Product now extracts Constants into Factor field
             if (prod.Factors.Count == 1)
@@ -126,18 +120,18 @@ public sealed class LinExpr : Expr
             else
             {
                 // Multiple factors - keep as Product
-                nonConstantTerms.Add(actualTerm);
+                nonConstantTerms.Add(term);
                 weights.Add(weight);
             }
         }
         else
         {
-            nonConstantTerms.Add(actualTerm);
+            nonConstantTerms.Add(term);
             weights.Add(weight);
         }
     }
 
-    protected override double EvaluateCore(ReadOnlySpan<double> x)
+    internal override double Evaluate(ReadOnlySpan<double> x)
     {
         var result = ConstantTerm;
         for (int i = 0; i < Terms.Count; i++)
@@ -145,56 +139,47 @@ public sealed class LinExpr : Expr
         return result;
     }
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
+    internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         for (int i = 0; i < Terms.Count; i++)
             Terms[i].AccumulateGradientCompact(x, compactGrad, multiplier * Weights[i], sortedVarIndices);
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
+    internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         for (int i = 0; i < Terms.Count; i++)
             Terms[i].AccumulateHessian(x, hess, multiplier * Weights[i]);
     }
 
-    protected override void CollectVariablesCore(HashSet<Variable> variables)
+    internal override void CollectVariables(HashSet<Variable> variables)
     {
         foreach (var term in Terms)
             term.CollectVariables(variables);
     }
 
-    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    internal override void CollectHessianSparsity(HashSet<(int row, int col)> entries)
     {
         foreach (var term in Terms)
             term.CollectHessianSparsity(entries);
     }
 
-    protected override bool IsConstantWrtXCore() => Terms.All(t => t.IsConstantWrtX());
-    protected override bool IsLinearCore() => Terms.All(t => t.IsLinear());
-    protected override bool IsAtMostQuadraticCore() => Terms.All(t => t.IsAtMostQuadratic());
+    internal override bool IsConstantWrtX() => Terms.All(t => t.IsConstantWrtX());
+    internal override bool IsLinear() => Terms.All(t => t.IsLinear());
+    internal override bool IsAtMostQuadratic() => Terms.All(t => t.IsAtMostQuadratic());
 
-    protected override Expr CloneCore()
-    {
-        return new LinExpr([.. Terms])
-        {
-            Weights = [.. Weights],
-            ConstantTerm = ConstantTerm
-        };
-    }
-
-    protected override void PrepareChildren()
+    internal override void PrepareChildren()
     {
         foreach (var term in Terms)
             term.Prepare();
     }
 
-    protected override void ClearChildren()
+    internal override void ClearChildren()
     {
         foreach (var term in Terms)
             term.Clear();
     }
 
-    protected override string ToStringCore()
+    public override string ToString()
     {
         // If all terms are simple (variables/constants), format inline
         if (Terms.All(t => t.IsSimpleForPrinting()))
@@ -226,7 +211,7 @@ public sealed class LinExpr : Expr
         sb.AppendLine($"LinExpr: {Terms.Count} terms, constant={ConstantTerm}");
         for (int i = 0; i < Terms.Count; i++)
         {
-            var termLines = Terms[i].ToString().Split(Environment.NewLine);
+            var termLines = Terms[i].ToString()!.Split(Environment.NewLine);
             if (termLines.Length == 1)
                 sb.AppendLine($"  [{i}] weight={Weights[i]}: {termLines[0]}");
             else

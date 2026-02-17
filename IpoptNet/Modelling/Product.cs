@@ -2,31 +2,30 @@ using System.Text;
 
 namespace IpoptNet.Modelling;
 
-public sealed class Product : Expr
+internal sealed class ProductNode : ExprNode
 {
-    public List<Expr> Factors { get; set; }
+    public List<ExprNode> Factors { get; set; }
     public double Factor = 1.0;
     private double[][]? _factorGradBuffers;
     private double[]? _factorValues;
     private double[]? _excludingFactor;
 
-    public Product() => Factors = [];
-    public Product(List<Expr> factors)
+    public ProductNode() => Factors = [];
+    public ProductNode(List<ExprNode> factors)
     {
         // Extract all Constants and multiply them into Factor
         Factor = 1.0;
         Factors = [];
         foreach (var f in factors)
         {
-            var actual = f.GetActual();
-            if (actual is Constant c)
+            if (f is ConstantNode c)
                 Factor *= c.Value;
             else
-                Factors.Add(actual);
+                Factors.Add(f);
         }
     }
 
-    protected override double EvaluateCore(ReadOnlySpan<double> x)
+    internal override double Evaluate(ReadOnlySpan<double> x)
     {
         if (Factor == 0.0)
             return 0.0;
@@ -37,7 +36,7 @@ public sealed class Product : Expr
         return result;
     }
 
-    protected override void AccumulateGradientCompactCore(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
+    internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
         if (Factor == 0.0)
             return;
@@ -58,7 +57,7 @@ public sealed class Product : Expr
         }
     }
 
-    protected override void AccumulateHessianCore(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
+    internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
         if (Factor == 0.0)
             return;
@@ -99,7 +98,7 @@ public sealed class Product : Expr
         // Add cross terms between pairs of factors
         for (int k = 0; k + 1 < Factors.Count; k++)
         {
-            if (Factors[k].IsConstantWrtX()) 
+            if (Factors[k].IsConstantWrtX())
                 continue;
 
             for (int m = k + 1; m < Factors.Count; m++)
@@ -142,13 +141,13 @@ public sealed class Product : Expr
         }
     }
 
-    protected override void CollectVariablesCore(HashSet<Variable> variables)
+    internal override void CollectVariables(HashSet<Variable> variables)
     {
         foreach (var factor in Factors)
             factor.CollectVariables(variables);
     }
 
-    protected override void CollectHessianSparsityCore(HashSet<(int row, int col)> entries)
+    internal override void CollectHessianSparsity(HashSet<(int row, int col)> entries)
     {
         foreach (var factor in Factors)
             factor.CollectHessianSparsity(entries);
@@ -164,16 +163,16 @@ public sealed class Product : Expr
         }
     }
 
-    protected override bool IsConstantWrtXCore() => Factors.Count == 0 || Factors.All(f => f.IsConstantWrtX());
+    internal override bool IsConstantWrtX() => Factors.Count == 0 || Factors.All(f => f.IsConstantWrtX());
 
-    protected override bool IsLinearCore()
+    internal override bool IsLinear()
     {
         // Linear if at most one factor is non-constant and that factor is linear
         var nonConstantFactors = Factors.Where(f => !f.IsConstantWrtX()).ToList();
         return nonConstantFactors.Count == 0 || (nonConstantFactors.Count == 1 && nonConstantFactors[0].IsLinear());
     }
 
-    protected override bool IsAtMostQuadraticCore()
+    internal override bool IsAtMostQuadratic()
     {
         // Count non-constant factors and their degrees
         var nonConstantFactors = Factors.Where(f => !f.IsConstantWrtX()).ToList();
@@ -190,15 +189,7 @@ public sealed class Product : Expr
         return false; // More than two non-constant factors means degree > 2
     }
 
-    protected override Expr CloneCore()
-    {
-        return new Product([.. Factors])
-        {
-            Factor = Factor
-        };
-    }
-
-    protected override void PrepareChildren()
+    internal override void PrepareChildren()
     {
         foreach (var factor in Factors)
             factor.Prepare();
@@ -213,7 +204,7 @@ public sealed class Product : Expr
         _excludingFactor = new double[Factors.Count];
     }
 
-    protected override void ClearChildren()
+    internal override void ClearChildren()
     {
         foreach (var factor in Factors)
             factor.Clear();
@@ -223,7 +214,7 @@ public sealed class Product : Expr
         _excludingFactor = null;
     }
 
-    protected override string ToStringCore()
+    public override string ToString()
     {
         // If all factors are simple, format inline
         if (Factors.All(f => f.IsSimpleForPrinting()))
@@ -245,7 +236,7 @@ public sealed class Product : Expr
         sb.AppendLine($"Product: {Factors.Count} factors, Factor={Factor}");
         for (int i = 0; i < Factors.Count; i++)
         {
-            var factorLines = Factors[i].ToString().Split(Environment.NewLine);
+            var factorLines = Factors[i].ToString()!.Split(Environment.NewLine);
             if (factorLines.Length == 1)
                 sb.AppendLine($"  [{i}]: {factorLines[0]}");
             else
