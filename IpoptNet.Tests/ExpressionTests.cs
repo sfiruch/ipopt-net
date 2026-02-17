@@ -2552,6 +2552,48 @@ public class ExpressionTests
     }
 
     [TestMethod]
+    public void RealWorldBug_MultipleAdditions_PreservesAllVariables()
+    {
+        // Exact reproduction of the actual bug from sheet metal optimization
+        var model = new Model();
+
+        var fixedSalary = model.AddVariable(60, 60); // x[111] - CHE salary (fixed)
+        var additionalProc = model.AddVariable(0); // x[148] - vAdditionalProcecedure
+        var x1 = model.AddVariable(0);
+        var x2 = model.AddVariable(0);
+        var x3 = model.AddVariable(0);
+
+        // Mimic actual code structure
+        var eMaterial = x1 * 2.0;
+        var eMachineTime = x2 * 3.0 + 5.0;
+        var eMachineCost = fixedSalary * eMachineTime;
+        var eMachinePersonCost = x3 * eMachineTime;
+
+        // THIS IS THE CRITICAL PART - eSurfaceTreatment starts as Constant(0)
+        var eSurfaceTreatment = (Expr)0;
+        eSurfaceTreatment += fixedSalary * additionalProc; // Now it's Constant with _replacement
+
+        // Add them exactly like in actual code
+        var predictedPrice = eMaterial + eMachineCost + eMachinePersonCost + eSurfaceTreatment;
+
+        Console.WriteLine($"eSurfaceTreatment type: {eSurfaceTreatment.GetType().Name}");
+        Console.WriteLine($"eSurfaceTreatment.GetActual() type: {eSurfaceTreatment.GetActual().GetType().Name}");
+
+        var varsInST = new HashSet<Variable>();
+        eSurfaceTreatment.CollectVariables(varsInST);
+        Console.WriteLine($"Variables in eSurfaceTreatment: {string.Join(", ", varsInST.OrderBy(v => v.Index).Select(v => $"x[{v.Index}]"))}");
+
+        Console.WriteLine($"predictedPrice type: {predictedPrice.GetType().Name}");
+
+        var variables = new HashSet<Variable>();
+        predictedPrice.CollectVariables(variables);
+        Console.WriteLine($"Variables in predictedPrice: {string.Join(", ", variables.OrderBy(v => v.Index).Select(v => $"x[{v.Index}]"))}");
+
+        Assert.IsTrue(variables.Contains(additionalProc),
+            "additionalProc (x[148]) should be present in predictedPrice - THIS IS THE BUG");
+    }
+
+    [TestMethod]
     public void ComplexAddition_PreservesAllVariables()
     {
         // Reproduces bug where Product of fixed*free variable disappears when added to complex expressions

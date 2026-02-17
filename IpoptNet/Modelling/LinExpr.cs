@@ -94,15 +94,18 @@ public sealed class LinExpr : Expr
         if (weight == 0)
             return;
 
+        // Follow replacement to get actual expression
+        var actualTerm = term.GetActual();
+
         // Handle nested structures
-        if (term is Constant c)
+        if (actualTerm is Constant c)
             constantSum += weight * c.Value;
-        else if (term is Negation neg)
+        else if (actualTerm is Negation neg)
         {
             // Negate weight and continue
             ProcessTerm(neg.Operand, -weight, ref constantSum, nonConstantTerms, weights);
         }
-        else if (term is LinExpr lin)
+        else if (actualTerm is LinExpr lin)
         {
             // Merge LinExpr: add all its terms with weights scaled by our weight
             constantSum += weight * lin.ConstantTerm;
@@ -113,7 +116,7 @@ public sealed class LinExpr : Expr
                 weights.Add(scaledWeight);
             }
         }
-        else if (term is Product prod)
+        else if (actualTerm is Product prod)
         {
             // Product now extracts Constants into Factor field
             if (prod.Factors.Count == 1)
@@ -123,13 +126,13 @@ public sealed class LinExpr : Expr
             else
             {
                 // Multiple factors - keep as Product
-                nonConstantTerms.Add(term);
+                nonConstantTerms.Add(actualTerm);
                 weights.Add(weight);
             }
         }
         else
         {
-            nonConstantTerms.Add(term);
+            nonConstantTerms.Add(actualTerm);
             weights.Add(weight);
         }
     }

@@ -192,11 +192,14 @@ public sealed class QuadExpr : Expr
         if (weight == 0)
             return;
 
-        if (term is Constant c)
+        // Follow replacement to get actual expression
+        var actualTerm = term.GetActual();
+
+        if (actualTerm is Constant c)
             constantSum += weight * c.Value;
-        else if (term is Negation neg)
+        else if (actualTerm is Negation neg)
             ProcessTerm(neg.Operand, -weight, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
-        else if (term is LinExpr lin)
+        else if (actualTerm is LinExpr lin)
         {
             constantSum += weight * lin.ConstantTerm;
             for (int i = 0; i < lin.Terms.Count; i++)
@@ -222,7 +225,7 @@ public sealed class QuadExpr : Expr
                 }
             }
         }
-        else if (term is QuadExpr quad)
+        else if (actualTerm is QuadExpr quad)
         {
             constantSum += weight * quad.ConstantTerm;
             for (int i = 0; i < quad.LinearTerms.Count; i++)
@@ -253,11 +256,11 @@ public sealed class QuadExpr : Expr
                 quadWeights.Add(scaledWeight);
             }
         }
-        else if (term is Product prod)
+        else if (actualTerm is Product prod)
         {
             ProcessProduct(prod, weight, ref constantSum, linearTerms, linearWeights, quadTerms1, quadTerms2, quadWeights);
         }
-        else if (term is PowerOp { Exponent: 2 } pow)
+        else if (actualTerm is PowerOp { Exponent: 2 } pow)
         {
             // x^2 → quadratic term
             // But if base is a LinExpr, we need to expand it: (a*x + b*y + c)^2
@@ -301,7 +304,7 @@ public sealed class QuadExpr : Expr
         }
         else
         {
-            linearTerms.Add(term);
+            linearTerms.Add(actualTerm);
             linearWeights.Add(weight);
         }
     }
