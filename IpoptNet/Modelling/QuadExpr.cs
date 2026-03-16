@@ -565,8 +565,12 @@ internal sealed class QuadExprNode : ExprNode
             }
             else
             {
-                // For complex expressions, delegate to their Hessian computation
-                // This handles cases like (expr1 * expr2) where expr1/expr2 aren't simple variables
+                // For complex expressions, delegate to their Hessian computation.
+                // Note: ProcessProduct() always expands bilinear products into VariableNode × VariableNode
+                // pairs (via the LinExpr expansion branches), so this branch is only reachable if a
+                // non-VariableNode quadratic term is constructed directly (outside ProcessProduct).
+                // The cross-term w*(f1'⊗f2' + f2'⊗f1') is intentionally omitted here because f1 and f2
+                // are non-variable expressions and their own Hessians capture all second-order effects.
                 QuadraticTerms1[i].AccumulateHessian(x, hess, w * QuadraticTerms2[i].Evaluate(x));
                 QuadraticTerms2[i].AccumulateHessian(x, hess, w * QuadraticTerms1[i].Evaluate(x));
             }
