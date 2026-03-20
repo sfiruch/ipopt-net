@@ -29,11 +29,19 @@ public sealed class Model : IDisposable
         return variable;
     }
 
-    public Variable[] AddVariables(int x, double lowerBound, double upperBound)
+    public Variable AddVariable(double lowerBound, double upperBound, double scale = 1.0)
+    {
+        if (scale <= 0) throw new ArgumentException("Scale must be positive.", nameof(scale));
+        var variable = new Variable(lowerBound, upperBound, scale) { Index = _variables.Count };
+        _variables.Add(variable);
+        return variable;
+    }
+
+    public Variable[] AddVariables(int x, double lowerBound, double upperBound, double scale = 1.0)
     {
         var res = new Variable[x];
         for (var i = 0; i < x; i++)
-            res[i] = AddVariable(lowerBound, upperBound);
+            res[i] = AddVariable(lowerBound, upperBound, scale);
         return res;
     }
 
@@ -46,13 +54,22 @@ public sealed class Model : IDisposable
         return res;
     }
 
-    public Variable[,,] AddVariables(int x, int y, int z, double lowerBound, double upperBound)
+    public Variable[,] AddVariables(int x, int y, double lowerBound, double upperBound, double scale = 1.0)
+    {
+        var res = new Variable[x, y];
+        for (var i = 0; i < x; i++)
+            for (var j = 0; j < y; j++)
+                res[i, j] = AddVariable(lowerBound, upperBound, scale);
+        return res;
+    }
+
+    public Variable[,,] AddVariables(int x, int y, int z, double lowerBound, double upperBound, double scale = 1.0)
     {
         var res = new Variable[x, y, z];
         for (var i = 0; i < x; i++)
             for (var j = 0; j < y; j++)
                 for (var k = 0; k < z; k++)
-                    res[i, j, k] = AddVariable(lowerBound, upperBound);
+                    res[i, j, k] = AddVariable(lowerBound, upperBound, scale);
         return res;
     }
 
@@ -82,7 +99,8 @@ public sealed class Model : IDisposable
                 bounds = $" <= {v.UpperBound}";
 
             var start = v.Start.HasValue ? $", start={v.Start}" : "";
-            sb.AppendLine($"  x[{i}]{bounds}{start}");
+            var scale = v.Scale != 1.0 ? $", scale={v.Scale}" : "";
+            sb.AppendLine($"  x[{i}]{bounds}{start}{scale}");
         }
 
         sb.AppendLine();
@@ -125,13 +143,13 @@ public sealed class Model : IDisposable
 
         const double Infinity = 1e19;
 
-        // Variable bounds
+        // Variable bounds (divided by Scale so IPOPT works with normalized internal variables)
         var xL = new double[n];
         var xU = new double[n];
         for (int i = 0; i < n; i++)
         {
-            xL[i] = Math.Clamp(_variables[i].LowerBound, -Infinity, Infinity);
-            xU[i] = Math.Clamp(_variables[i].UpperBound, -Infinity, Infinity);
+            xL[i] = Math.Clamp(_variables[i].LowerBound / _variables[i].Scale, -Infinity, Infinity);
+            xU[i] = Math.Clamp(_variables[i].UpperBound / _variables[i].Scale, -Infinity, Infinity);
         }
 
         // Constraint bounds
@@ -226,10 +244,11 @@ public sealed class Model : IDisposable
         }
 
         // Initialize primal variables from variable Start values, ensuring they're within bounds
+        // Start is stored in physical units; divide by Scale to get internal representation
         var x = new double[n];
         for (int i = 0; i < n; i++)
             if (_variables[i].Start.HasValue)
-                x[i] = Math.Clamp(_variables[i].Start!.Value, xL[i], xU[i]);
+                x[i] = Math.Clamp(_variables[i].Start!.Value / _variables[i].Scale, xL[i], xU[i]);
             else if (xU[i] == Infinity)
                 x[i] = Math.Max(0, xL[i]);
             else if (xL[i] == -Infinity)
@@ -268,7 +287,7 @@ public sealed class Model : IDisposable
         {
             solution = new Dictionary<Variable, double>();
             for (int i = 0; i < n; i++)
-                solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]);
+                solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]) * _variables[i].Scale;
 
             // Update variable Start values and dual variables if requested and solution is usable
             if (updateStartValues)

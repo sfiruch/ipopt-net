@@ -7,6 +7,7 @@ public sealed class Variable
     public int Index { get; internal set; } = -1;
     public double LowerBound = double.NegativeInfinity;
     public double UpperBound = double.PositiveInfinity;
+    public double Scale = 1.0;
     public double? Start;
     public double LowerBoundDualStart = 0;
     public double UpperBoundDualStart = 0;
@@ -18,10 +19,12 @@ public sealed class Variable
         _expr = new Expr(new VariableNode(this));
     }
 
-    public Variable(double lowerBound, double upperBound)
+    public Variable(double lowerBound, double upperBound, double scale = 1.0)
     {
+        if (scale <= 0) throw new ArgumentException("Scale must be positive.", nameof(scale));
         LowerBound = lowerBound;
         UpperBound = upperBound;
+        Scale = scale;
         _expr = new Expr(new VariableNode(this));
     }
 

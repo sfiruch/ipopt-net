@@ -9,11 +9,11 @@ internal sealed class VariableNode : ExprNode
         Variable = variable;
     }
 
-    internal override double Evaluate(ReadOnlySpan<double> x) => x[Variable.Index];
+    internal override double Evaluate(ReadOnlySpan<double> x) => x[Variable.Index] * Variable.Scale;
 
     internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
-        compactGrad[Array.BinarySearch(sortedVarIndices, Variable.Index)] += multiplier;
+        compactGrad[Array.BinarySearch(sortedVarIndices, Variable.Index)] += multiplier * Variable.Scale;
     }
 
     internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
@@ -27,7 +27,7 @@ internal sealed class VariableNode : ExprNode
     internal override bool IsLinear() => true;
     internal override bool IsAtMostQuadratic() => true;
 
-    public override string ToString() => $"x[{Variable.Index}]";
+    public override string ToString() => Variable.Scale != 1.0 ? $"x[{Variable.Index}]*{Variable.Scale}" : $"x[{Variable.Index}]";
 
     internal override bool IsSimpleForPrinting() => true;
 }

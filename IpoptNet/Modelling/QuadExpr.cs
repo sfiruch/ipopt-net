@@ -554,13 +554,13 @@ internal sealed class QuadExprNode : ExprNode
 
                 if (idx1 == idx2)
                 {
-                    // Diagonal: x^2 → d²/dx² = 2
-                    hess.Add(idx1, idx1, 2.0 * w);
+                    // Diagonal: x^2 → d²/dx_int² = 2 * Scale²
+                    hess.Add(idx1, idx1, 2.0 * w * v1.Variable.Scale * v1.Variable.Scale);
                 }
                 else
                 {
-                    // Off-diagonal: x*y → d²/dxdy = 1 (coefficient stored once, used for both i,j and j,i)
-                    hess.Add(idx1, idx2, w);
+                    // Off-diagonal: x*y → d²/dx_int[i] dx_int[j] = Scale1 * Scale2
+                    hess.Add(idx1, idx2, w * v1.Variable.Scale * v2.Variable.Scale);
                 }
             }
             else

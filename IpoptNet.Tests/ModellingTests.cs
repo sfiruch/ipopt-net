@@ -1981,6 +1981,152 @@ public class ModellingTests
         Assert.IsFalse(model.Options.HessianConstant == true);
     }
 
+    [TestMethod]
+    public void VariableScaling_SingleVariable_CorrectSolution()
+    {
+        // Minimize (x - 50)^2 with x in [0, 100], scale=100
+        // IPOPT internally works with x_int in [0, 1], optimal x_int=0.5, x_physical=50
+        var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
+        model.Options.CheckDerivativesForNanInf = true;
+        var x = model.AddVariable(0.0, 100.0, scale: 100.0);
+
+        model.SetObjective(Expr.Pow(x - 50, 2));
+
+        var result = SolveWithDerivativeTest(model);
+
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(50.0, result.Solution![x], 0.01);
+        Assert.AreEqual(0.0, result.ObjectiveValue, 0.01);
+    }
+
+    [TestMethod]
+    public void VariableScaling_WithConstraint_CorrectSolution()
+    {
+        // Minimize x^2 + y^2 subject to x + y == 100, x in [0,200] scale=200, y in [0,200] scale=200
+        // Solution: x=50, y=50
+        var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
+        model.Options.CheckDerivativesForNanInf = true;
+        var x = model.AddVariable(0.0, 200.0, scale: 200.0);
+        var y = model.AddVariable(0.0, 200.0, scale: 200.0);
+        x.Start = 100.0;
+        y.Start = 100.0;
+
+        model.SetObjective(x * x + y * y);
+        model.AddConstraint(x + y == 100.0);
+
+        var result = SolveWithDerivativeTest(model);
+
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(50.0, result.Solution![x], 0.01);
+        Assert.AreEqual(50.0, result.Solution![y], 0.01);
+    }
+
+    [TestMethod]
+    public void VariableScaling_MixedScales_CorrectSolution()
+    {
+        // Minimize (x - 500)^2 + (y - 0.5)^2 with x in [0,1000] scale=1000, y in [0,1] (no scale)
+        var model = new Model();
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(0.0, 1000.0, scale: 1000.0);
+        var y = model.AddVariable(0.0, 1.0);
+
+        model.SetObjective(Expr.Pow(x - 500, 2) + Expr.Pow(y - 0.5, 2));
+
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(500.0, result.Solution![x], 0.1);
+        Assert.AreEqual(0.5, result.Solution![y], 0.001);
+    }
+
+    [TestMethod]
+    public void VariableScaling_DerivativeTest_PassesForScaledVariables()
+    {
+        // Verify that gradient and Hessian are correct for scaled variables.
+        // Use variables with similar scales to keep the derivative checker well-conditioned.
+        var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
+        model.Options.CheckDerivativesForNanInf = true;
+        model.Options.DerivativeTestTolerance = 1e-3;
+        var x = model.AddVariable(1.0, 5.0, scale: 5.0);
+        x.Start = 2.5;
+        var y = model.AddVariable(1.0, 5.0, scale: 5.0);
+        y.Start = 2.5;
+
+        model.SetObjective(x * x + y * y);
+        model.AddConstraint(x + y >= 6.0);
+
+        var result = SolveWithDerivativeTest(model);
+
+        AssertDerivativeTestPassed(result.DerivativeTestResult);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(3.0, result.Solution![x], 0.01);
+        Assert.AreEqual(3.0, result.Solution![y], 0.01);
+    }
+
+    [TestMethod]
+    public void VariableScaling_WarmStart_CorrectSolution()
+    {
+        var model = new Model();
+        model.Options.CheckDerivativesForNanInf = true;
+        var x = model.AddVariable(0.0, 100.0, scale: 100.0);
+        var y = model.AddVariable(0.0, 100.0, scale: 100.0);
+
+        model.SetObjective(x * x + y * y);
+        model.AddConstraint(x + y == 60.0);
+
+        model.Options.PrintLevel = 0;
+        var result1 = model.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result1.Status);
+        Assert.AreEqual(30.0, result1.Solution![x], 0.01);
+        Assert.AreEqual(30.0, result1.Solution![y], 0.01);
+
+        // Start values should be physical-unit values (30.0, not 0.3)
+        Assert.AreEqual(30.0, x.Start!.Value, 0.01);
+        Assert.AreEqual(30.0, y.Start!.Value, 0.01);
+
+        // Re-solve (warm start) should converge immediately
+        model.Options.MaxIterations = 5;
+        var result2 = model.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result2.Status);
+        Assert.AreEqual(30.0, result2.Solution![x], 0.01);
+        Assert.AreEqual(30.0, result2.Solution![y], 0.01);
+    }
+
+    [TestMethod]
+    public void VariableScaling_DefaultScale_IdenticalToUnscaled()
+    {
+        // Verify scale=1 produces identical results to no scale specified
+        var model1 = new Model();
+        model1.Options.PrintLevel = 0;
+        var x1 = model1.AddVariable(1.0, 5.0);
+        x1.Start = 2.0;
+        var y1 = model1.AddVariable(1.0, 5.0);
+        y1.Start = 3.0;
+        model1.SetObjective(Expr.Pow(x1 - 3, 2) + Expr.Pow(y1 - 2, 2));
+        model1.AddConstraint(x1 + y1 >= 5.0);
+        var result1 = model1.Solve();
+
+        var model2 = new Model();
+        model2.Options.PrintLevel = 0;
+        var x2 = model2.AddVariable(1.0, 5.0, scale: 1.0);
+        x2.Start = 2.0;
+        var y2 = model2.AddVariable(1.0, 5.0, scale: 1.0);
+        y2.Start = 3.0;
+        model2.SetObjective(Expr.Pow(x2 - 3, 2) + Expr.Pow(y2 - 2, 2));
+        model2.AddConstraint(x2 + y2 >= 5.0);
+        var result2 = model2.Solve();
+
+        Assert.AreEqual(result1.Status, result2.Status);
+        Assert.AreEqual(result1.Solution![x1], result2.Solution![x2], 0.001);
+        Assert.AreEqual(result1.Solution![y1], result2.Solution![y2], 0.001);
+        Assert.AreEqual(result1.ObjectiveValue, result2.ObjectiveValue, 0.001);
+    }
+
     /// <summary>
     /// Helper method to solve a model and capture derivative test output.
     /// Use this for tests that enable DerivativeTest or CheckDerivativesForNanInf.
