@@ -32,7 +32,10 @@
     <None Include="..\README.md" Pack="true" Link="README.md" PackagePath="\" />
     <!-- Pack DLLs in standard NuGet runtime location -->
     <None Include="runtimes\win-x64\native\*.dll" Pack="true" PackagePath="runtimes\win-x64\native" />
-    <None Include="runtimes\linux\native\libipopt-3.so" Pack="true" PackagePath="runtimes\linux-x64\native" />
+    <None Include="runtimes\linux\native\libipopt-3.so"     Pack="true" PackagePath="runtimes\linux-x64\native" />
+    <None Include="runtimes\linux\native\libcoinmumps.so.3" Pack="true" PackagePath="runtimes\linux-x64\native" />
+    <None Include="runtimes\linux\native\libgfortran.so.5"  Pack="true" PackagePath="runtimes\linux-x64\native" />
+    <None Include="runtimes\linux\native\libgomp.so.1"      Pack="true" PackagePath="runtimes\linux-x64\native" />
   </ItemGroup>
 
   <!-- Copy native DLLs directly to output directory (not in subdirectory) -->
