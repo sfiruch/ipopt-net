@@ -16,7 +16,9 @@ public class SolverTests
     /// Optimal value: f(x*) ≈ 17.014
     /// </summary>
     [TestMethod]
-    public unsafe void HS071_Converges()
+    [DataRow("mumps")]
+    [DataRow("pardisomkl")]
+    public unsafe void HS071_Converges(string linearSolver)
     {
         const int n = 4;
         const int m = 2;
@@ -149,8 +151,8 @@ public class SolverTests
         using var solver = new IpoptSolver(n, xL, xU, m, gL, gU, jacobianNonZeros, hessianNonZeros,
             evalF, evalGradF, evalG, evalJacG, evalH);
 
+        Assert.IsTrue(solver.SetOption("linear_solver", linearSolver), $"linear_solver '{linearSolver}' was rejected — not compiled into this IPOPT build");
         solver.SetOption("derivative_test", "second-order");
-        solver.SetOption("print_level", 0);
 
         double[] x = [1, 5, 5, 1];
         var status = solver.Solve(x, out var objValue, out var statistics);

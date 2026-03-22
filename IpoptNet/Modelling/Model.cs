@@ -197,18 +197,15 @@ public sealed class Model : IDisposable
         // Apply user-specified options
         foreach (var (name, value) in Options.Options)
         {
-            switch (value)
+            bool ok = value switch
             {
-                case string strValue:
-                    solver.SetOption(name, strValue);
-                    break;
-                case int intValue:
-                    solver.SetOption(name, intValue);
-                    break;
-                case double dblValue:
-                    solver.SetOption(name, dblValue);
-                    break;
-            }
+                string strValue => solver.SetOption(name, strValue),
+                int intValue    => solver.SetOption(name, intValue),
+                double dblValue => solver.SetOption(name, dblValue),
+                _               => true
+            };
+            if (!ok)
+                throw new InvalidOperationException($"IPOPT rejected option '{name}' = '{value}'. Check that the option name and value are valid.");
         }
 
         // Auto-set constant derivative options if user hasn't explicitly set them
@@ -219,28 +216,33 @@ public sealed class Model : IDisposable
             (_variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
              _constraints.Any(c => c.DualStart != 0)))
         {
-            solver.SetOption("warm_start_init_point", "yes");
+            if (!solver.SetOption("warm_start_init_point", "yes"))
+                throw new InvalidOperationException("IPOPT rejected option 'warm_start_init_point' = 'yes'.");
         }
 
         // Auto-enable grad_f_constant if objective has constant gradients and user hasn't explicitly set it
         if (Options.GradFConstant is null && _objective.IsLinear())
-            solver.SetOption("grad_f_constant", "yes");
+            if (!solver.SetOption("grad_f_constant", "yes"))
+                throw new InvalidOperationException("IPOPT rejected option 'grad_f_constant' = 'yes'.");
 
         // Auto-enable jac_c_constant if all equality constraints have constant Jacobians
         var equalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) < 1e-15).ToList();
         if (Options.JacCConstant is null && equalityConstraints.All(c => c.Expression.IsLinear()))
-            solver.SetOption("jac_c_constant", "yes");
+            if (!solver.SetOption("jac_c_constant", "yes"))
+                throw new InvalidOperationException("IPOPT rejected option 'jac_c_constant' = 'yes'.");
 
         // Auto-enable jac_d_constant if all inequality constraints have constant Jacobians
         var inequalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) >= 1e-15).ToList();
         if (Options.JacDConstant is null && inequalityConstraints.All(c => c.Expression.IsLinear()))
-            solver.SetOption("jac_d_constant", "yes");
+            if (!solver.SetOption("jac_d_constant", "yes"))
+                throw new InvalidOperationException("IPOPT rejected option 'jac_d_constant' = 'yes'.");
 
         // Auto-enable hessian_constant if objective and all constraints are at most quadratic
         if (Options.HessianConstant is null && !useLimitedMemory &&
             _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsLinear()))
         {
-            solver.SetOption("hessian_constant", "yes");
+            if (!solver.SetOption("hessian_constant", "yes"))
+                throw new InvalidOperationException("IPOPT rejected option 'hessian_constant' = 'yes'.");
         }
 
         // Initialize primal variables from variable Start values, ensuring they're within bounds
