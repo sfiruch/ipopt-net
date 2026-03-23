@@ -15,7 +15,7 @@ dotnet add package ipopt-net
 
 The package includes native binaries for:
 - **Windows** (x64)
-- **Linux** (x64, requires `libgfortran5 liblapack3 libblas3 libgomp1`)
+- **Linux** (x64, Intel MKL Pardiso requires `libmkl-rt`)
 
 ## Features
 
@@ -213,7 +213,7 @@ var result = model.Solve();
 ### Available Linear Solvers
 
 - `LinearSolver.Mumps` - Default, included with IPOPT
-- `LinearSolver.PardisoMkl` - Intel MKL Pardiso (included)
+- `LinearSolver.PardisoMkl` - Intel MKL Pardiso (included on Win64, requires "libmkl-rt" package on Linux)
 - `LinearSolver.PardisoProject` - Pardiso from pardiso-project.org (often faster, requires external library)
 - `LinearSolver.Ma27`, `Ma57`, `Ma77`, `Ma86`, `Ma97` - HSL solvers (require external library)
 - `LinearSolver.Wsmp` - Watson Sparse Matrix Package (requires external library)
