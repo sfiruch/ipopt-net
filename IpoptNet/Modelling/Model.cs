@@ -18,6 +18,12 @@ public sealed class Model : IDisposable
     /// </summary>
     public IpoptOptions Options { get; } = new();
 
+    /// <summary>
+    /// Optional callback invoked at each IPOPT iteration.
+    /// Return true to continue, false to request early termination.
+    /// </summary>
+    public Func<SolveStatistics, bool>? IntermediateCallback { get; set; }
+
     public Model()
     {
     }
@@ -193,6 +199,8 @@ public sealed class Model : IDisposable
             m, gL, gU,
             jacRows.Length, hessRows.Length,
             evalF, evalGradF, evalG, evalJacG, evalH);
+
+        solver.IntermediateCallback = IntermediateCallback;
 
         // Apply user-specified options
         foreach (var (name, value) in Options.Options)

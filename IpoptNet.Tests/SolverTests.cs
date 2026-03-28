@@ -167,6 +167,166 @@ public class SolverTests
     }
 
     /// <summary>
+    /// Tests that the intermediate callback receives all statistics and can terminate early.
+    /// Uses the same HS071 problem as above.
+    /// </summary>
+    [TestMethod]
+    public unsafe void IntermediateCallback_ReceivesStatistics_AndCanTerminateEarly()
+    {
+        const int n = 4;
+        const int m = 2;
+        const int jacobianNonZeros = 8;
+        const int hessianNonZeros = 10;
+
+        double[] xL = [1, 1, 1, 1];
+        double[] xU = [5, 5, 5, 5];
+        double[] gL = [25, 40];
+        double[] gU = [double.PositiveInfinity, 40];
+
+        EvalFCallback evalF = (int nn, double* x, bool newX, double* objValue, nint userData) =>
+        {
+            *objValue = x[0] * x[3] * (x[0] + x[1] + x[2]) + x[2];
+            return true;
+        };
+
+        EvalGradFCallback evalGradF = (int nn, double* x, bool newX, double* gradF, nint userData) =>
+        {
+            gradF[0] = x[3] * (2 * x[0] + x[1] + x[2]);
+            gradF[1] = x[0] * x[3];
+            gradF[2] = x[0] * x[3] + 1;
+            gradF[3] = x[0] * (x[0] + x[1] + x[2]);
+            return true;
+        };
+
+        EvalGCallback evalG = (int nn, double* x, bool newX, int mm, double* g, nint userData) =>
+        {
+            g[0] = x[0] * x[1] * x[2] * x[3];
+            g[1] = x[0] * x[0] + x[1] * x[1] + x[2] * x[2] + x[3] * x[3];
+            return true;
+        };
+
+        int[] jacRows = [0, 0, 0, 0, 1, 1, 1, 1];
+        int[] jacCols = [0, 1, 2, 3, 0, 1, 2, 3];
+
+        EvalJacGCallback evalJacG = (int nn, double* x, bool newX, int mm, int neleJac, int* iRow, int* jCol, double* values, nint userData) =>
+        {
+            if (values == null)
+            {
+                for (int i = 0; i < jacRows.Length; i++)
+                {
+                    iRow[i] = jacRows[i];
+                    jCol[i] = jacCols[i];
+                }
+            }
+            else
+            {
+                values[0] = x[1] * x[2] * x[3];
+                values[1] = x[0] * x[2] * x[3];
+                values[2] = x[0] * x[1] * x[3];
+                values[3] = x[0] * x[1] * x[2];
+                values[4] = 2 * x[0];
+                values[5] = 2 * x[1];
+                values[6] = 2 * x[2];
+                values[7] = 2 * x[3];
+            }
+            return true;
+        };
+
+        int[] hessRows = [0, 1, 1, 2, 2, 2, 3, 3, 3, 3];
+        int[] hessCols = [0, 0, 1, 0, 1, 2, 0, 1, 2, 3];
+
+        EvalHCallback evalH = (int nn, double* x, bool newX, double objFactor, int mm, double* lambda, bool newLambda,
+                              int neleHess, int* iRow, int* jCol, double* values, nint userData) =>
+        {
+            if (values == null)
+            {
+                for (int i = 0; i < hessRows.Length; i++)
+                {
+                    iRow[i] = hessRows[i];
+                    jCol[i] = hessCols[i];
+                }
+            }
+            else
+            {
+                for (int i = 0; i < neleHess; i++)
+                    values[i] = 0;
+
+                values[0] += objFactor * 2 * x[3];
+                values[1] += objFactor * x[3];
+                values[3] += objFactor * x[3];
+                values[6] += objFactor * (2 * x[0] + x[1] + x[2]);
+                values[7] += objFactor * x[0];
+                values[8] += objFactor * x[0];
+
+                values[1] += lambda[0] * x[2] * x[3];
+                values[3] += lambda[0] * x[1] * x[3];
+                values[4] += lambda[0] * x[0] * x[3];
+                values[6] += lambda[0] * x[1] * x[2];
+                values[7] += lambda[0] * x[0] * x[2];
+                values[8] += lambda[0] * x[0] * x[1];
+
+                values[0] += lambda[1] * 2;
+                values[2] += lambda[1] * 2;
+                values[5] += lambda[1] * 2;
+                values[9] += lambda[1] * 2;
+            }
+            return true;
+        };
+
+        // Part 1: Verify callback receives all statistics
+        var receivedStats = new List<SolveStatistics>();
+
+        using (var solver = new IpoptSolver(n, xL, xU, m, gL, gU, jacobianNonZeros, hessianNonZeros,
+            evalF, evalGradF, evalG, evalJacG, evalH))
+        {
+            solver.SetOption("print_level", 0);
+            solver.IntermediateCallback = stats =>
+            {
+                receivedStats.Add(stats);
+                return true;
+            };
+
+            double[] x = [1, 5, 5, 1];
+            solver.Solve(x, out _, out _);
+        }
+
+        Assert.IsTrue(receivedStats.Count > 0, "Callback was never invoked");
+
+        // Iteration numbers should be monotonically non-decreasing
+        for (int i = 1; i < receivedStats.Count; i++)
+            Assert.IsTrue(receivedStats[i].IterationCount >= receivedStats[i - 1].IterationCount);
+
+        // The final iteration should have low infeasibility (problem converges)
+        var last = receivedStats[^1];
+        Assert.IsTrue(last.PrimalInfeasibility < 1e-4, $"Expected low primal infeasibility, got {last.PrimalInfeasibility}");
+        Assert.IsTrue(last.LineSearchTrials >= 1);
+
+        // Part 2: Verify early termination by returning false after 3 iterations
+        const int maxIterations = 3;
+        int callbackCount = 0;
+
+        using (var solver = new IpoptSolver(n, xL, xU, m, gL, gU, jacobianNonZeros, hessianNonZeros,
+            evalF, evalGradF, evalG, evalJacG, evalH))
+        {
+            solver.SetOption("print_level", 0);
+            solver.IntermediateCallback = stats =>
+            {
+                callbackCount++;
+                return stats.IterationCount < maxIterations;
+            };
+
+            double[] x = [1, 5, 5, 1];
+            var status = solver.Solve(x, out _, out _);
+
+            Assert.AreNotEqual(ApplicationReturnStatus.SolveSucceeded, status,
+                "Solver should not fully converge when terminated early");
+        }
+
+        Assert.IsTrue(callbackCount <= maxIterations + 1,
+            $"Expected at most {maxIterations + 1} callback invocations, got {callbackCount}");
+    }
+
+    /// <summary>
     /// Tests a pure feasibility problem (no objective function).
     /// Find x, y such that:
     /// - x^2 + y^2 = 1 (on unit circle)

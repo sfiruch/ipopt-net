@@ -4,11 +4,16 @@ using System.Runtime.InteropServices;
 namespace IpoptNet;
 
 public sealed record SolveStatistics(
+    AlgorithmMode AlgorithmMode,
     int IterationCount,
-    double FinalObjectiveValue,
+    double ObjectiveValue,
     double PrimalInfeasibility,
     double DualInfeasibility,
     double ComplementarityMeasure,
+    double DNorm,
+    double RegularizationSize,
+    double DualStepSize,
+    double PrimalStepSize,
     int LineSearchTrials);
 
 public sealed class IpoptSolver : IDisposable
@@ -24,13 +29,14 @@ public sealed class IpoptSolver : IDisposable
     private readonly EvalJacGCallback _evalJacG;
     private readonly EvalHCallback _evalH;
 
+    /// <summary>
+    /// Optional callback invoked at each IPOPT iteration.
+    /// Return true to continue, false to request early termination.
+    /// </summary>
+    public Func<SolveStatistics, bool>? IntermediateCallback { get; set; }
+
     // Statistics captured from intermediate callback
-    private int _lastIterationCount;
-    private double _lastObjectiveValue;
-    private double _lastPrimalInfeasibility;
-    private double _lastDualInfeasibility;
-    private double _lastComplementarity;
-    private int _lastLineSearchTrials;
+    private SolveStatistics? _lastStatistics;
 
     public unsafe IpoptSolver(
         int n,
@@ -160,13 +166,9 @@ public sealed class IpoptSolver : IDisposable
         nint userData)
     {
         var instance = (IpoptSolver)GCHandle.FromIntPtr(userData).Target!;
-        instance._lastIterationCount = iterCount;
-        instance._lastObjectiveValue = objValue;
-        instance._lastPrimalInfeasibility = infPr;
-        instance._lastDualInfeasibility = infDu;
-        instance._lastComplementarity = mu;
-        instance._lastLineSearchTrials = lsTrials;
-        return 1;
+        var stats = new SolveStatistics(algMode, iterCount, objValue, infPr, infDu, mu, dNorm, regularizationSize, alphaDu, alphaPr, lsTrials);
+        instance._lastStatistics = stats;
+        return instance.IntermediateCallback?.Invoke(stats) != false ? 1 : 0;
     }
 
     public bool SetOption(string name, string value)
@@ -208,13 +210,8 @@ public sealed class IpoptSolver : IDisposable
         {
             var status = Native.IpoptSolve(_problem, pX, pG, &objVal, pMultG, pMultXL, pMultXU, GCHandle.ToIntPtr(_selfHandle));
             objectiveValue = objVal;
-            statistics = new SolveStatistics(
-                _lastIterationCount,
-                _lastObjectiveValue,
-                _lastPrimalInfeasibility,
-                _lastDualInfeasibility,
-                _lastComplementarity,
-                _lastLineSearchTrials);
+            statistics = _lastStatistics ?? new SolveStatistics(
+                default, 0, objVal, 0, 0, 0, 0, 0, 0, 0, 0);
             return status;
         }
     }
