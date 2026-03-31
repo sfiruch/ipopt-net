@@ -526,6 +526,7 @@ public sealed class Expr
     public static Expr Tan(Expr a) => new Expr(new TanNode(a._node));
     public static Expr Exp(Expr a) => new Expr(new ExpNode(a._node));
     public static Expr Log(Expr a) => new Expr(new LogNode(a._node));
+    public static Expr Softplus(Expr a, double sharpness = 1.0) => new Expr(new SoftplusNode(a._node, sharpness));
 
     public override string ToString() => _node.ToString() ?? string.Empty;
 }

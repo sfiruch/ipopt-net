@@ -314,6 +314,126 @@ public class ExpressionTests
     }
 
     [TestMethod]
+    public void Gradient_Softplus_MatchesFiniteDifference()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var expr = Expr.Softplus(x);
+        double[] point = [1.5];
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void Gradient_Softplus_WithSharpness_MatchesFiniteDifference()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var expr = Expr.Softplus(x, sharpness: 5.0);
+        double[] point = [0.3];
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void Gradient_Softplus_ComplexArgument_MatchesFiniteDifference()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var expr = Expr.Softplus(x * y - 2 * x, sharpness: 3.0);
+        double[] point = [1.5, 0.5];
+
+        AssertGradientMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void Hessian_Softplus_MatchesFiniteDifference()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var expr = Expr.Softplus(x);
+        double[] point = [1.0];
+
+        AssertHessianMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void Hessian_Softplus_WithSharpness_MatchesFiniteDifference()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var expr = Expr.Softplus(x, sharpness: 5.0);
+        double[] point = [0.3];
+
+        AssertHessianMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void Hessian_Softplus_ComplexArgument_MatchesFiniteDifference()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+        var y = model.AddVariable();
+
+        var expr = Expr.Softplus(x * y - 2 * x, sharpness: 3.0);
+        double[] point = [1.5, 0.5];
+
+        AssertHessianMatchesFiniteDifference(expr, point);
+    }
+
+    [TestMethod]
+    public void Softplus_LargePositiveInput_DoesNotOverflow()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var expr = Expr.Softplus(x);
+        expr._node.Prepare();
+
+        // For large x, softplus(x) ≈ x
+        double[] point = [1000.0];
+        var value = expr.Evaluate(point);
+
+        Assert.IsFalse(double.IsNaN(value));
+        Assert.IsFalse(double.IsInfinity(value));
+        Assert.AreEqual(1000.0, value, 1e-6);
+
+        double[] grad = new double[1];
+        expr.AccumulateGradient(point, grad);
+        Assert.IsFalse(double.IsNaN(grad[0]));
+        Assert.AreEqual(1.0, grad[0], 1e-6);
+    }
+
+    [TestMethod]
+    public void Softplus_LargeNegativeInput_DoesNotUnderflow()
+    {
+        var model = new Model();
+        var x = model.AddVariable();
+
+        var expr = Expr.Softplus(x);
+        expr._node.Prepare();
+
+        // For large negative x, softplus(x) ≈ 0
+        double[] point = [-1000.0];
+        var value = expr.Evaluate(point);
+
+        Assert.IsFalse(double.IsNaN(value));
+        Assert.IsFalse(double.IsInfinity(value));
+        Assert.AreEqual(0.0, value, 1e-6);
+
+        double[] grad = new double[1];
+        expr.AccumulateGradient(point, grad);
+        Assert.IsFalse(double.IsNaN(grad[0]));
+        Assert.AreEqual(0.0, grad[0], 1e-6);
+    }
+
+    [TestMethod]
     public void Hessian_Division_MatchesFiniteDifference()
     {
         var model = new Model();
