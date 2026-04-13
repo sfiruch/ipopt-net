@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 
 namespace IpoptNet.Modelling;
@@ -10,6 +11,7 @@ internal sealed class PowerOpNode : ExprNode
 
     public PowerOpNode(ExprNode @base, double exponent)
     {
+        Debug.Assert(exponent != 1.0, "PowerOpNode with exponent 1 should be folded to the base expression at construction.");
         Base = @base;
         Exponent = exponent;
     }

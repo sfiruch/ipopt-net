@@ -518,7 +518,7 @@ public sealed class Expr
     public static Constraint operator ==(Expr left, Expr right) => new(left - right, 0, 0);
     public static Constraint operator !=(Expr left, Expr right) => throw new NotSupportedException("Inequality constraints (!=) are not supported in optimization models.");
 
-    public static Expr Pow(Expr @base, double exponent) => new Expr(new PowerOpNode(@base._node, exponent));
+    public static Expr Pow(Expr @base, double exponent) => exponent == 1.0 ? @base : new Expr(new PowerOpNode(@base._node, exponent));
     public static Expr Pow(Expr @base, Expr exponent) => Exp(exponent * Log(@base));
     public static Expr Sqrt(Expr a) => new Expr(new PowerOpNode(a._node, 0.5));
     public static Expr Sin(Expr a) => new Expr(new SinNode(a._node));
