@@ -31,6 +31,8 @@ internal sealed class PowerOpNode : ExprNode
         var bVal = Base.Evaluate(x);
         var firstDerivCoeff = Exponent * Math.Pow(bVal, Exponent - 1);
         var secondDerivCoeff = Exponent * (Exponent - 1) * Math.Pow(bVal, Exponent - 2);
+        // For exponents in (1,2), bVal^(Exponent-2) → ∞ as bVal → 0; clamp to keep Hessian finite.
+        if (!double.IsFinite(secondDerivCoeff)) secondDerivCoeff = 0.0;
         Base.AccumulateHessian(x, hess, multiplier * firstDerivCoeff);
 
         // Outer product of gradient with itself using compact gradient
