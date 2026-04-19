@@ -76,12 +76,18 @@ internal sealed class ProductNode : ExprNode
         for (int i = 0; i < Factors.Count; i++)
             _factorValues![i] = Factors[i].Evaluate(x);
 
-        // Pre-compute product excluding each factor
-        var totalProduct = 1.0;
+        // Pre-compute product excluding each factor.
+        // Must not use totalProduct / _factorValues[i]: if any factor is 0, that yields 0/0 = NaN,
+        // which then poisons the Hessian and propagates garbage into Pardiso/IPOPT. Compute the
+        // excluding product directly (O(n²) but n is tiny — almost always 2 for bilinear terms).
         for (int i = 0; i < Factors.Count; i++)
-            totalProduct *= _factorValues![i];
-        for (int i = 0; i < Factors.Count; i++)
-            _excludingFactor![i] = totalProduct / _factorValues![i];
+        {
+            var excl = 1.0;
+            for (int j = 0; j < Factors.Count; j++)
+                if (j != i)
+                    excl *= _factorValues![j];
+            _excludingFactor![i] = excl;
+        }
 
         // Compute compact gradients of all factors
         for (int i = 0; i < Factors.Count; i++)
@@ -95,7 +101,9 @@ internal sealed class ProductNode : ExprNode
         for (int k = 0; k < Factors.Count; k++)
             Factors[k].AccumulateHessian(x, hess, scaledMultiplier * _excludingFactor![k]);
 
-        // Add cross terms between pairs of factors
+        // Add cross terms between pairs of factors.
+        // Coefficient is the product of all factors except k and m; computed directly to avoid
+        // the _excludingFactor[k] / _factorValues[m] division (same NaN hazard as above).
         for (int k = 0; k + 1 < Factors.Count; k++)
         {
             if (Factors[k].IsConstantWrtX())
@@ -106,8 +114,13 @@ internal sealed class ProductNode : ExprNode
                 if (Factors[m].IsConstantWrtX())
                     continue;
 
+                var pairCoeff = 1.0;
+                for (int i = 0; i < Factors.Count; i++)
+                    if (i != k && i != m)
+                        pairCoeff *= _factorValues![i];
+
                 AddCrossTermCompact(hess, _factorGradBuffers![k], _factorGradBuffers[m],
-                    Factors[k]._sortedVarIndices!, Factors[m]._sortedVarIndices!, (double)(scaledMultiplier * (double)(_excludingFactor![k] / _factorValues![m])));
+                    Factors[k]._sortedVarIndices!, Factors[m]._sortedVarIndices!, scaledMultiplier * pairCoeff);
             }
         }
     }
