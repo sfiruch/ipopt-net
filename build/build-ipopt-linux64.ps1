@@ -10,7 +10,7 @@
 #   via apt if they are not already present.
 #
 # Result:
-#   IpoptNet\runtimes\linux\native\libipopt-3.so (~80-120 MB)
+#   IpoptNet\runtimes\linux-x64\native\libipopt-3.so (~80-120 MB)
 #   MUMPS + MKL Pardiso + all GCC/Fortran runtimes statically linked.
 #   No external .so files required at runtime.
 
@@ -18,7 +18,7 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir  = $PSScriptRoot
 $RepoRoot   = Split-Path $ScriptDir -Parent
-$OutputDir  = "$RepoRoot\IpoptNet\runtimes\linux\native"
+$OutputDir  = "$RepoRoot\IpoptNet\runtimes\linux-x64\native"
 
 # ── Convert Windows path → WSL /mnt/... path ─────────────────────────────────
 function ConvertTo-WslPath([string] $winPath) {

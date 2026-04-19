@@ -17,7 +17,7 @@
 #
 # Usage (from a native Linux shell or WSL):
 #   ./build-ipopt-linux64.sh [--output /path/to/output/dir]
-#   Default output: <repo>/IpoptNet/runtimes/linux/native/
+#   Default output: <repo>/IpoptNet/runtimes/linux-x64/native/
 #
 # Result:
 #   libipopt-3.so (~80-120 MB) — MUMPS + MKL Pardiso + Fortran runtime statically linked
@@ -32,7 +32,7 @@ IPOPT_RELEASE="releases/3.14.19"
 NPROC=$(nproc 2>/dev/null || echo 4)
 
 # Allow override via env var (set by build-ipopt-linux64.ps1 via WSLENV) or argument
-OUTPUT_DIR="${IPOPT_LINUX64_OUTPUT:-$SCRIPT_DIR/IpoptNet/runtimes/linux/native}"
+OUTPUT_DIR="${IPOPT_LINUX64_OUTPUT:-$SCRIPT_DIR/IpoptNet/runtimes/linux-x64/native}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --output) OUTPUT_DIR="$2"; shift 2 ;;

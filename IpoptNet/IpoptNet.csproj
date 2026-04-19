@@ -31,22 +31,18 @@
   <ItemGroup>
     <None Include="..\README.md" Pack="true" Link="README.md" PackagePath="\" />
     <None Include="..\INTEL-MKL-LICENSE.txt" Pack="true" PackagePath="\" />
-    <!-- Pack DLLs in standard NuGet runtime location -->
-    <None Include="runtimes\win-x64\native\*.dll" Pack="true" PackagePath="runtimes\win-x64\native" />
-    <!-- libipopt-3.so is self-contained: MUMPS, MKL Pardiso, and all GCC/Fortran runtimes
-         are statically linked. No additional .so files needed. -->
-    <None Include="runtimes\linux\native\libipopt-3.so" Pack="true" PackagePath="runtimes\linux-x64\native" />
-  </ItemGroup>
-
-  <!-- Copy native libraries directly to output directory (not in subdirectory) -->
-  <!-- ipopt-3.dll is self-contained: MUMPS, MKL Pardiso, BLAS/LAPACK, and all
-       GCC/Fortran runtimes are statically linked. No additional DLLs needed. -->
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
-    <None Include="runtimes\win-x64\native\ipopt-3.dll" Link="ipopt-3.dll" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
-    <!-- Must use Content (not None) so these propagate to referencing projects' output directories -->
-    <None Include="runtimes\linux\native\libipopt-3.so" Link="libipopt-3.so" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Native libraries: packed into standard NuGet runtime locations, and copied
+         to the output directory on the matching host OS. Both are self-contained
+         (MUMPS, MKL Pardiso, BLAS/LAPACK, and all GCC/Fortran runtimes statically
+         linked), so no additional libraries are required at runtime. -->
+    <None Include="runtimes\win-x64\native\ipopt-3.dll" Pack="true" PackagePath="runtimes\win-x64\native">
+      <CopyToOutputDirectory Condition="$([MSBuild]::IsOSPlatform('Windows'))">PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>ipopt-3.dll</TargetPath>
+    </None>
+    <None Include="runtimes\linux-x64\native\libipopt-3.so" Pack="true" PackagePath="runtimes\linux-x64\native">
+      <CopyToOutputDirectory Condition="$([MSBuild]::IsOSPlatform('Linux'))">PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>libipopt-3.so</TargetPath>
+    </None>
   </ItemGroup>
 
 </Project>
