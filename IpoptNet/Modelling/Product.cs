@@ -72,21 +72,40 @@ internal sealed class ProductNode : ExprNode
             return;
         }
 
-        // Evaluate all factors once
-        for (int i = 0; i < Factors.Count; i++)
-            _factorValues![i] = Factors[i].Evaluate(x);
-
-        // Pre-compute product excluding each factor.
-        // Must not use totalProduct / _factorValues[i]: if any factor is 0, that yields 0/0 = NaN,
-        // which then poisons the Hessian and propagates garbage into Pardiso/IPOPT. Compute the
-        // excluding product directly (O(n²) but n is tiny — almost always 2 for bilinear terms).
+        // Evaluate all factors once, and summarize the zero structure so we can answer
+        // "product of all factors except {i}" and "... except {k, m}" in O(1) without dividing
+        // by an evaluated factor value (which yields NaN when that factor happens to be zero).
+        var nonzeroProduct = 1.0;
+        var zeroCount = 0;
+        var zeroIdx1 = -1;
+        var zeroIdx2 = -1;
         for (int i = 0; i < Factors.Count; i++)
         {
-            var excl = 1.0;
-            for (int j = 0; j < Factors.Count; j++)
-                if (j != i)
-                    excl *= _factorValues![j];
-            _excludingFactor![i] = excl;
+            var v = Factors[i].Evaluate(x);
+            _factorValues![i] = v;
+            if (v == 0.0)
+            {
+                if (zeroCount == 0) zeroIdx1 = i;
+                else if (zeroCount == 1) zeroIdx2 = i;
+                zeroCount++;
+            }
+            else
+                nonzeroProduct *= v;
+        }
+
+        // _excludingFactor[i] = product of all factors except i.
+        // - 0 zeros:   nonzeroProduct / _factorValues[i] (safe: denominator nonzero).
+        // - 1 zero:    if i == that zero's index, result is nonzeroProduct; else the zero is still
+        //              in the product → 0.
+        // - ≥2 zeros:  at least one zero is always retained → 0.
+        for (int i = 0; i < Factors.Count; i++)
+        {
+            _excludingFactor![i] = zeroCount switch
+            {
+                0 => nonzeroProduct / _factorValues![i],
+                1 => i == zeroIdx1 ? nonzeroProduct : 0.0,
+                _ => 0.0,
+            };
         }
 
         // Compute compact gradients of all factors
@@ -101,9 +120,12 @@ internal sealed class ProductNode : ExprNode
         for (int k = 0; k < Factors.Count; k++)
             Factors[k].AccumulateHessian(x, hess, scaledMultiplier * _excludingFactor![k]);
 
-        // Add cross terms between pairs of factors.
-        // Coefficient is the product of all factors except k and m; computed directly to avoid
-        // the _excludingFactor[k] / _factorValues[m] division (same NaN hazard as above).
+        // Add cross terms between pairs of factors. The coefficient is the product of all factors
+        // except k and m, computed in O(1) from the nonzero summary (see _excludingFactor above).
+        // - 0 zeros:   nonzeroProduct / (factor[k] * factor[m]).
+        // - 1 zero:    nonzero only when that zero is k or m — then divide by the other factor.
+        // - 2 zeros:   nonzero only when the pair is exactly those two zero indices.
+        // - ≥3 zeros:  always zero.
         for (int k = 0; k + 1 < Factors.Count; k++)
         {
             if (Factors[k].IsConstantWrtX())
@@ -114,10 +136,14 @@ internal sealed class ProductNode : ExprNode
                 if (Factors[m].IsConstantWrtX())
                     continue;
 
-                var pairCoeff = 1.0;
-                for (int i = 0; i < Factors.Count; i++)
-                    if (i != k && i != m)
-                        pairCoeff *= _factorValues![i];
+                var pairCoeff = zeroCount switch
+                {
+                    0 => nonzeroProduct / (_factorValues![k] * _factorValues![m]),
+                    1 when k == zeroIdx1 => nonzeroProduct / _factorValues![m],
+                    1 when m == zeroIdx1 => nonzeroProduct / _factorValues![k],
+                    2 when (k == zeroIdx1 && m == zeroIdx2) || (k == zeroIdx2 && m == zeroIdx1) => nonzeroProduct,
+                    _ => 0.0,
+                };
 
                 AddCrossTermCompact(hess, _factorGradBuffers![k], _factorGradBuffers[m],
                     Factors[k]._sortedVarIndices!, Factors[m]._sortedVarIndices!, scaledMultiplier * pairCoeff);
