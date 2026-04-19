@@ -15,7 +15,7 @@ dotnet add package ipopt-net
 
 The package includes native binaries for:
 - **Windows** (x64)
-- **Linux** (x64, Intel MKL Pardiso requires `libmkl-rt`)
+- **Linux** (x64)
 
 ## Features
 
@@ -213,7 +213,7 @@ var result = model.Solve();
 ### Available Linear Solvers
 
 - `LinearSolver.Mumps` - Default, included with IPOPT
-- `LinearSolver.PardisoMkl` - Intel MKL Pardiso (included on Win64, requires "libmkl-rt" package on Linux)
+- `LinearSolver.PardisoMkl` - Intel MKL Pardiso, included with IPOPT
 - `LinearSolver.PardisoProject` - Pardiso from pardiso-project.org (often faster, requires external library)
 - `LinearSolver.Ma27`, `Ma57`, `Ma77`, `Ma86`, `Ma97` - HSL solvers (require external library)
 - `LinearSolver.Wsmp` - Watson Sparse Matrix Package (requires external library)
@@ -292,3 +292,5 @@ This .NET wrapper is provided as-is. IPOPT itself is released under the Eclipse 
 ## Acknowledgments
 
 IPOPT is developed and maintained by the COIN-OR project. This wrapper provides a convenient .NET interface with automatic differentiation capabilities.
+
+The native binaries bundled with this package include statically-linked Intel oneAPI Math Kernel Library (MKL) components (libmkl_intel_lp64, libmkl_sequential, libmkl_core) redistributed under the [Intel Simplified Software License](INTEL-MKL-LICENSE.txt).

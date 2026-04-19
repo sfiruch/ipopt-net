@@ -30,9 +30,10 @@
 
   <ItemGroup>
     <None Include="..\README.md" Pack="true" Link="README.md" PackagePath="\" />
+    <None Include="..\INTEL-MKL-LICENSE.txt" Pack="true" PackagePath="\" />
     <!-- Pack DLLs in standard NuGet runtime location -->
     <None Include="runtimes\win-x64\native\*.dll" Pack="true" PackagePath="runtimes\win-x64\native" />
-    <!-- libipopt-3.so is self-contained: MUMPS, OpenBLAS, and all GCC/Fortran runtimes
+    <!-- libipopt-3.so is self-contained: MUMPS, MKL Pardiso, and all GCC/Fortran runtimes
          are statically linked. No additional .so files needed. -->
     <None Include="runtimes\linux\native\libipopt-3.so" Pack="true" PackagePath="runtimes\linux-x64\native" />
   </ItemGroup>

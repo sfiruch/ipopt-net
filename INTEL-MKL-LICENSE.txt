@@ -1,0 +1,73 @@
+Intel Simplified Software License (Version October 2022)
+
+Use and Redistribution. You may use and redistribute the software (the
+"Software"), without modification, provided the following conditions are met:
+
+* Redistributions must reproduce the above copyright notice and the following
+  terms of use in the Software and in the documentation and/or other materials
+  provided with the distribution.
+* Neither the name of Intel nor the names of its suppliers may be used to
+  endorse or promote products derived from this Software without specific prior
+  written permission.
+* No reverse engineering, decompilation, or disassembly of this Software is
+  permitted.
+
+No other licenses. Except as provided in the preceding section, Intel grants
+no licenses or other rights by implication, estoppel or otherwise to, patent,
+copyright, trademark, trade name, trade secret or other intellectual property
+rights of Intel.
+
+Third party software. "Third Party Software" means the files (if any) listed
+in the "third-party-software.txt" or other similarly-named text file that may
+be included with the Software. Third Party Software, even if included with the
+distribution of the Software, may be governed by separate license terms,
+including without limitation, third party license terms, other Intel software
+license terms, and open source software license terms. Such separate license
+terms (and not this Agreement) solely govern your use of the Third Party
+Software.
+
+DISCLAIMER. THIS SOFTWARE IS PROVIDED "AS IS" AND ANY EXPRESS OR IMPLIED
+WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT ARE
+DISCLAIMED. THIS SOFTWARE IS NOT INTENDED FOR USE IN SYSTEMS OR APPLICATIONS
+WHERE FAILURE OF THE SOFTWARE MAY CAUSE PERSONAL INJURY OR DEATH AND YOU AGREE
+THAT YOU ARE FULLY RESPONSIBLE FOR ANY CLAIMS, COSTS, DAMAGES, EXPENSES, AND
+ATTORNEYS' FEES ARISING OUT OF ANY SUCH USE, EVEN IF ANY CLAIM ALLEGES THAT
+INTEL WAS NEGLIGENT REGARDING THE DESIGN OR MANUFACTURE OF THE SOFTWARE.
+
+LIMITATION OF LIABILITY. IN NO EVENT WILL INTEL BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+No indemnification. Intel will not indemnify you for claims by third parties
+arising from your use of the Software.
+
+Export. You acknowledge that the Software is subject to export controls. You
+agree to comply with all applicable international and national laws that apply
+to the Software, including the U.S. Export Administration Regulations, as well
+as end-user, end-use, and destination restrictions issued by U.S. and other
+governments.
+
+Government Rights. No license (express or implied, by estoppel or otherwise)
+to any intellectual property rights is granted by this Agreement, except for
+the licenses in Section 1. No hardware is licensed hereunder.
+
+---------
+
+NOTE: This software package (ipopt-net) redistributes statically-linked Intel
+oneAPI Math Kernel Library (MKL) code as part of the native binary
+libipopt-3.so (Linux) and ipopt-3.dll (Windows). The redistributed MKL
+components are:
+
+  libmkl_intel_lp64  — LP64 BLAS/LAPACK interface layer
+  libmkl_sequential  — Single-threaded compute layer
+  libmkl_core        — Core MKL routines including Intel Pardiso
+
+These libraries are used to provide the PardisoMkl linear solver within IPOPT.
+
+The full Intel ISSL text above applies to these redistributed components.
+For the authoritative license text see: https://www.intel.com/content/www/us/en/developer/articles/license/simplified-software-license.html

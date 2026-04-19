@@ -31,10 +31,6 @@ jobs:
       with:
         dotnet-version: 10.0.x
 
-    - name: Install native MKL dependency (Linux)
-      if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y libmkl-rt
-
     - name: Get Version
       id: get_version
       run: |
