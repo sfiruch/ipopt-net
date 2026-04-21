@@ -290,6 +290,9 @@ public sealed class Model : IDisposable
             ApplicationReturnStatus.SolveSucceeded or
             ApplicationReturnStatus.SolvedToAcceptableLevel or
             ApplicationReturnStatus.FeasiblePointFound or
+            ApplicationReturnStatus.InfeasibleProblemDetected or
+            ApplicationReturnStatus.SearchDirectionBecomesTooSmall or
+            ApplicationReturnStatus.UserRequestedStop or
             ApplicationReturnStatus.MaximumIterationsExceeded or
             ApplicationReturnStatus.MaximumCpuTimeExceeded or
             ApplicationReturnStatus.MaximumWallTimeExceeded or
