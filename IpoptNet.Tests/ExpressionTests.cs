@@ -504,7 +504,7 @@ public class ExpressionTests
         var rows = sorted.Select(e => e.row).ToArray();
         var cols = sorted.Select(e => e.col).ToArray();
 
-        var hess = new HessianAccumulator(n, rows, cols);
+        var hess = new SparseHessianAccumulator(n, rows, cols);
         expr.AccumulateHessian(point, hess, 1.0);
 
         // Analytical Hessian for f(x,y) = x*y:
@@ -553,7 +553,7 @@ public class ExpressionTests
         var rows = sorted.Select(e => e.row).ToArray();
         var cols = sorted.Select(e => e.col).ToArray();
 
-        var hess = new HessianAccumulator(n, rows, cols);
+        var hess = new SparseHessianAccumulator(n, rows, cols);
         expr.AccumulateHessian(point, hess, 1.0);
 
         // Analytical values:
@@ -685,7 +685,7 @@ public class ExpressionTests
         var rows = sorted.Select(e => e.row).ToArray();
         var cols = sorted.Select(e => e.col).ToArray();
 
-        var hess = new HessianAccumulator(n, rows, cols);
+        var hess = new SparseHessianAccumulator(n, rows, cols);
         expr.AccumulateHessian(point, hess, 1.0);
 
         var fdHess = ComputeFiniteDifferenceHessian(expr, point);

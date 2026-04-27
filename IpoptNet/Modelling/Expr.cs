@@ -28,6 +28,18 @@ public sealed class Expr
         ArrayPool<double>.Shared.Return(compactGrad);
     }
 
+    public void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
+    {
+        var compactGrad = ArrayPool<double>.Shared.Rent(_node._cachedVariables!.Count);
+        Array.Clear(compactGrad, 0, _node._cachedVariables!.Count);
+        _node.AccumulateGradientCompact(x, compactGrad, multiplier, _node._sortedVarIndices!);
+
+        for (int i = 0; i < _node._sortedVarIndices!.Length; i++)
+            grad[_node._sortedVarIndices[i]] += compactGrad[i];
+
+        ArrayPool<double>.Shared.Return(compactGrad);
+    }
+
     public void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) =>
         _node.AccumulateHessian(x, hess, multiplier);
     public void CollectVariables(HashSet<Variable> variables) =>

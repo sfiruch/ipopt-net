@@ -127,7 +127,7 @@ public class HessianAtBoundaryTests
         var rows = sorted.Select(e => e.row).ToArray();
         var cols = sorted.Select(e => e.col).ToArray();
 
-        var hess = new HessianAccumulator(n, rows, cols);
+        var hess = new SparseHessianAccumulator(n, rows, cols);
         expr.AccumulateHessian(point, hess, 1.0);
 
         // Fail fast on NaN/Inf: this is the primary symptom the tests exist to catch.

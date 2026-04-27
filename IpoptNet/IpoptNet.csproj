@@ -29,6 +29,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.Numerics.Tensors" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\README.md" Pack="true" Link="README.md" PackagePath="\" />
     <None Include="..\INTEL-MKL-LICENSE.txt" Pack="true" PackagePath="\" />
     <!-- Native libraries: packed into standard NuGet runtime locations, and copied

@@ -538,7 +538,12 @@ internal sealed class QuadExprNode : ExprNode
 
     internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
-        // Linear terms contribute nothing to Hessian
+        // Linear terms: typically contribute nothing (constant or VariableNode have zero Hessian),
+        // but a "linear" term in QuadExpr's decomposition can hold a non-Variable expression whose
+        // Hessian-in-x is non-trivial — most importantly an eliminated VariableNode whose effective
+        // Hessian propagates through the implicit-block chain rule. Always delegate through.
+        for (int i = 0; i < LinearTerms.Count; i++)
+            LinearTerms[i].AccumulateHessian(x, hess, multiplier * LinearWeights[i]);
 
         // Quadratic terms: ∂²/∂x_i∂x_j (w * f * g)
         // For simple variable products (most common case): x_i * x_j → coefficient w
@@ -546,8 +551,12 @@ internal sealed class QuadExprNode : ExprNode
         {
             var w = multiplier * QuadraticWeights[i];
 
-            // Simplified for Variable * Variable case (most common for quadratic expressions)
-            if (QuadraticTerms1[i] is VariableNode v1 && QuadraticTerms2[i] is VariableNode v2)
+            // Simplified for Variable * Variable case (most common for quadratic expressions).
+            // Skip the fast path if either variable is eliminated by an implicit block — the
+            // general branch delegates to VariableNode.AccumulateHessian which raises a clear
+            // NotImplementedException pointing the user at LimitedMemory Hessian.
+            if (QuadraticTerms1[i] is VariableNode v1 && QuadraticTerms2[i] is VariableNode v2
+                && v1.Variable.Block is null && v2.Variable.Block is null)
             {
                 int idx1 = v1.Variable.Index;
                 int idx2 = v2.Variable.Index;
@@ -565,14 +574,48 @@ internal sealed class QuadExprNode : ExprNode
             }
             else
             {
-                // For complex expressions, delegate to their Hessian computation.
-                // Note: ProcessProduct() always expands bilinear products into VariableNode × VariableNode
-                // pairs (via the LinExpr expansion branches), so this branch is only reachable if a
-                // non-VariableNode quadratic term is constructed directly (outside ProcessProduct).
-                // The cross-term w*(f1'⊗f2' + f2'⊗f1') is intentionally omitted here because f1 and f2
-                // are non-variable expressions and their own Hessians capture all second-order effects.
+                // General case: ∇²(w · f₁ · f₂) = w·(f₂·∇²f₁ + ∇f₁⊗∇f₂ + ∇f₂⊗∇f₁ + f₁·∇²f₂)
+                // The two AccumulateHessian calls cover f₂·∇²f₁ and f₁·∇²f₂ via reverse-mode through
+                // children. The outer-product cross terms (∇f₁⊗∇f₂ + ∇f₂⊗∇f₁) are computed explicitly
+                // here. This was previously omitted; that was a bug whenever either side propagated
+                // through an implicit-block (∂v*/∂x is non-trivial) or whenever a non-VariableNode
+                // quadratic term was built directly outside ProcessProduct.
                 QuadraticTerms1[i].AccumulateHessian(x, hess, w * QuadraticTerms2[i].Evaluate(x));
                 QuadraticTerms2[i].AccumulateHessian(x, hess, w * QuadraticTerms1[i].Evaluate(x));
+
+                // Cross-product. Use this QuadExprNode's _sortedVarIndices (set non-raw by the
+                // top-level Prepare) so the variable set covers all decision-var inputs the
+                // quadratic terms transitively depend on — including those reached via
+                // ImplicitBlock redirection. We deliberately do NOT use the children's own
+                // _cachedVariables: shared VariableNodes for eliminated variables are also
+                // referenced by block residuals (raw-mode prepared), so their caches reflect raw
+                // mode (a single self-entry) and would mis-route gradient propagation here.
+                var sortedSelf = _sortedVarIndices!;
+                int N = sortedSelf.Length;
+                var cg1 = System.Buffers.ArrayPool<double>.Shared.Rent(N);
+                var cg2 = System.Buffers.ArrayPool<double>.Shared.Rent(N);
+                Array.Clear(cg1, 0, N);
+                Array.Clear(cg2, 0, N);
+                QuadraticTerms1[i].AccumulateGradientCompact(x, cg1.AsSpan(0, N), 1.0, sortedSelf);
+                QuadraticTerms2[i].AccumulateGradientCompact(x, cg2.AsSpan(0, N), 1.0, sortedSelf);
+
+                // C[a, b] = cg1[a]·cg2[b] + cg2[a]·cg1[b]; symmetric. Iterate lower triangle.
+                for (int a = 0; a < N; a++)
+                {
+                    var g1a = cg1[a];
+                    var g2a = cg2[a];
+                    if (g1a == 0.0 && g2a == 0.0) continue;
+                    for (int b = 0; b <= a; b++)
+                    {
+                        var g1b = cg1[b];
+                        var g2b = cg2[b];
+                        var cross = g1a * g2b + g2a * g1b;
+                        if (cross == 0.0) continue;
+                        hess.Add(sortedSelf[a], sortedSelf[b], w * cross);
+                    }
+                }
+                System.Buffers.ArrayPool<double>.Shared.Return(cg1);
+                System.Buffers.ArrayPool<double>.Shared.Return(cg2);
             }
         }
     }
@@ -592,15 +635,27 @@ internal sealed class QuadExprNode : ExprNode
         foreach (var term in LinearTerms)
             term.CollectHessianSparsity(entries);
 
-        // Quadratic terms contribute to Hessian sparsity
+        // Quadratic terms contribute to Hessian sparsity. Skip the fast path when either variable
+        // is eliminated — the general branch routes through VariableNode.CollectHessianSparsity
+        // and adds the cross-product clique between the two terms' transitive variable sets.
         for (int i = 0; i < QuadraticTerms1.Count; i++)
         {
-            if (QuadraticTerms1[i] is VariableNode v1 && QuadraticTerms2[i] is VariableNode v2)
+            if (QuadraticTerms1[i] is VariableNode v1 && QuadraticTerms2[i] is VariableNode v2
+                && v1.Variable.Block is null && v2.Variable.Block is null)
                 AddSparsityEntry(entries, v1.Variable.Index, v2.Variable.Index);
             else
             {
                 QuadraticTerms1[i].CollectHessianSparsity(entries);
                 QuadraticTerms2[i].CollectHessianSparsity(entries);
+
+                // Cross-clique for the outer-product cross-term ∇f₁⊗∇f₂ + ∇f₂⊗∇f₁.
+                var s1 = new HashSet<Variable>();
+                var s2 = new HashSet<Variable>();
+                QuadraticTerms1[i].CollectVariables(s1);
+                QuadraticTerms2[i].CollectVariables(s2);
+                foreach (var a in s1)
+                    foreach (var b in s2)
+                        AddSparsityEntry(entries, a.Index, b.Index);
             }
         }
     }

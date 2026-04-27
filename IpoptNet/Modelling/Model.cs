@@ -10,6 +10,7 @@ public sealed class Model : IDisposable
 {
     private readonly List<Variable> _variables = new();
     private readonly List<Constraint> _constraints = new();
+    private readonly List<ImplicitBlock> _implicitBlocks = new();
     private Expr? _objective;
     private bool _disposed;
 
@@ -81,10 +82,77 @@ public sealed class Model : IDisposable
 
     public void SetObjective(Expr objective) => _objective = objective;
 
-    public void AddConstraint(Constraint constraint) => _constraints.Add(constraint);
+    public Constraint AddConstraint(Constraint constraint)
+    {
+        _constraints.Add(constraint);
+        return constraint;
+    }
 
-    public void AddConstraint(Expr expression, double lowerBound, double upperBound) =>
-        _constraints.Add(new Constraint(expression, lowerBound, upperBound));
+    public Constraint AddConstraint(Expr expression, double lowerBound, double upperBound)
+    {
+        var c = new Constraint(expression, lowerBound, upperBound);
+        _constraints.Add(c);
+        return c;
+    }
+
+    /// <summary>
+    /// Eliminates the listed variables from the IPOPT decision vector by treating the listed
+    /// equality constraints as the implicit linear system A(other)·v = b(other) that defines
+    /// them. The resulting NLP exposes only non-eliminated variables to IPOPT; eliminated values
+    /// are recomputed numerically each evaluation pass via LU on a small dense matrix, and
+    /// gradients propagate through the implicit-function theorem.
+    ///
+    /// Constraints must be equalities (LowerBound == UpperBound) and must be linear in the
+    /// eliminated variables (they may be arbitrary in non-eliminated vars / parameters).
+    /// Eliminated variables must have infinite bounds and unit Scale.
+    ///
+    /// When any implicit block is added, the model forces HessianApproximation = LimitedMemory
+    /// (exact Hessian propagation through the implicit chain is not yet implemented).
+    ///
+    /// Blocks must be added in topological order: a block's residuals may reference variables
+    /// from previously-added blocks but not from later ones.
+    /// </summary>
+    public void AddImplicitBlock(IReadOnlyList<Variable> variables, IReadOnlyList<Constraint> linearEqualities)
+    {
+        if (variables.Count == 0)
+            throw new ArgumentException("At least one variable required.", nameof(variables));
+        if (variables.Count != linearEqualities.Count)
+            throw new ArgumentException(
+                $"Number of variables ({variables.Count}) must equal number of equality constraints ({linearEqualities.Count}).");
+
+        foreach (var v in variables)
+        {
+            if (v.Block is not null)
+                throw new ArgumentException($"Variable x[{v.Index}] is already eliminated by another block.");
+            if (!double.IsNegativeInfinity(v.LowerBound) || !double.IsPositiveInfinity(v.UpperBound))
+                throw new ArgumentException(
+                    $"Variable x[{v.Index}] has finite bounds (LB={v.LowerBound}, UB={v.UpperBound}). " +
+                    "Bounds on eliminated variables are not supported.");
+            if (v.Scale != 1.0)
+                throw new ArgumentException(
+                    $"Variable x[{v.Index}] has Scale={v.Scale}. Eliminated variables must have unit Scale.");
+        }
+
+        foreach (var c in linearEqualities)
+        {
+            if (c.LowerBound != c.UpperBound)
+                throw new ArgumentException("All constraints in an implicit block must be equality (LowerBound == UpperBound).");
+            if (c.LowerBound != 0)
+                throw new ArgumentException("Implicit-block equality constraints must be of the form expression == 0 (LowerBound = UpperBound = 0).");
+            if (!_constraints.Remove(c))
+                throw new ArgumentException("Constraint not present in this model. Did you AddConstraint(...) it first?");
+        }
+
+        var varArr = variables.ToArray();
+        var resArr = linearEqualities.Select(c => c.Expression).ToArray();
+        var block = new ImplicitBlock(varArr, resArr);
+        for (int j = 0; j < varArr.Length; j++)
+        {
+            varArr[j].Block = block;
+            varArr[j].IndexInBlock = j;
+        }
+        _implicitBlocks.Add(block);
+    }
 
     public override string ToString()
     {
@@ -106,7 +174,8 @@ public sealed class Model : IDisposable
 
             var start = v.Start.HasValue ? $", start={v.Start}" : "";
             var scale = v.Scale != 1.0 ? $", scale={v.Scale}" : "";
-            sb.AppendLine($"  x[{i}]{bounds}{start}{scale}");
+            var elim = v.IsEliminated ? " [eliminated]" : "";
+            sb.AppendLine($"  x[{i}]{bounds}{start}{scale}{elim}");
         }
 
         sb.AppendLine();
@@ -134,6 +203,17 @@ public sealed class Model : IDisposable
             sb.AppendLine($"  Constraint[{i}]{boundsStr}: {c.Expression}");
         }
 
+        if (_implicitBlocks.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"Implicit blocks: {_implicitBlocks.Count}");
+            for (int b = 0; b < _implicitBlocks.Count; b++)
+            {
+                var block = _implicitBlocks[b];
+                sb.AppendLine($"  Block[{b}]: {block.Variables.Length} eliminated var(s)");
+            }
+        }
+
         return sb.ToString();
     }
 
@@ -144,18 +224,36 @@ public sealed class Model : IDisposable
         if (_objective is null)
             throw new InvalidOperationException("No objective function set");
 
-        var n = _variables.Count;
-        var m = _constraints.Count;
+        // Exact Hessian propagation through implicit blocks is implemented via VariableNode
+        // (PropagateHessian) plus the QuadExprNode cross-product term. Caller chooses Hessian mode.
+
+        // Build compact ↔ original index maps. Eliminated variables get compact index -1 and are
+        // not exposed to IPOPT.
+        int totalVars = _variables.Count;
+        var compactIndex = new int[totalVars];
+        var activeVars = new List<Variable>(totalVars);
+        for (int i = 0; i < totalVars; i++)
+        {
+            if (_variables[i].IsEliminated)
+                compactIndex[i] = -1;
+            else
+            {
+                compactIndex[i] = activeVars.Count;
+                activeVars.Add(_variables[i]);
+            }
+        }
+        int n = activeVars.Count;
+        int m = _constraints.Count;
 
         const double Infinity = 1e19;
 
-        // Variable bounds (divided by Scale so IPOPT works with normalized internal variables)
+        // Variable bounds (active vars only; divided by Scale so IPOPT works with normalized internal variables)
         var xL = new double[n];
         var xU = new double[n];
         for (int i = 0; i < n; i++)
         {
-            xL[i] = Math.Clamp(_variables[i].LowerBound / _variables[i].Scale, -Infinity, Infinity);
-            xU[i] = Math.Clamp(_variables[i].UpperBound / _variables[i].Scale, -Infinity, Infinity);
+            xL[i] = Math.Clamp(activeVars[i].LowerBound / activeVars[i].Scale, -Infinity, Infinity);
+            xU[i] = Math.Clamp(activeVars[i].UpperBound / activeVars[i].Scale, -Infinity, Infinity);
         }
 
         // Constraint bounds
@@ -167,24 +265,64 @@ public sealed class Model : IDisposable
             gU[i] = _constraints[i].UpperBound;
         }
 
-        // Cache variables upfront to eliminate allocations during optimization
+        // Prepare residual expressions inside each block (raw mode), then objective + constraints
+        // (redirect mode — eliminated vars contribute their block's transitive inputs).
+        foreach (var block in _implicitBlocks)
+            block.PrepareResiduals();
         _objective.Prepare();
         foreach (var constraint in _constraints)
             constraint.Expression.Prepare();
 
-        // Analyze sparsity
-        var (jacRows, jacCols) = AnalyzeJacobianSparsity();
+        // Per-evaluation scratch buffer (size = total vars, indexed by Variable.Index).
+        // VariableNode.Evaluate reads from this; the model populates it from the IPOPT compact
+        // vector before each evaluation pass and then runs every implicit block's Solve in order.
+        // For non-eliminated vars, scratch[Index] holds the IPOPT-internal (Scale-divided) value.
+        // For eliminated vars (Scale==1 mandated), scratch[Index] holds physical-unit v*.
+        var scratch = new double[totalVars];
+        // Buffer for block.Solve to extract A rows via AccumulateGradient.
+        var blockGradBuffer = new double[totalVars];
+        // Per-pass generation counter so a block solves at most once per fresh evaluation.
+        long evalGeneration = 0;
 
-        // Skip Hessian computation if using limited memory approximation
+        // Verify each block's residuals are linear in their own eliminated vars (fail fast on
+        // misuse). Cheap: a couple of extra AccumulateGradient calls per residual at solve start.
+        foreach (var block in _implicitBlocks)
+            block.VerifyLinearity(totalVars);
+
+        // Helper: synchronize scratch with the IPOPT compact x and run all blocks.
+        void SyncScratch(ReadOnlySpan<double> compactX)
+        {
+            evalGeneration++;
+            for (int i = 0; i < n; i++)
+                scratch[activeVars[i].Index] = compactX[i];
+            foreach (var block in _implicitBlocks)
+                block.Solve(scratch, evalGeneration, blockGradBuffer);
+        }
+
+        // Analyze sparsity (in compact column space)
+        var (jacRows, jacCols) = AnalyzeJacobianSparsity(compactIndex);
+
         var useLimitedMemory = Options.HessianApproximation == HessianApproximation.LimitedMemory;
-        var (hessRows, hessCols) = useLimitedMemory ? (Array.Empty<int>(), Array.Empty<int>()) : AnalyzeHessianSparsity();
+        var (hessRowsOrig, hessColsOrig) = useLimitedMemory ? (Array.Empty<int>(), Array.Empty<int>()) : AnalyzeHessianSparsity();
+        // IPOPT-facing iRow/jCol must be in compact column space (active-variable indexing).
+        var hessRows = new int[hessRowsOrig.Length];
+        var hessCols = new int[hessColsOrig.Length];
+        for (int i = 0; i < hessRowsOrig.Length; i++)
+        {
+            hessRows[i] = compactIndex[hessRowsOrig[i]];
+            hessCols[i] = compactIndex[hessColsOrig[i]];
+            if (hessRows[i] < 0 || hessCols[i] < 0)
+                throw new InvalidOperationException(
+                    $"Hessian sparsity entry ({hessRowsOrig[i]}, {hessColsOrig[i]}) references an eliminated variable. " +
+                    "CollectHessianSparsity must only return non-eliminated variable indices.");
+        }
 
         // Create callbacks
-        var evalF = CreateEvalFCallback();
-        var evalGradF = CreateEvalGradFCallback();
-        var evalG = CreateEvalGCallback();
-        var evalJacG = CreateEvalJacGCallback(jacRows, jacCols);
-        var evalH = useLimitedMemory ? CreateDummyEvalHCallback() : CreateEvalHCallback(hessRows, hessCols);
+        var evalF = CreateEvalFCallback(scratch, SyncScratch);
+        var evalGradF = CreateEvalGradFCallback(scratch, SyncScratch, totalVars, compactIndex, n);
+        var evalG = CreateEvalGCallback(scratch, SyncScratch);
+        var evalJacG = CreateEvalJacGCallback(jacRows, jacCols, scratch, SyncScratch, totalVars, compactIndex);
+        var evalH = useLimitedMemory ? CreateDummyEvalHCallback() : CreateEvalHCallback(hessRowsOrig, hessColsOrig, hessRows, hessCols, scratch, SyncScratch, totalVars);
 
         ApplicationReturnStatus status;
         double objValue;
@@ -216,12 +354,9 @@ public sealed class Model : IDisposable
                 throw new InvalidOperationException($"IPOPT rejected option '{name}' = '{value}'. Check that the option name and value are valid.");
         }
 
-        // Auto-set constant derivative options if user hasn't explicitly set them
-        // These are set directly on the solver to avoid persisting in Options across multiple solves
-
         // Auto-enable warm start if we have non-zero dual values and user hasn't explicitly set it
         if (Options.WarmStartInitPoint is null &&
-            (_variables.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
+            (activeVars.Any(v => v.LowerBoundDualStart != 0 || v.UpperBoundDualStart != 0) ||
              _constraints.Any(c => c.DualStart != 0)))
         {
             if (!solver.SetOption("warm_start_init_point", "yes"))
@@ -233,19 +368,19 @@ public sealed class Model : IDisposable
             if (!solver.SetOption("grad_f_constant", "yes"))
                 throw new InvalidOperationException("IPOPT rejected option 'grad_f_constant' = 'yes'.");
 
-        // Auto-enable jac_c_constant if all equality constraints have constant Jacobians
+        // Auto-enable jac_c_constant if all equality constraints have constant Jacobians.
+        // Note: when implicit blocks are present, "linear" via VariableNode for an eliminated var
+        // returns false (since v* depends nonlinearly on inputs). So this is automatically skipped.
         var equalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) < 1e-15).ToList();
         if (Options.JacCConstant is null && equalityConstraints.All(c => c.Expression.IsLinear()))
             if (!solver.SetOption("jac_c_constant", "yes"))
                 throw new InvalidOperationException("IPOPT rejected option 'jac_c_constant' = 'yes'.");
 
-        // Auto-enable jac_d_constant if all inequality constraints have constant Jacobians
         var inequalityConstraints = _constraints.Where(c => Math.Abs(c.LowerBound - c.UpperBound) >= 1e-15).ToList();
         if (Options.JacDConstant is null && inequalityConstraints.All(c => c.Expression.IsLinear()))
             if (!solver.SetOption("jac_d_constant", "yes"))
                 throw new InvalidOperationException("IPOPT rejected option 'jac_d_constant' = 'yes'.");
 
-        // Auto-enable hessian_constant if objective and all constraints are at most quadratic
         if (Options.HessianConstant is null && !useLimitedMemory &&
             _objective.IsAtMostQuadratic() && _constraints.All(c => c.Expression.IsLinear()))
         {
@@ -254,11 +389,10 @@ public sealed class Model : IDisposable
         }
 
         // Initialize primal variables from variable Start values, ensuring they're within bounds
-        // Start is stored in physical units; divide by Scale to get internal representation
         var x = new double[n];
         for (int i = 0; i < n; i++)
-            if (_variables[i].Start.HasValue)
-                x[i] = Math.Clamp(_variables[i].Start!.Value / _variables[i].Scale, xL[i], xU[i]);
+            if (activeVars[i].Start.HasValue)
+                x[i] = Math.Clamp(activeVars[i].Start!.Value / activeVars[i].Scale, xL[i], xU[i]);
             else if (xU[i] == Infinity)
                 x[i] = Math.Max(0, xL[i]);
             else if (xL[i] == -Infinity)
@@ -269,24 +403,36 @@ public sealed class Model : IDisposable
                 x[i] = (xL[i] + xU[i]) * 0.5;
             }
 
-
         // Initialize dual variables
         for (int i = 0; i < m; i++)
             constraintMultipliers[i] = _constraints[i].DualStart;
 
         for (int i = 0; i < n; i++)
         {
-            lowerBoundMultipliers[i] = _variables[i].LowerBoundDualStart;
-            upperBoundMultipliers[i] = _variables[i].UpperBoundDualStart;
+            lowerBoundMultipliers[i] = activeVars[i].LowerBoundDualStart;
+            upperBoundMultipliers[i] = activeVars[i].UpperBoundDualStart;
         }
 
         status = solver.Solve(x, out objValue, out statistics, constraintValues, constraintMultipliers,
                                   lowerBoundMultipliers, upperBoundMultipliers);
 
-        // Build solution
+        // Build solution. We expose all variables (including eliminated ones) in the dictionary
+        // so callers see consistent values; eliminated vars are read from scratch after a final
+        // sync at the returned x.
         var solution = (Dictionary<Variable, double>?)null;
 
-        if (status is
+
+            solution = new Dictionary<Variable, double>();
+            // Sync once more to populate scratch with eliminated values at the final iterate.
+            SyncScratch(x.AsSpan());
+            for (int i = 0; i < n; i++)
+                solution[activeVars[i]] = Math.Clamp(x[i], xL[i], xU[i]) * activeVars[i].Scale;
+            foreach (var v in _variables)
+                if (v.IsEliminated)
+                    solution[v] = scratch[v.Index];
+
+        // Update variable Start values and dual variables if requested and solution is usable
+        if (updateStartValues && status is
             ApplicationReturnStatus.SolveSucceeded or
             ApplicationReturnStatus.SolvedToAcceptableLevel or
             ApplicationReturnStatus.FeasiblePointFound or
@@ -298,35 +444,31 @@ public sealed class Model : IDisposable
             ApplicationReturnStatus.MaximumWallTimeExceeded or
             ApplicationReturnStatus.RestorationFailed)
         {
-            solution = new Dictionary<Variable, double>();
             for (int i = 0; i < n; i++)
-                solution[_variables[i]] = Math.Clamp(x[i], xL[i], xU[i]) * _variables[i].Scale;
-
-            // Update variable Start values and dual variables if requested and solution is usable
-            if (updateStartValues)
             {
-                for (int i = 0; i < n; i++)
-                {
-                    // x values are already in solution dictionary
-                    _variables[i].Start = solution[_variables[i]];
-                    _variables[i].LowerBoundDualStart = lowerBoundMultipliers[i];
-                    _variables[i].UpperBoundDualStart = upperBoundMultipliers[i];
-                }
-
-                for (int i = 0; i < m; i++)
-                    _constraints[i].DualStart = constraintMultipliers[i];
+                activeVars[i].Start = solution[activeVars[i]];
+                activeVars[i].LowerBoundDualStart = lowerBoundMultipliers[i];
+                activeVars[i].UpperBoundDualStart = upperBoundMultipliers[i];
             }
+            foreach (var v in _variables)
+                if (v.IsEliminated)
+                    v.Start = solution[v];
+
+            for (int i = 0; i < m; i++)
+                _constraints[i].DualStart = constraintMultipliers[i];
         }
 
         // Clear cached variables to free memory after optimization
         _objective.Clear();
         foreach (var constraint in _constraints)
             constraint.Expression.Clear();
+        foreach (var block in _implicitBlocks)
+            block.ClearResiduals();
 
         return new ModelResult(status, solution, objValue, statistics);
     }
 
-    private (int[] rows, int[] cols) AnalyzeJacobianSparsity()
+    private (int[] rows, int[] cols) AnalyzeJacobianSparsity(int[] compactIndex)
     {
         var entries = new HashSet<(int row, int col)>();
         var vars = new HashSet<Variable>();
@@ -336,7 +478,13 @@ public sealed class Model : IDisposable
             vars.Clear();
             _constraints[i].Expression.CollectVariables(vars);
             foreach (var v in vars)
-                entries.Add((i, v.Index));
+            {
+                if (v.IsEliminated)
+                    throw new InvalidOperationException(
+                        $"Constraint {i} CollectVariables returned eliminated variable x[{v.Index}]. " +
+                        "Did the implicit block's CollectInputVariables not get called?");
+                entries.Add((i, compactIndex[v.Index]));
+            }
         }
 
         var entriesArray = new (int row, int col)[entries.Count];
@@ -357,6 +505,9 @@ public sealed class Model : IDisposable
         return (rows, cols);
     }
 
+    /// <summary>Returns Hessian sparsity in ORIGINAL Variable.Index space (for use with the
+    /// internal HessianAccumulator which gets hess.Add(origIdx, origIdx, value) calls). The
+    /// caller is responsible for remapping to compact when reporting iRow/jCol to IPOPT.</summary>
     private (int[] rows, int[] cols) AnalyzeHessianSparsity()
     {
         var entries = new HashSet<(int row, int col)>();
@@ -376,24 +527,37 @@ public sealed class Model : IDisposable
         return (rows, cols);
     }
 
-    private unsafe EvalFCallback CreateEvalFCallback()
+    private unsafe EvalFCallback CreateEvalFCallback(double[] scratch, Action<ReadOnlySpan<double>> syncScratch)
     {
         return (int n, double* pX, bool newX, double* objValue, nint userData) =>
         {
             var x = new ReadOnlySpan<double>(pX, n);
-            *objValue = _objective!.Evaluate(x);
+            if (newX) syncScratch(x);
+            *objValue = _objective!.Evaluate(scratch);
             return IsValidNumber(*objValue);
         };
     }
 
-    private unsafe EvalGradFCallback CreateEvalGradFCallback()
+    private unsafe EvalGradFCallback CreateEvalGradFCallback(double[] scratch, Action<ReadOnlySpan<double>> syncScratch, int totalVars, int[] compactIndex, int activeCount)
     {
+        var fullGrad = new double[totalVars];
         return (int n, double* pX, bool newX, double* pGradF, nint userData) =>
         {
             var x = new ReadOnlySpan<double>(pX, n);
+            if (newX) syncScratch(x);
             var gradF = new Span<double>(pGradF, n);
             gradF.Clear();
-            _objective!.AccumulateGradient(x, gradF);
+            // The objective's _cachedVariables only includes non-eliminated vars (CollectVariables
+            // in redirect mode walks blocks). AccumulateGradient writes into fullGrad indexed by
+            // Variable.Index. We re-pack into the IPOPT compact gradF using compactIndex.
+            Array.Clear(fullGrad);
+            _objective!.AccumulateGradient(scratch, fullGrad);
+            for (int i = 0; i < totalVars; i++)
+            {
+                int ci = compactIndex[i];
+                if (ci < 0) continue;
+                gradF[ci] = fullGrad[i];
+            }
 
             for (int i = 0; i < n; i++)
                 if (!IsValidNumber(gradF[i]))
@@ -405,15 +569,16 @@ public sealed class Model : IDisposable
 
     public static bool IsValidNumber(double v) => !double.IsInfinity(v) && !double.IsNaN(v);
 
-    private unsafe EvalGCallback CreateEvalGCallback()
+    private unsafe EvalGCallback CreateEvalGCallback(double[] scratch, Action<ReadOnlySpan<double>> syncScratch)
     {
         return (int n, double* pX, bool newX, int m, double* pG, nint userData) =>
         {
             var x = new ReadOnlySpan<double>(pX, n);
+            if (newX) syncScratch(x);
             var g = new Span<double>(pG, m);
             for (int i = 0; i < m; i++)
             {
-                g[i] = _constraints[i].Expression.Evaluate(x);
+                g[i] = _constraints[i].Expression.Evaluate(scratch);
                 if (!IsValidNumber(g[i]))
                     return false;
             }
@@ -421,25 +586,32 @@ public sealed class Model : IDisposable
         };
     }
 
-    private unsafe EvalJacGCallback CreateEvalJacGCallback(int[] structRows, int[] structCols)
+    private unsafe EvalJacGCallback CreateEvalJacGCallback(int[] structRows, int[] structCols, double[] scratch, Action<ReadOnlySpan<double>> syncScratch, int totalVars, int[] compactIndex)
     {
-        // Build a map from row -> list of (col, valueIndex) for only the sparse entries
-        var rowToEntries = new Dictionary<int, List<(int col, int idx)>>();
+        // structCols are in COMPACT column space. To map a constraint's gradient (computed in
+        // original-variable-index space) into the right value slots, we precompute an inverse
+        // map: for each (row, compactCol, idx), keep the originalCol via compactIndex inverse.
+        // The simplest is: for each compactCol, find the originalCol such that compactIndex[originalCol] == compactCol.
+        // We'll build a compact→original map once.
+        var compactToOriginal = new int[totalVars];  // upper bound; only first activeCount slots used
+        for (int i = 0; i < totalVars; i++)
+            if (compactIndex[i] >= 0) compactToOriginal[compactIndex[i]] = i;
+
+        var rowToEntries = new Dictionary<int, List<(int origCol, int idx)>>();
         for (int i = 0; i < structRows.Length; i++)
         {
             if (!rowToEntries.ContainsKey(structRows[i]))
                 rowToEntries[structRows[i]] = new List<(int, int)>();
-            rowToEntries[structRows[i]].Add((structCols[i], i));
+            rowToEntries[structRows[i]].Add((compactToOriginal[structCols[i]], i));
         }
 
         // Allocate gradient buffer once and reuse it
-        var grad = new double[_variables.Count];
+        var grad = new double[totalVars];
 
         return (int n, double* pX, bool newX, int m, int neleJac, int* iRow, int* jCol, double* pValues, nint userData) =>
         {
             if (pValues == null)
             {
-                // Return sparsity structure
                 for (int i = 0; i < structRows.Length; i++)
                 {
                     iRow[i] = structRows[i];
@@ -448,8 +620,8 @@ public sealed class Model : IDisposable
             }
             else
             {
-                // Compute values
                 var x = new ReadOnlySpan<double>(pX, n);
+                if (newX) syncScratch(x);
                 var values = new Span<double>(pValues, neleJac);
                 Span<double> gradSpan = grad;
 
@@ -457,14 +629,14 @@ public sealed class Model : IDisposable
 
                 for (int row = 0; row < m; row++)
                 {
-                    _constraints[row].Expression.AccumulateGradient(x, gradSpan);
+                    _constraints[row].Expression.AccumulateGradient(scratch, gradSpan);
 
-                    foreach (var (col, idx) in rowToEntries[row])
+                    foreach (var (origCol, idx) in rowToEntries[row])
                     {
-                        values[idx] = gradSpan[col];
+                        values[idx] = gradSpan[origCol];
                         if (!IsValidNumber(values[idx]))
                             return false;
-                        gradSpan[col] = 0;  // Clear the sparse entries we used
+                        gradSpan[origCol] = 0;  // Clear the sparse entries we used
                     }
                 }
             }
@@ -472,35 +644,35 @@ public sealed class Model : IDisposable
         };
     }
 
-    private unsafe EvalHCallback CreateEvalHCallback(int[] structRows, int[] structCols)
+    private unsafe EvalHCallback CreateEvalHCallback(int[] structRowsOrig, int[] structColsOrig, int[] structRowsCompact, int[] structColsCompact, double[] scratch, Action<ReadOnlySpan<double>> syncScratch, int totalVars)
     {
-        var hess = new HessianAccumulator(_variables.Count, structRows, structCols);
+        // HessianAccumulator's CSR is indexed in ORIGINAL Variable.Index space — that's what every
+        // ExprNode.AccumulateHessian writes into via hess.Add(orig_i, orig_j, value). The compact
+        // iRow/jCol vector is what IPOPT consumes, but the values array is identical (entries are
+        // ordered the same way).
+        var hess = new SparseHessianAccumulator(totalVars, structRowsOrig, structColsOrig);
 
-        return (int n, double* pX, bool newX, double objFactor, int m, double* lambda, bool newLambda,
+        return (int hN, double* pX, bool newX, double objFactor, int m, double* lambda, bool newLambda,
                 int neleHess, int* iRow, int* jCol, double* pValues, nint userData) =>
         {
             if (pValues == null)
             {
-                // Return sparsity structure
-                for (int i = 0; i < structRows.Length; i++)
+                for (int i = 0; i < structRowsCompact.Length; i++)
                 {
-                    iRow[i] = structRows[i];
-                    jCol[i] = structCols[i];
+                    iRow[i] = structRowsCompact[i];
+                    jCol[i] = structColsCompact[i];
                 }
             }
             else
             {
-                var x = new ReadOnlySpan<double>(pX, n);
+                var x = new ReadOnlySpan<double>(pX, hN);
+                if (newX) syncScratch(x);
                 hess.Clear();
 
-                // Objective contribution
-                _objective!.AccumulateHessian(x, hess, objFactor);
-
-                // Constraint contributions
+                _objective!.AccumulateHessian(scratch, hess, objFactor);
                 for (int row = 0; row < m; row++)
-                    _constraints[row].Expression.AccumulateHessian(x, hess, lambda[row]);
+                    _constraints[row].Expression.AccumulateHessian(scratch, hess, lambda[row]);
 
-                // Copy values directly (CSR order matches structRows/structCols order)
                 var values = new Span<double>(pValues, neleHess);
                 hess.Values.CopyTo(values);
                 for (int i = 0; i < values.Length; i++)

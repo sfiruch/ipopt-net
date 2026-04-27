@@ -12,6 +12,13 @@ public sealed class Variable
     public double LowerBoundDualStart = 0;
     public double UpperBoundDualStart = 0;
 
+    /// <summary>If non-null, this variable is eliminated by an implicit block: its value at any
+    /// IPOPT iterate is computed by Block.Solve from the dynamics A·v = b rather than being part
+    /// of the IPOPT decision vector.</summary>
+    internal ImplicitBlock? Block;
+    internal int IndexInBlock = -1;
+    public bool IsEliminated => Block is not null;
+
     internal readonly Expr _expr;
 
     internal Variable()
