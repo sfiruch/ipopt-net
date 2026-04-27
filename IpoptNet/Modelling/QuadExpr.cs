@@ -552,9 +552,9 @@ internal sealed class QuadExprNode : ExprNode
             var w = multiplier * QuadraticWeights[i];
 
             // Simplified for Variable * Variable case (most common for quadratic expressions).
-            // Skip the fast path if either variable is eliminated by an implicit block — the
-            // general branch delegates to VariableNode.AccumulateHessian which raises a clear
-            // NotImplementedException pointing the user at LimitedMemory Hessian.
+            // Skip the fast path if either variable is eliminated by an implicit block — for those
+            // the general branch routes through VariableNode.AccumulateHessian which propagates the
+            // implicit-block second-order sensitivity, and adds the cross-product term explicitly.
             if (QuadraticTerms1[i] is VariableNode v1 && QuadraticTerms2[i] is VariableNode v2
                 && v1.Variable.Block is null && v2.Variable.Block is null)
             {

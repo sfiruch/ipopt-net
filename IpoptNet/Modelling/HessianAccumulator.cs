@@ -74,7 +74,6 @@ public sealed class SparseHessianAccumulator : HessianAccumulator
 public sealed class DenseLocalHessianAccumulator : HessianAccumulator
 {
     private readonly Dictionary<int, int> _origToLocal;
-    private readonly int[] _localToOrig;
     private readonly int _n;
     private readonly double[] _matrix;  // n × n, row-major; only lower triangle is meaningful
 
@@ -82,12 +81,8 @@ public sealed class DenseLocalHessianAccumulator : HessianAccumulator
     {
         _n = originalIndices.Count;
         _origToLocal = new Dictionary<int, int>(_n);
-        _localToOrig = new int[_n];
         for (int i = 0; i < _n; i++)
-        {
             _origToLocal[originalIndices[i]] = i;
-            _localToOrig[i] = originalIndices[i];
-        }
         _matrix = new double[_n * _n];
     }
 

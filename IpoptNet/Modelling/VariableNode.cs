@@ -16,7 +16,7 @@ internal sealed class VariableNode : ExprNode
         // Eliminated variables in redirect mode propagate the seed through their block's
         // implicit-function-theorem chain. In raw mode (during a block's own Solve / PropagateGradient),
         // they behave as plain variables — write to compactGrad at the variable's index.
-        if (Variable.Block is { } block && !ImplicitBlock.IsRawMode)
+        if (Variable.Block is { } block && !block.Model.IsRawMode)
         {
             block.PropagateGradient(Variable.IndexInBlock, x, compactGrad, multiplier, sortedVarIndices);
             return;
@@ -26,7 +26,7 @@ internal sealed class VariableNode : ExprNode
 
     internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
-        if (Variable.Block is { } block && !ImplicitBlock.IsRawMode)
+        if (Variable.Block is { } block && !block.Model.IsRawMode)
         {
             // ∂²v*_j/∂x_dec_k∂x_dec_p is non-zero in general; let the block propagate.
             block.PropagateHessian(Variable.IndexInBlock, x, hess, multiplier);
@@ -37,7 +37,7 @@ internal sealed class VariableNode : ExprNode
 
     internal override void CollectVariables(HashSet<Variable> variables)
     {
-        if (Variable.Block is { } block && !ImplicitBlock.IsRawMode)
+        if (Variable.Block is { } block && !block.Model.IsRawMode)
         {
             block.CollectInputVariables(variables);
             return;
@@ -47,13 +47,12 @@ internal sealed class VariableNode : ExprNode
 
     internal override void CollectHessianSparsity(HashSet<(int row, int col)> entries)
     {
-        if (Variable.Block is { } block && !ImplicitBlock.IsRawMode)
+        if (Variable.Block is { } block && !block.Model.IsRawMode)
         {
             // ∂²v*_j/∂x_dec_k∂x_dec_p can be non-zero for any pair of decision-vector inputs of the
-            // block, so the Hessian sparsity contribution is the clique among those inputs.
-            var inputs = new HashSet<Variable>();
-            block.CollectInputVariables(inputs);
-            AddClique(entries, inputs);
+            // block, so the Hessian sparsity contribution is the clique among those inputs. Use the
+            // block's cached input list directly to avoid a per-call HashSet<Variable> allocation.
+            block.AddInputCliqueToHessianSparsity(entries);
             return;
         }
     }

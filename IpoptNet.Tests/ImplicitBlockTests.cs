@@ -15,8 +15,6 @@ public class ImplicitBlockTests
     public void SingleEliminatedVar_LinearDefinition()
     {
         var model = new Model();
-        // Hessian must be limited-memory when implicit blocks are present (auto-forced by Solve).
-
         var p = model.AddVariable();
         p.Start = 0;
 
@@ -225,5 +223,46 @@ public class ImplicitBlockTests
         var v = model.AddVariable();
         var orphan = new Constraint(v - p, 0, 0);
         Assert.ThrowsExactly<ArgumentException>(() => model.AddImplicitBlock(new[] { v }, new[] { orphan }));
+    }
+
+    /// <summary>Eliminating a variable that's already referenced by an earlier block's residual
+    /// must fail — that's the within-model topological-order violation: the earlier block would
+    /// solve first (registration order) and read v before this block had a chance to define it.</summary>
+    [TestMethod]
+    public void Rejects_VariableAlreadyUsedByEarlierBlock()
+    {
+        var model = new Model();
+        var p = model.AddVariable();
+        var v1 = model.AddVariable();
+        var v2 = model.AddVariable();
+        // Add B1 first, with a residual that references v2.
+        var c1 = model.AddConstraint(v1 - v2 - p == 0);
+        model.AddImplicitBlock(new[] { v1 }, new[] { c1 });
+        // Now try to eliminate v2 — its earlier appearance in B1's residual makes this an out-of-order add.
+        var c2 = model.AddConstraint(v2 - p == 0);
+        var ex = Assert.ThrowsExactly<ArgumentException>(() =>
+            model.AddImplicitBlock(new[] { v2 }, new[] { c2 }));
+        StringAssert.Contains(ex.Message, "earlier implicit block");
+    }
+
+    /// <summary>Smoke test: registering blocks in valid topological order doesn't trigger the
+    /// out-of-order check.</summary>
+    [TestMethod]
+    public void Accepts_TopologicalOrder()
+    {
+        var model = new Model();
+        var p = model.AddVariable();
+        var v1 = model.AddVariable();
+        var v2 = model.AddVariable();
+        var c1 = model.AddConstraint(v1 - p == 0);
+        var c2 = model.AddConstraint(v2 - v1 - 1 == 0);  // v2 depends on v1 — v1's block must come first
+        model.AddImplicitBlock(new[] { v1 }, new[] { c1 });
+        model.AddImplicitBlock(new[] { v2 }, new[] { c2 });
+        model.SetObjective(Expr.Pow(v2 - 5, 2));
+        var result = model.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(4.0, result.Solution![p], 1e-4);    // v2 = p + 1, want v2 = 5 → p = 4
+        Assert.AreEqual(4.0, result.Solution![v1], 1e-4);
+        Assert.AreEqual(5.0, result.Solution![v2], 1e-4);
     }
 }

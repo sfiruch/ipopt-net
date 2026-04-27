@@ -18,30 +18,7 @@ namespace IpoptNet.Modelling;
 /// </summary>
 internal sealed class ImplicitBlock
 {
-    /// <summary>
-    /// When true, VariableNode treats Block-tagged variables as plain (writes/reads via the
-    /// scratch / gradient buffer at Variable.Index) instead of redirecting through the block.
-    /// Used internally during the block's own Solve and PropagateGradient phases so the residual
-    /// expressions can be evaluated/differentiated without infinitely recursing into themselves.
-    /// </summary>
-    [ThreadStatic] private static bool _rawMode;
-
-    public static bool IsRawMode => _rawMode;
-
-    public readonly struct RawModeScope : IDisposable
-    {
-        private readonly bool _previous;
-        public RawModeScope(bool previous) { _previous = previous; }
-        public void Dispose() => _rawMode = _previous;
-    }
-
-    public static RawModeScope EnterRawMode()
-    {
-        var prev = _rawMode;
-        _rawMode = true;
-        return new RawModeScope(prev);
-    }
-
+    public Model Model { get; }
     public Variable[] Variables { get; }
     public Expr[] Residuals { get; }
 
@@ -97,7 +74,8 @@ internal sealed class ImplicitBlock
     private int[]? _directKPosPerY;          // [a] = position of direct-decision y_a in inputs (-1 for other-elim)
     private bool[]? _otherMapIsIdentityPerY; // [a] = true if otherN==N and map is identity (enables contiguous MultiplyAdd in ν chain)
     private long _hess2Gen = -1;
-    private bool _computingHess2;            // recursion guard
+    private bool _computingHess2;            // recursion guard for second-order sensitivity
+    private bool _computingSens;             // recursion guard for first-order sensitivity
 
     /// <summary>All variables (own elim + transitive non-elim inputs) referenced by residuals
     /// in raw mode. Used to iterate non-zero gradient entries during PropagateGradient. Cached
@@ -114,10 +92,11 @@ internal sealed class ImplicitBlock
     private HashSet<Variable>? _inputs;
     private bool _collectingInputs;
 
-    public ImplicitBlock(Variable[] variables, Expr[] residuals)
+    public ImplicitBlock(Model model, Variable[] variables, Expr[] residuals)
     {
         if (variables.Length != residuals.Length)
             throw new ArgumentException("Number of variables must match number of residual expressions.");
+        Model = model;
         Variables = variables;
         Residuals = residuals;
         _n = variables.Length;
@@ -133,7 +112,7 @@ internal sealed class ImplicitBlock
     /// gradient[v.Index] when extracting A_{i,j}).</summary>
     public void PrepareResiduals()
     {
-        using (EnterRawMode())
+        using (Model.EnterRawMode())
             foreach (var r in Residuals)
                 r.Prepare();
 
@@ -141,7 +120,7 @@ internal sealed class ImplicitBlock
         // PropagateGradient. CollectVariables in raw mode adds Variables themselves (not their
         // blocks' inputs), so this includes own elim + other elim + non-elim inputs.
         var union = new HashSet<Variable>();
-        using (EnterRawMode())
+        using (Model.EnterRawMode())
             foreach (var r in Residuals)
                 r.CollectVariables(union);
         _residualVarsRaw = [.. union];
@@ -160,7 +139,10 @@ internal sealed class ImplicitBlock
     {
         if (_inputs is null)
         {
-            if (_collectingInputs) return;
+            if (_collectingInputs)
+                throw new InvalidOperationException(
+                    "ImplicitBlock: cycle detected in CollectInputVariables. Implicit blocks must be added in topological order " +
+                    "(checked at AddImplicitBlock; this exception means the topological-order check missed a case).");
             _collectingInputs = true;
             try
             {
@@ -171,7 +153,7 @@ internal sealed class ImplicitBlock
                 else
                 {
                     var tmp = new HashSet<Variable>();
-                    using (EnterRawMode())
+                    using (Model.EnterRawMode())
                         foreach (var r in Residuals)
                             r.CollectVariables(tmp);
                     raw = tmp;
@@ -206,7 +188,7 @@ internal sealed class ImplicitBlock
         var gradBuf = ArrayPool<double>.Shared.Rent(totalVars);
         Array.Clear(scratch, 0, totalVars);
 
-        using (EnterRawMode())
+        using (Model.EnterRawMode())
         {
             var scratchSpan = new ReadOnlySpan<double>(scratch);
             ExtractA(atZero, scratchSpan, gradBuf, totalVars, ownVarValue: 0.0, scratch);
@@ -265,7 +247,7 @@ internal sealed class ImplicitBlock
             scratch[Variables[j].Index] = 0.0;
 
         // Phase 2: extract b and A in raw mode.
-        using (EnterRawMode())
+        using (Model.EnterRawMode())
         {
             var scratchSpan = new ReadOnlySpan<double>(scratch);
             for (int i = 0; i < _n; i++)
@@ -324,64 +306,73 @@ internal sealed class ImplicitBlock
         }
         if (_sensCache![indexInBlock] is { } cached) return cached;
 
-        var inputs = InputIndicesSorted;
-        var S = new double[inputs.Length];
-        var lambda = ArrayPool<double>.Shared.Rent(_n);
-        var totalVars = scratch.Length;
-        var gradBuf = ArrayPool<double>.Shared.Rent(totalVars);
-
-        Array.Clear(lambda, 0, _n);
-        lambda[indexInBlock] = -1.0;
-        LuSolveTranspose(_luFactor, _perm, lambda, _n);
-
-        // gradBuf_k = Σ_l λ_l · ∂E_l/∂x_k|v=v*  (raw mode). Selective clear: AccumulateGradient
-        // in raw mode only writes to indices in _residualVarsRaw, so zero only those entries
-        // — clearing the whole totalVars-sized buffer was 30%+ of total profile time.
-        ClearAtResidualVars(gradBuf);
-        using (EnterRawMode())
-            for (int l = 0; l < _n; l++)
-                Residuals[l].AccumulateGradient(scratch, gradBuf.AsSpan(0, totalVars), lambda[l]);
-
-        // Distribute:
-        //   - own elim vars: skip
-        //   - other-block elim vars: chain via cached sensitivity (other's inputs ⊆ ours)
-        //   - decision vars: write directly via BinarySearch into our InputIndicesSorted
-        foreach (var v in _residualVarsRaw!)
+        if (_computingSens)
+            throw new InvalidOperationException(
+                "ImplicitBlock: cycle detected in GetSensitivity. Implicit blocks must be added in topological order " +
+                "(checked at AddImplicitBlock; this exception means the topological-order check missed a case).");
+        _computingSens = true;
+        try
         {
-            var seed = gradBuf[v.Index];
-            if (seed == 0.0) continue;
-            if (v.Block == this) continue;
-            if (v.Block is { } other)
+            var inputs = InputIndicesSorted;
+            var S = new double[inputs.Length];
+            var lambda = ArrayPool<double>.Shared.Rent(_n);
+            var totalVars = scratch.Length;
+            var gradBuf = ArrayPool<double>.Shared.Rent(totalVars);
+
+            Array.Clear(lambda, 0, _n);
+            lambda[indexInBlock] = -1.0;
+            LuSolveTranspose(_luFactor, _perm, lambda, _n);
+
+            // gradBuf_k = Σ_l λ_l · ∂E_l/∂x_k|v=v*  (raw mode). Selective clear: AccumulateGradient
+            // in raw mode only writes to indices in _residualVarsRaw, so zero only those entries
+            // — clearing the whole totalVars-sized buffer was 30%+ of total profile time.
+            ClearAtResidualVars(gradBuf);
+            using (Model.EnterRawMode())
+                for (int l = 0; l < _n; l++)
+                    Residuals[l].AccumulateGradient(scratch, gradBuf.AsSpan(0, totalVars), lambda[l]);
+
+            // Distribute:
+            //   - own elim vars: skip
+            //   - other-block elim vars: chain via cached sensitivity (other's inputs ⊆ ours)
+            //   - decision vars: write directly via BinarySearch into our InputIndicesSorted
+            foreach (var v in _residualVarsRaw!)
             {
-                var otherS = other.GetSensitivity(v.IndexInBlock, scratch);
-                var otherInputs = other.InputIndicesSorted;
-                for (int k = 0; k < otherS.Length; k++)
+                var seed = gradBuf[v.Index];
+                if (seed == 0.0) continue;
+                if (v.Block == this) continue;
+                if (v.Block is { } other)
                 {
-                    if (otherS[k] == 0.0) continue;
-                    int pos = Array.BinarySearch(inputs, otherInputs[k]);
+                    var otherS = other.GetSensitivity(v.IndexInBlock, scratch);
+                    var otherInputs = other.InputIndicesSorted;
+                    for (int k = 0; k < otherS.Length; k++)
+                    {
+                        if (otherS[k] == 0.0) continue;
+                        int pos = Array.BinarySearch(inputs, otherInputs[k]);
+                        if (pos < 0)
+                            throw new InvalidOperationException(
+                                $"ImplicitBlock: input variable x[{otherInputs[k]}] from chained block missing from this block's input set. " +
+                                "CollectInputVariables transitive closure is incomplete.");
+                        S[pos] += seed * otherS[k];
+                    }
+                }
+                else
+                {
+                    int pos = Array.BinarySearch(inputs, v.Index);
                     if (pos < 0)
                         throw new InvalidOperationException(
-                            $"ImplicitBlock: input variable x[{otherInputs[k]}] from chained block missing from this block's input set. " +
-                            "CollectInputVariables transitive closure is incomplete.");
-                    S[pos] += seed * otherS[k];
+                            $"ImplicitBlock: decision variable x[{v.Index}] referenced by residual but not in InputIndicesSorted. " +
+                            "CollectInputVariables is missing this variable.");
+                    S[pos] += seed;
                 }
             }
-            else
-            {
-                int pos = Array.BinarySearch(inputs, v.Index);
-                if (pos < 0)
-                    throw new InvalidOperationException(
-                        $"ImplicitBlock: decision variable x[{v.Index}] referenced by residual but not in InputIndicesSorted. " +
-                        "CollectInputVariables is missing this variable.");
-                S[pos] += seed;
-            }
+
+            ArrayPool<double>.Shared.Return(lambda);
+            ArrayPool<double>.Shared.Return(gradBuf);
+
+            _sensCache[indexInBlock] = S;
+            return S;
         }
-
-        ArrayPool<double>.Shared.Return(lambda);
-        ArrayPool<double>.Shared.Return(gradBuf);
-
-        _sensCache[indexInBlock] = S;
-        return S;
+        finally { _computingSens = false; }
     }
 
     /// <summary>Reverse-mode gradient propagation through this block. Seed `weight` is ∂upstream/∂v_j
@@ -467,7 +458,7 @@ internal sealed class ImplicitBlock
         // through Get(originalIdx, originalIdx) which does two Dictionary lookups + a swap per
         // entry. We construct localAcc with rawIndices in 0..K-1 order, so the local index of
         // _residualVarsRaw[i] is exactly i.
-        using (EnterRawMode())
+        using (Model.EnterRawMode())
         {
             for (int l = 0; l < _n; l++)
             {
@@ -487,7 +478,7 @@ internal sealed class ImplicitBlock
         // 2) Per-residual raw gradients into _rawGradArr[l] (length M).
         var totalVars = scratch.Length;
         var gradBuf = ArrayPool<double>.Shared.Rent(totalVars);
-        using (EnterRawMode())
+        using (Model.EnterRawMode())
         {
             for (int l = 0; l < _n; l++)
             {
@@ -721,6 +712,19 @@ internal sealed class ImplicitBlock
             return _hess2Cache[indexInBlock];
         }
         finally { _computingHess2 = false; }
+    }
+
+    /// <summary>Adds the input-clique sparsity contribution this block makes to a Hessian sparsity
+    /// pattern: every pair of decision-input indices is a candidate non-zero. Used by
+    /// <see cref="VariableNode.CollectHessianSparsity"/> for eliminated VariableNodes — exposed
+    /// here as a method so the caller doesn't have to allocate a fresh HashSet&lt;Variable&gt;
+    /// per call.</summary>
+    public void AddInputCliqueToHessianSparsity(HashSet<(int row, int col)> entries)
+    {
+        var idx = InputIndicesSorted;
+        for (int i = 0; i < idx.Length; i++)
+            for (int j = 0; j <= i; j++)
+                ExprNode.AddSparsityEntry(entries, idx[i], idx[j]);
     }
 
     /// <summary>Reverse-mode Hessian propagation through this block. Adds w · ∂²v_j/∂x_dec_k∂x_dec_p

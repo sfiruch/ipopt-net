@@ -5,14 +5,53 @@ using System.Text;
 
 namespace IpoptNet.Modelling;
 
+/// <summary>
+/// A nonlinear-programming model: variables, constraints, objective, options, and (optionally)
+/// implicit blocks. Call <see cref="Solve"/> to invoke IPOPT.
+/// </summary>
+/// <remarks>
+/// Not thread-safe. A single Model instance must not have <see cref="Solve"/> called from
+/// multiple threads concurrently — IPOPT itself is single-threaded per problem and the model's
+/// per-pass scratch state is mutated during evaluation. Independent <see cref="Model"/> instances
+/// can be solved on independent threads concurrently.
+/// </remarks>
 [DebuggerDisplay("Variables: {_variables.Count}, Constraints: {_constraints.Count}")]
 public sealed class Model : IDisposable
 {
     private readonly List<Variable> _variables = new();
     private readonly List<Constraint> _constraints = new();
     private readonly List<ImplicitBlock> _implicitBlocks = new();
+    /// <summary>Union of all variables referenced (in raw mode) by any registered implicit
+    /// block's residual. Maintained incrementally on each <see cref="AddImplicitBlock"/> so the
+    /// topological-order check is O(new-block size) rather than O(blocks²).</summary>
+    private readonly HashSet<Variable> _varsReferencedByBlocks = new();
     private Expr? _objective;
     private bool _disposed;
+
+    /// <summary>
+    /// When true, eliminated VariableNodes in this model behave as plain variables (read/write
+    /// scratch[Variable.Index] directly) instead of redirecting through their <see cref="ImplicitBlock"/>.
+    /// Set/cleared by <see cref="EnterRawMode"/> during a block's own Solve / sensitivity computation
+    /// so residual expressions can be evaluated/differentiated without infinitely recursing.
+    /// Per-Model rather than thread-static: each <see cref="Model"/> has its own flag, so
+    /// independent models can be solved on independent threads concurrently without interference.
+    /// </summary>
+    internal bool IsRawMode { get; private set; }
+
+    internal readonly struct RawModeScope : IDisposable
+    {
+        private readonly Model _model;
+        private readonly bool _previous;
+        public RawModeScope(Model model, bool previous) { _model = model; _previous = previous; }
+        public void Dispose() => _model.IsRawMode = _previous;
+    }
+
+    internal RawModeScope EnterRawMode()
+    {
+        var prev = IsRawMode;
+        IsRawMode = true;
+        return new RawModeScope(this, prev);
+    }
 
     /// <summary>
     /// IPOPT solver options. Configure before calling Solve().
@@ -99,18 +138,19 @@ public sealed class Model : IDisposable
     /// Eliminates the listed variables from the IPOPT decision vector by treating the listed
     /// equality constraints as the implicit linear system A(other)·v = b(other) that defines
     /// them. The resulting NLP exposes only non-eliminated variables to IPOPT; eliminated values
-    /// are recomputed numerically each evaluation pass via LU on a small dense matrix, and
-    /// gradients propagate through the implicit-function theorem.
+    /// are recomputed numerically each evaluation pass via LU on a small dense matrix.
+    /// First-order and second-order sensitivities propagate through the implicit-function theorem,
+    /// so the caller can use either <see cref="HessianApproximation.Exact"/> or
+    /// <see cref="HessianApproximation.LimitedMemory"/>.
     ///
-    /// Constraints must be equalities (LowerBound == UpperBound) and must be linear in the
-    /// eliminated variables (they may be arbitrary in non-eliminated vars / parameters).
+    /// Constraints must be equalities (LowerBound == UpperBound = 0) and must be linear in the
+    /// eliminated variables (they may be arbitrary in non-eliminated vars / parameters). The
+    /// linearity check is verified numerically at the start of <see cref="Solve"/>.
     /// Eliminated variables must have infinite bounds and unit Scale.
     ///
-    /// When any implicit block is added, the model forces HessianApproximation = LimitedMemory
-    /// (exact Hessian propagation through the implicit chain is not yet implemented).
-    ///
-    /// Blocks must be added in topological order: a block's residuals may reference variables
-    /// from previously-added blocks but not from later ones.
+    /// Blocks must be added in topological order: a block's residuals may only reference
+    /// already-eliminated variables that belong to previously-added blocks. This is enforced
+    /// at registration time.
     /// </summary>
     public void AddImplicitBlock(IReadOnlyList<Variable> variables, IReadOnlyList<Constraint> linearEqualities)
     {
@@ -143,15 +183,36 @@ public sealed class Model : IDisposable
                 throw new ArgumentException("Constraint not present in this model. Did you AddConstraint(...) it first?");
         }
 
+        // Topological-order check: a variable about to be eliminated must not already appear in
+        // any *earlier* implicit block's residual. If it did, that earlier block would solve
+        // first (registration order) and capture v at a stale value while this block is what
+        // actually defines v.
+        // Regular constraints, the objective, and any other downstream expression are fine —
+        // they evaluate v through VariableNode's redirect path, which gives the correct chain-rule
+        // value. Only block residuals (which evaluate IN raw mode at scratch[v.Index]) are sensitive.
+        // O(1)-per-variable thanks to the incremental cache (_varsReferencedByBlocks).
+        foreach (var v in variables)
+            if (_varsReferencedByBlocks.Contains(v))
+                throw new ArgumentException(
+                    $"Variable x[{v.Index}] cannot be eliminated: it is already referenced by an earlier implicit block's residual. " +
+                    "Implicit blocks must be added in topological order — the block that defines a variable must be registered before any block whose residual reads it.");
+
         var varArr = variables.ToArray();
         var resArr = linearEqualities.Select(c => c.Expression).ToArray();
-        var block = new ImplicitBlock(varArr, resArr);
+        var block = new ImplicitBlock(this, varArr, resArr);
         for (int j = 0; j < varArr.Length; j++)
         {
             varArr[j].Block = block;
             varArr[j].IndexInBlock = j;
         }
         _implicitBlocks.Add(block);
+
+        // Extend the topological-order cache with the variables this new block's residuals
+        // reference (raw mode so eliminated VariableNodes report themselves directly). Subsequent
+        // AddImplicitBlock calls then check against this set in O(new-block size).
+        using (EnterRawMode())
+            foreach (var r in resArr)
+                r.CollectVariables(_varsReferencedByBlocks);
     }
 
     public override string ToString()
@@ -418,10 +479,13 @@ public sealed class Model : IDisposable
 
         // Build solution. We expose all variables (including eliminated ones) in the dictionary
         // so callers see consistent values; eliminated vars are read from scratch after a final
-        // sync at the returned x.
-        var solution = (Dictionary<Variable, double>?)null;
-
-
+        // sync at the returned x. Wrapped in try/catch: on pathological exit statuses (e.g.
+        // InvalidNumberDetected, RestorationFailed) the returned x can contain NaN, which would
+        // make SyncScratch's per-block LU singular and throw. Prefer null Solution over crashing
+        // the whole Solve call in that case.
+        Dictionary<Variable, double>? solution = null;
+        try
+        {
             solution = new Dictionary<Variable, double>();
             // Sync once more to populate scratch with eliminated values at the final iterate.
             SyncScratch(x.AsSpan());
@@ -430,9 +494,15 @@ public sealed class Model : IDisposable
             foreach (var v in _variables)
                 if (v.IsEliminated)
                     solution[v] = scratch[v.Index];
+        }
+        catch (InvalidOperationException)
+        {
+            // Singular implicit block at the final iterate; iterate is unusable.
+            solution = null;
+        }
 
-        // Update variable Start values and dual variables if requested and solution is usable
-        if (updateStartValues && status is
+        // Update variable Start values and dual variables if requested and solution is usable.
+        if (updateStartValues && solution is not null && status is
             ApplicationReturnStatus.SolveSucceeded or
             ApplicationReturnStatus.SolvedToAcceptableLevel or
             ApplicationReturnStatus.FeasiblePointFound or
