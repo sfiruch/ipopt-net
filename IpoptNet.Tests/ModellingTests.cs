@@ -2127,6 +2127,31 @@ public class ModellingTests
         Assert.AreEqual(result1.ObjectiveValue, result2.ObjectiveValue, 0.001);
     }
 
+    [TestMethod]
+    public void Evaluate_AtSolution_MatchesSolvedValues_IncludingScaledAndEliminated()
+    {
+        // Minimize (x - 50)^2 with x in [0,100] scale=100 (-> x=50), and an implicit-block
+        // eliminated variable e defined by e == 2*x + 1 (-> e=101). After solving, an aside
+        // residual expression must evaluate at the solution to the same value the solver found.
+        var model = new Model();
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(0.0, 100.0, scale: 100.0);
+        var e = model.AddVariable();
+        var defining = model.AddConstraint(e == 2 * x + 1);
+        model.AddImplicitBlock(new[] { e }, new[] { defining });
+
+        // Residual kept aside (not a model variable): squared into the objective would read back here.
+        var residual = e - x - 40;  // = (2x+1) - x - 40 = x - 39  -> 11 at x=50
+
+        model.SetObjective(Expr.Pow(x - 50, 2));
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(50.0, result.Solution![x], 1e-6);
+        Assert.AreEqual(101.0, result.Solution![e], 1e-6);   // eliminated value is readable
+        Assert.AreEqual(11.0, residual.Evaluate(model, result.Solution!), 1e-6);
+    }
+
     /// <summary>
     /// Helper method to solve a model and capture derivative test output.
     /// Use this for tests that enable DerivativeTest or CheckDerivativesForNanInf.

@@ -14,6 +14,40 @@ public sealed class Expr
 
     public double Evaluate(ReadOnlySpan<double> x) => _node.Evaluate(x);
 
+    /// <summary>
+    /// Evaluates this expression at a solved point. <paramref name="solution"/> is the dictionary
+    /// returned in <see cref="ModelResult.Solution"/> — it holds a physical (already-scaled) value
+    /// for every model variable, active and eliminated alike. Variables are collected in raw mode
+    /// (so an eliminated variable resolves to itself rather than its block inputs) and a scratch
+    /// vector indexed by <see cref="Variable.Index"/> is filled from the solution and walked.
+    ///
+    /// Use this to read back a residual that was folded directly into the objective (as
+    /// <c>weight·(expr)²</c>) rather than carried as an explicit slack variable + equality
+    /// constraint: keep the residual <see cref="Expr"/> aside, and evaluate it here after
+    /// <see cref="Model.Solve"/>. That avoids one decision variable and one constraint per residual.
+    /// </summary>
+    public double Evaluate(Model model, IReadOnlyDictionary<Variable, double> solution)
+    {
+        var variables = new HashSet<Variable>();
+        using (model.EnterRawMode())
+            _node.CollectVariables(variables);
+
+        var size = 0;
+        foreach (var v in variables)
+            size = Math.Max(size, v.Index + 1);
+
+        var scratch = new double[size];
+        foreach (var v in variables)
+        {
+            if (!solution.TryGetValue(v, out var value))
+                throw new ArgumentException($"Solution is missing a value for variable x[{v.Index}].", nameof(solution));
+            // VariableNode.Evaluate reads scratch[Index]·Scale; solution holds physical values, so
+            // divide by Scale to round-trip. Eliminated variables have unit Scale (a no-op here).
+            scratch[v.Index] = value / v.Scale;
+        }
+        return _node.Evaluate(scratch);
+    }
+
     public void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad)
     {
         // Allocate compact buffer and compute compact gradient
