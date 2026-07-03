@@ -38,6 +38,20 @@ public sealed class Model : IDisposable
     /// </summary>
     internal bool IsRawMode { get; private set; }
 
+    /// <summary>Generation counter for the per-pass expression value cache (see
+    /// <see cref="ExprNode.Evaluate"/>). Bumped whenever the contents of the evaluation buffer
+    /// change: at the start of each fresh IPOPT evaluation pass (SyncScratch) and around every
+    /// implicit-block scratch mutation. A node's cached value is valid iff its stored generation
+    /// equals this counter. Starts at 1 so nodes' initial generation 0 is always invalid.</summary>
+    internal long EvalGeneration { get; private set; } = 1;
+
+    /// <summary>True only while IPOPT evaluation callbacks may run (inside <see cref="Solve"/>).
+    /// Outside of that window nodes always re-evaluate, so public Evaluate calls with arbitrary
+    /// x vectors can never be served a stale cached value.</summary>
+    internal bool ValueCachingActive { get; private set; }
+
+    internal void InvalidateValueCache() => EvalGeneration++;
+
     internal readonly struct RawModeScope : IDisposable
     {
         private readonly Model _model;
@@ -330,9 +344,9 @@ public sealed class Model : IDisposable
         // (redirect mode — eliminated vars contribute their block's transitive inputs).
         foreach (var block in _implicitBlocks)
             block.PrepareResiduals();
-        _objective.Prepare();
+        _objective.Prepare(this);
         foreach (var constraint in _constraints)
-            constraint.Expression.Prepare();
+            constraint.Expression.Prepare(this);
 
         // Per-evaluation scratch buffer (size = total vars, indexed by Variable.Index).
         // VariableNode.Evaluate reads from this; the model populates it from the IPOPT compact
@@ -356,6 +370,7 @@ public sealed class Model : IDisposable
             evalGeneration++;
             for (int i = 0; i < n; i++)
                 scratch[activeVars[i].Index] = compactX[i];
+            InvalidateValueCache();
             foreach (var block in _implicitBlocks)
                 block.Solve(scratch, evalGeneration, blockGradBuffer);
         }
@@ -474,8 +489,19 @@ public sealed class Model : IDisposable
             upperBoundMultipliers[i] = activeVars[i].UpperBoundDualStart;
         }
 
-        status = solver.Solve(x, out objValue, out statistics, constraintValues, constraintMultipliers,
-                                  lowerBoundMultipliers, upperBoundMultipliers);
+        // Enable the per-pass expression value cache only while IPOPT callbacks can run. Everything
+        // before (VerifyLinearity's own scratch) and after (final SyncScratch, solution readback)
+        // evaluates uncached, so no cache-invalidation discipline is needed there.
+        ValueCachingActive = true;
+        try
+        {
+            status = solver.Solve(x, out objValue, out statistics, constraintValues, constraintMultipliers,
+                                      lowerBoundMultipliers, upperBoundMultipliers);
+        }
+        finally
+        {
+            ValueCachingActive = false;
+        }
 
         // Build solution. We expose all variables (including eliminated ones) in the dictionary
         // so callers see consistent values; eliminated vars are read from scratch after a final

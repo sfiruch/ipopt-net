@@ -18,7 +18,7 @@ internal sealed class DivisionNode : ExprNode
         Right = right;
     }
 
-    internal override double Evaluate(ReadOnlySpan<double> x)
+    internal override double EvaluateCore(ReadOnlySpan<double> x)
     {
         return Left.Evaluate(x) / Right.Evaluate(x);
     }
@@ -129,8 +129,8 @@ internal sealed class DivisionNode : ExprNode
 
     internal override void PrepareChildren()
     {
-        Left.Prepare();
-        Right.Prepare();
+        Left.Prepare(_model);
+        Right.Prepare(_model);
         _gradLBuffer = new double[Left._cachedVariables!.Count];
         _gradRBuffer = new double[Right._cachedVariables!.Count];
 

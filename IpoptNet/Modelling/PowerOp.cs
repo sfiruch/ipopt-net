@@ -8,6 +8,9 @@ internal sealed class PowerOpNode : ExprNode
     public ExprNode Base { get; set; }
     public double Exponent { get; set; }
     private double[]? _gradBuffer;
+    private bool _baseIsLinear;
+    private int[]? _hessSlots;                    // lower-triangle slots for the gradient outer product
+    private HessianAccumulator? _hessSlotsOwner;  // accumulator instance _hessSlots was resolved against
 
     public PowerOpNode(ExprNode @base, double exponent)
     {
@@ -16,7 +19,7 @@ internal sealed class PowerOpNode : ExprNode
         Exponent = exponent;
     }
 
-    internal override double Evaluate(ReadOnlySpan<double> x) => Math.Pow(Base.Evaluate(x), Exponent);
+    internal override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(Base.Evaluate(x), Exponent);
 
     internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
@@ -29,25 +32,23 @@ internal sealed class PowerOpNode : ExprNode
     {
         // d²(b^n)/dx² = n*(n-1)*b^(n-2)*(db/dx)² + n*b^(n-1)*d²b/dx²
         var bVal = Base.Evaluate(x);
-        var firstDerivCoeff = Exponent * Math.Pow(bVal, Exponent - 1);
         var secondDerivCoeff = Exponent * (Exponent - 1) * Math.Pow(bVal, Exponent - 2);
         // For exponents in (1,2), bVal^(Exponent-2) → ∞ as bVal → 0; clamp to keep Hessian finite.
         if (!double.IsFinite(secondDerivCoeff)) secondDerivCoeff = 0.0;
-        Base.AccumulateHessian(x, hess, multiplier * firstDerivCoeff);
+
+        // A linear base has a zero Hessian — skip the whole subtree walk. (_baseIsLinear is false
+        // for bases containing block-eliminated variables, whose Hessian is non-trivial.)
+        if (!_baseIsLinear)
+            Base.AccumulateHessian(x, hess, multiplier * Exponent * Math.Pow(bVal, Exponent - 1));
 
         // Outer product of gradient with itself using compact gradient
         var coeff = multiplier * secondDerivCoeff;
+        if (coeff == 0.0)
+            return;
 
         Array.Clear(_gradBuffer!);
         Base.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Base._sortedVarIndices!);
-
-        var sorted = Base._sortedVarIndices!;
-        for (int i = 0; i < sorted.Length; i++)
-        {
-            var gI = _gradBuffer![i];
-            for (int j = 0; j <= i; j++)
-                hess.Add(sorted[i], sorted[j], coeff * gI * _gradBuffer[j]);
-        }
+        AddGradientOuterProduct(hess, coeff, _gradBuffer!, Base._sortedVarIndices!, ref _hessSlots, ref _hessSlotsOwner);
     }
 
     internal override void CollectVariables(HashSet<Variable> variables) => Base.CollectVariables(variables);
@@ -76,14 +77,17 @@ internal sealed class PowerOpNode : ExprNode
 
     internal override void PrepareChildren()
     {
-        Base.Prepare();
+        Base.Prepare(_model);
         _gradBuffer = new double[Base._cachedVariables!.Count];
+        _baseIsLinear = Base.IsLinear();
     }
 
     internal override void ClearChildren()
     {
         Base.Clear();
         _gradBuffer = null;
+        _hessSlots = null;
+        _hessSlotsOwner = null;
     }
 
     public override string ToString()

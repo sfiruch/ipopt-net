@@ -14,6 +14,13 @@ public abstract class HessianAccumulator
     public abstract double Get(int i, int j);
     public abstract void Clear();
     public abstract ReadOnlySpan<double> Values { get; }
+
+    /// <summary>Resolves (i, j) to a stable slot in this accumulator's value storage, so hot
+    /// loops with a fixed sparsity footprint can resolve their entries once and use
+    /// <see cref="AddAtSlot"/> afterwards, skipping the per-Add index lookup. Slots stay valid
+    /// for the accumulator's lifetime; callers cache them keyed on the accumulator instance.</summary>
+    public abstract int GetSlot(int i, int j);
+    public abstract void AddAtSlot(int slot, double value);
 }
 
 /// <summary>
@@ -59,6 +66,15 @@ public sealed class SparseHessianAccumulator : HessianAccumulator
         int idx = Array.BinarySearch(_colIndices, start, length, j);
         return idx >= 0 ? _values[idx] : 0.0;
     }
+
+    public override int GetSlot(int i, int j)
+    {
+        if (i < j) (i, j) = (j, i);
+        int start = _rowPointers[i];
+        return Array.BinarySearch(_colIndices, start, _rowPointers[i + 1] - start, j);
+    }
+
+    public override void AddAtSlot(int slot, double value) => _values[slot] += value;
 
     public override ReadOnlySpan<double> Values => _values;
 
@@ -109,6 +125,16 @@ public sealed class DenseLocalHessianAccumulator : HessianAccumulator
         if (li < lj) (li, lj) = (lj, li);
         return _matrix[li * _n + lj];
     }
+
+    public override int GetSlot(int i, int j)
+    {
+        var li = _origToLocal[i];
+        var lj = _origToLocal[j];
+        if (li < lj) (li, lj) = (lj, li);
+        return li * _n + lj;
+    }
+
+    public override void AddAtSlot(int slot, double value) => _matrix[slot] += value;
 
     public override void Clear() => Array.Clear(_matrix);
 

@@ -11,7 +11,7 @@ internal sealed class NegationNode : ExprNode
         Operand = operand;
     }
 
-    internal override double Evaluate(ReadOnlySpan<double> x)
+    internal override double EvaluateCore(ReadOnlySpan<double> x)
     {
         var val = Operand.Evaluate(x);
         return -val;
@@ -35,7 +35,7 @@ internal sealed class NegationNode : ExprNode
 
     internal override void PrepareChildren()
     {
-        Operand.Prepare();
+        Operand.Prepare(_model);
     }
 
     internal override void ClearChildren()

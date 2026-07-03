@@ -2936,7 +2936,7 @@ internal class WrongGradientNode : ExprNode
         _x = x;
     }
 
-    internal override double Evaluate(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
+    internal override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
 
     internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
@@ -2977,7 +2977,7 @@ internal class WrongHessianNode : ExprNode
         _x = x;
     }
 
-    internal override double Evaluate(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
+    internal override double EvaluateCore(ReadOnlySpan<double> x) => Math.Pow(x[_x.Index], 2);
 
     internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {

@@ -10,6 +10,17 @@ internal sealed class ProductNode : ExprNode
     private double[]? _factorValues;
     private double[]? _excludingFactor;
 
+    // Prepared fast-path state (see PrepareChildren): per-factor constness/linearity (so the
+    // Hessian doesn't re-walk subtrees per evaluation to answer IsConstantWrtX/IsLinear), and the
+    // cross-term alignment + accumulator slots per non-constant factor pair (k, m), k < m.
+    private bool[]? _factorIsConstant;
+    private bool[]? _factorIsLinear;
+    private int[]? _crossPairId;          // [k * Factors.Count + m] → pair id, -1 when unused
+    private int[][]? _crossAInB;          // [pairId][a] = position of A's a-th var in B's sorted vars, or negative
+    private int[][]? _crossBInA;          // [pairId][b] = position of B's b-th var in A's sorted vars, or negative
+    private int[][]? _crossSlots;         // [pairId][a·|B| + b] = accumulator slot for (A_a, B_b)
+    private HessianAccumulator? _crossSlotsOwner;
+
     public ProductNode() => Factors = [];
     public ProductNode(List<ExprNode> factors)
     {
@@ -25,7 +36,7 @@ internal sealed class ProductNode : ExprNode
         }
     }
 
-    internal override double Evaluate(ReadOnlySpan<double> x)
+    internal override double EvaluateCore(ReadOnlySpan<double> x)
     {
         if (Factor == 0.0)
             return 0.0;
@@ -68,7 +79,9 @@ internal sealed class ProductNode : ExprNode
             return;
         if (Factors.Count == 1)
         {
-            Factors[0].AccumulateHessian(x, hess, scaledMultiplier);
+            // A linear factor has a zero Hessian (null check: this path can run unprepared).
+            if (_factorIsLinear is null || !_factorIsLinear[0])
+                Factors[0].AccumulateHessian(x, hess, scaledMultiplier);
             return;
         }
 
@@ -110,15 +123,41 @@ internal sealed class ProductNode : ExprNode
 
         // Compute compact gradients of all factors
         for (int i = 0; i < Factors.Count; i++)
-            if (!Factors[i].IsConstantWrtX())
+            if (!_factorIsConstant![i])
             {
                 Array.Clear(_factorGradBuffers![i]);
                 Factors[i].AccumulateGradientCompact(x, _factorGradBuffers[i], 1.0, Factors[i]._sortedVarIndices!);
             }
 
-        // Accumulate Hessian from each factor's second derivative
+        // Accumulate Hessian from each factor's second derivative. Linear factors (which includes
+        // constants) have a zero Hessian — skip their subtree walk.
         for (int k = 0; k < Factors.Count; k++)
-            Factors[k].AccumulateHessian(x, hess, scaledMultiplier * _excludingFactor![k]);
+            if (!_factorIsLinear![k])
+                Factors[k].AccumulateHessian(x, hess, scaledMultiplier * _excludingFactor![k]);
+
+        // Resolve every non-constant pair's cross-term entries to accumulator slots once per
+        // accumulator instance; the footprint is fixed after Prepare.
+        if (!ReferenceEquals(_crossSlotsOwner, hess) && _crossSlots!.Length > 0)
+        {
+            for (int k = 0; k + 1 < Factors.Count; k++)
+            {
+                if (_factorIsConstant![k])
+                    continue;
+                for (int m = k + 1; m < Factors.Count; m++)
+                {
+                    if (_factorIsConstant[m])
+                        continue;
+                    var sortedA = Factors[k]._sortedVarIndices!;
+                    var sortedB = Factors[m]._sortedVarIndices!;
+                    var slots = _crossSlots[_crossPairId![k * Factors.Count + m]];
+                    var t = 0;
+                    for (int a = 0; a < sortedA.Length; a++)
+                        for (int b = 0; b < sortedB.Length; b++)
+                            slots[t++] = hess.GetSlot(sortedA[a], sortedB[b]);
+                }
+            }
+        }
+        _crossSlotsOwner = hess;
 
         // Add cross terms between pairs of factors. The coefficient is the product of all factors
         // except k and m, computed in O(1) from the nonzero summary (see _excludingFactor above).
@@ -128,12 +167,12 @@ internal sealed class ProductNode : ExprNode
         // - ≥3 zeros:  always zero.
         for (int k = 0; k + 1 < Factors.Count; k++)
         {
-            if (Factors[k].IsConstantWrtX())
+            if (_factorIsConstant![k])
                 continue;
 
             for (int m = k + 1; m < Factors.Count; m++)
             {
-                if (Factors[m].IsConstantWrtX())
+                if (_factorIsConstant[m])
                     continue;
 
                 var pairCoeff = zeroCount switch
@@ -145,37 +184,37 @@ internal sealed class ProductNode : ExprNode
                     _ => 0.0,
                 };
 
+                var pairId = _crossPairId![k * Factors.Count + m];
                 AddCrossTermCompact(hess, _factorGradBuffers![k], _factorGradBuffers[m],
-                    Factors[k]._sortedVarIndices!, Factors[m]._sortedVarIndices!, scaledMultiplier * pairCoeff);
+                    _crossAInB![pairId], _crossBInA![pairId], _crossSlots![pairId], scaledMultiplier * pairCoeff);
             }
         }
     }
 
     private static void AddCrossTermCompact(HessianAccumulator hess, double[] gradA, double[] gradB,
-        int[] sortedA, int[] sortedB, double coeff)
+        int[] aInB, int[] bInA, int[] slots, double coeff)
     {
-        for (int a = 0; a < sortedA.Length; a++)
+        if (coeff == 0.0)
+            return;
+
+        var nB = gradB.Length;
+        for (int a = 0; a < gradA.Length; a++)
         {
             var gAi = gradA[a];
-            var gBi = 0.0;
+            // Position of A's a-th variable in B's gradient (precomputed), or negative if absent.
+            var bIndex = aInB[a];
+            var gBi = bIndex >= 0 ? gradB[bIndex] : 0.0;
 
-            // Find if sortedA[a] exists in sortedB
-            int bIndex = Array.BinarySearch(sortedB, sortedA[a]);
-            if (bIndex >= 0)
-                gBi = gradB[bIndex];
-
-            for (int b = 0; b < sortedB.Length; b++)
+            for (int b = 0; b < nB; b++)
             {
                 var gBj = gradB[b];
-                var gAj = 0.0;
+                var aIndex = bInA[b];
+                var gAj = aIndex >= 0 ? gradA[aIndex] : 0.0;
 
-                // Find if sortedB[b] exists in sortedA
-                int aIndex = Array.BinarySearch(sortedA, sortedB[b]);
-                if (aIndex >= 0)
-                    gAj = gradA[aIndex];
-
-                hess.Add(sortedA[a], sortedB[b], coeff * gAi * gBj);
-                hess.Add(sortedB[b], sortedA[a], coeff * gBi * gAj);
+                // (A_a, B_b) and (B_b, A_a) normalize to the same symmetric entry — one slot.
+                var slot = slots[a * nB + b];
+                hess.AddAtSlot(slot, coeff * gAi * gBj);
+                hess.AddAtSlot(slot, coeff * gBi * gAj);
             }
         }
     }
@@ -231,7 +270,7 @@ internal sealed class ProductNode : ExprNode
     internal override void PrepareChildren()
     {
         foreach (var factor in Factors)
-            factor.Prepare();
+            factor.Prepare(_model);
 
         // Preallocate gradient buffers for each factor
         _factorGradBuffers = new double[Factors.Count][];
@@ -241,6 +280,53 @@ internal sealed class ProductNode : ExprNode
         // Preallocate factor evaluation and product arrays
         _factorValues = new double[Factors.Count];
         _excludingFactor = new double[Factors.Count];
+
+        // Cache per-factor constness/linearity (queried per Hessian evaluation otherwise).
+        _factorIsConstant = new bool[Factors.Count];
+        _factorIsLinear = new bool[Factors.Count];
+        for (int i = 0; i < Factors.Count; i++)
+        {
+            _factorIsConstant[i] = Factors[i].IsConstantWrtX();
+            _factorIsLinear[i] = Factors[i].IsLinear();
+        }
+
+        // Precompute cross-term variable alignment for every non-constant factor pair (k, m):
+        // the positions of each factor's variables in the other's sorted-variable array. These
+        // replace two binary searches per Hessian cross-term entry per evaluation. The matching
+        // accumulator slots are resolved lazily on first AccumulateHessian (they need the
+        // accumulator instance).
+        var f = Factors.Count;
+        _crossPairId = new int[f * f];
+        Array.Fill(_crossPairId, -1);
+        var aInB = new List<int[]>();
+        var bInA = new List<int[]>();
+        var slots = new List<int[]>();
+        for (int k = 0; k + 1 < f; k++)
+        {
+            if (_factorIsConstant[k])
+                continue;
+            for (int m = k + 1; m < f; m++)
+            {
+                if (_factorIsConstant[m])
+                    continue;
+                var sortedA = Factors[k]._sortedVarIndices!;
+                var sortedB = Factors[m]._sortedVarIndices!;
+                var ab = new int[sortedA.Length];
+                for (int a = 0; a < sortedA.Length; a++)
+                    ab[a] = Array.BinarySearch(sortedB, sortedA[a]);
+                var ba = new int[sortedB.Length];
+                for (int b = 0; b < sortedB.Length; b++)
+                    ba[b] = Array.BinarySearch(sortedA, sortedB[b]);
+                _crossPairId[k * f + m] = aInB.Count;
+                aInB.Add(ab);
+                bInA.Add(ba);
+                slots.Add(new int[sortedA.Length * sortedB.Length]);
+            }
+        }
+        _crossAInB = aInB.ToArray();
+        _crossBInA = bInA.ToArray();
+        _crossSlots = slots.ToArray();
+        _crossSlotsOwner = null;
     }
 
     internal override void ClearChildren()
@@ -251,6 +337,13 @@ internal sealed class ProductNode : ExprNode
         _factorGradBuffers = null;
         _factorValues = null;
         _excludingFactor = null;
+        _factorIsConstant = null;
+        _factorIsLinear = null;
+        _crossPairId = null;
+        _crossAInB = null;
+        _crossBInA = null;
+        _crossSlots = null;
+        _crossSlotsOwner = null;
     }
 
     public override string ToString()

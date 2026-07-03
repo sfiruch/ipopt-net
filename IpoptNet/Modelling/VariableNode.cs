@@ -9,7 +9,7 @@ internal sealed class VariableNode : ExprNode
         Variable = variable;
     }
 
-    internal override double Evaluate(ReadOnlySpan<double> x) => x[Variable.Index] * Variable.Scale;
+    internal override double EvaluateCore(ReadOnlySpan<double> x) => x[Variable.Index] * Variable.Scale;
 
     internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {

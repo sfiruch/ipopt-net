@@ -4,10 +4,13 @@ internal sealed class ExpNode : ExprNode
 {
     public ExprNode Argument { get; set; }
     private double[]? _gradBuffer;
+    private bool _argIsLinear;
+    private int[]? _hessSlots;                    // lower-triangle slots for the gradient outer product
+    private HessianAccumulator? _hessSlotsOwner;  // accumulator instance _hessSlots was resolved against
 
     public ExpNode(ExprNode argument) => Argument = argument;
 
-    internal override double Evaluate(ReadOnlySpan<double> x) => Math.Exp(Argument.Evaluate(x));
+    internal override double EvaluateCore(ReadOnlySpan<double> x) => Math.Exp(Argument.Evaluate(x));
 
     internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
@@ -19,20 +22,19 @@ internal sealed class ExpNode : ExprNode
     {
         var arg = Argument.Evaluate(x);
         var expVal = Math.Exp(arg);
-        Argument.AccumulateHessian(x, hess, multiplier * expVal);
+        // A linear argument has a zero Hessian — skip the subtree walk. (_argIsLinear is false for
+        // arguments containing block-eliminated variables, whose Hessian is non-trivial.)
+        if (!_argIsLinear)
+            Argument.AccumulateHessian(x, hess, multiplier * expVal);
 
         var coeff = multiplier * expVal;
 
+        if (coeff == 0.0)
+            return;
+
         Array.Clear(_gradBuffer!);
         Argument.AccumulateGradientCompact(x, _gradBuffer!, 1.0, Argument._sortedVarIndices!);
-
-        var sorted = Argument._sortedVarIndices!;
-        for (int i = 0; i < sorted.Length; i++)
-        {
-            var gI = _gradBuffer![i];
-            for (int j = 0; j <= i; j++)
-                hess.Add(sorted[i], sorted[j], coeff * gI * _gradBuffer[j]);
-        }
+        AddGradientOuterProduct(hess, coeff, _gradBuffer!, Argument._sortedVarIndices!, ref _hessSlots, ref _hessSlotsOwner);
     }
 
     internal override void CollectVariables(HashSet<Variable> variables) => Argument.CollectVariables(variables);
@@ -49,13 +51,16 @@ internal sealed class ExpNode : ExprNode
 
     internal override void PrepareChildren()
     {
-        Argument.Prepare();
+        Argument.Prepare(_model);
         _gradBuffer = new double[Argument._cachedVariables!.Count];
+        _argIsLinear = Argument.IsLinear();
     }
 
     internal override void ClearChildren()
     {
         Argument.Clear();
         _gradBuffer = null;
+        _hessSlots = null;
+        _hessSlotsOwner = null;
     }
 }

@@ -114,7 +114,7 @@ internal sealed class ImplicitBlock
     {
         using (Model.EnterRawMode())
             foreach (var r in Residuals)
-                r.Prepare();
+                r.Prepare(Model);
 
         // Snapshot the union of residuals' raw-mode cached variables for fast iteration during
         // PropagateGradient. CollectVariables in raw mode adds Variables themselves (not their
@@ -245,6 +245,7 @@ internal sealed class ImplicitBlock
         // Phase 1: zero own eliminated vars in scratch (so residuals at v=0 give -b_i).
         for (int j = 0; j < _n; j++)
             scratch[Variables[j].Index] = 0.0;
+        Model.InvalidateValueCache();
 
         // Phase 2: extract b and A in raw mode.
         using (Model.EnterRawMode())
@@ -273,6 +274,7 @@ internal sealed class ImplicitBlock
         // VariableNode.Evaluate path stays correct.
         for (int j = 0; j < _n; j++)
             scratch[Variables[j].Index] = _vstar[j];
+        Model.InvalidateValueCache();
     }
 
     /// <summary>Returns sorted array of original Variable.Index values for non-eliminated inputs

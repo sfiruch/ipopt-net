@@ -11,6 +11,17 @@ internal sealed class QuadExprNode : ExprNode
     public List<double> QuadraticWeights { get; set; }
     public double ConstantTerm { get; set; }
 
+    // Prepared fast-path state for AccumulateHessian (see PrepareChildren). Parallel to
+    // QuadraticTerms1/2: variable indices + scales for plain Variable×Variable terms (idx1 = -1
+    // means the term needs the general path), and the per-term accumulator slot, resolved once
+    // per accumulator instance.
+    private int[]? _quadIdx1;
+    private int[]? _quadIdx2;
+    private double[]? _quadScale1;
+    private double[]? _quadScale2;
+    private int[]? _quadSlots;
+    private HessianAccumulator? _quadSlotsOwner;
+
     public QuadExprNode()
     {
         LinearTerms = [];
@@ -503,7 +514,7 @@ internal sealed class QuadExprNode : ExprNode
         }
     }
 
-    internal override double Evaluate(ReadOnlySpan<double> x)
+    internal override double EvaluateCore(ReadOnlySpan<double> x)
     {
         var result = ConstantTerm;
 
@@ -546,16 +557,34 @@ internal sealed class QuadExprNode : ExprNode
             LinearTerms[i].AccumulateHessian(x, hess, multiplier * LinearWeights[i]);
 
         // Quadratic terms: ∂²/∂x_i∂x_j (w * f * g)
-        // For simple variable products (most common case): x_i * x_j → coefficient w
+        // For simple variable products (most common case): x_i * x_j → coefficient w.
+        // When prepared, plain Variable×Variable terms use precomputed indices/scales and a
+        // per-accumulator slot (resolved once) instead of a type check + CSR search per Add.
+        var fastIdx1 = _quadIdx1;
+        if (fastIdx1 is not null && !ReferenceEquals(_quadSlotsOwner, hess))
+        {
+            for (int i = 0; i < fastIdx1.Length; i++)
+                if (fastIdx1[i] >= 0)
+                    _quadSlots![i] = hess.GetSlot(fastIdx1[i], _quadIdx2![i]);
+            _quadSlotsOwner = hess;
+        }
+
         for (int i = 0; i < QuadraticTerms1.Count; i++)
         {
             var w = multiplier * QuadraticWeights[i];
 
+            if (fastIdx1 is not null && fastIdx1[i] >= 0)
+            {
+                var value = fastIdx1[i] == _quadIdx2![i]
+                    ? 2.0 * w * _quadScale1![i] * _quadScale1[i] // Diagonal: x² → d²/dx_int² = 2·Scale²
+                    : w * _quadScale1![i] * _quadScale2![i];     // Off-diagonal: x·y → Scale1·Scale2
+                hess.AddAtSlot(_quadSlots![i], value);
+            }
             // Simplified for Variable * Variable case (most common for quadratic expressions).
             // Skip the fast path if either variable is eliminated by an implicit block — for those
             // the general branch routes through VariableNode.AccumulateHessian which propagates the
             // implicit-block second-order sensitivity, and adds the cross-product term explicitly.
-            if (QuadraticTerms1[i] is VariableNode v1 && QuadraticTerms2[i] is VariableNode v2
+            else if (fastIdx1 is null && QuadraticTerms1[i] is VariableNode v1 && QuadraticTerms2[i] is VariableNode v2
                 && v1.Variable.Block is null && v2.Variable.Block is null)
             {
                 int idx1 = v1.Variable.Index;
@@ -674,11 +703,32 @@ internal sealed class QuadExprNode : ExprNode
     internal override void PrepareChildren()
     {
         foreach (var term in LinearTerms)
-            term.Prepare();
+            term.Prepare(_model);
         foreach (var term in QuadraticTerms1)
-            term.Prepare();
+            term.Prepare(_model);
         foreach (var term in QuadraticTerms2)
-            term.Prepare();
+            term.Prepare(_model);
+
+        // Precompute the Variable×Variable Hessian fast path (see AccumulateHessian).
+        _quadIdx1 = new int[QuadraticTerms1.Count];
+        _quadIdx2 = new int[QuadraticTerms1.Count];
+        _quadScale1 = new double[QuadraticTerms1.Count];
+        _quadScale2 = new double[QuadraticTerms1.Count];
+        _quadSlots = new int[QuadraticTerms1.Count];
+        _quadSlotsOwner = null;
+        for (int i = 0; i < QuadraticTerms1.Count; i++)
+        {
+            if (QuadraticTerms1[i] is VariableNode v1 && QuadraticTerms2[i] is VariableNode v2
+                && v1.Variable.Block is null && v2.Variable.Block is null)
+            {
+                _quadIdx1[i] = v1.Variable.Index;
+                _quadIdx2[i] = v2.Variable.Index;
+                _quadScale1[i] = v1.Variable.Scale;
+                _quadScale2[i] = v2.Variable.Scale;
+            }
+            else
+                _quadIdx1[i] = -1;
+        }
     }
 
     internal override void ClearChildren()
@@ -689,6 +739,12 @@ internal sealed class QuadExprNode : ExprNode
             term.Clear();
         foreach (var term in QuadraticTerms2)
             term.Clear();
+        _quadIdx1 = null;
+        _quadIdx2 = null;
+        _quadScale1 = null;
+        _quadScale2 = null;
+        _quadSlots = null;
+        _quadSlotsOwner = null;
     }
 
     public override string ToString()

@@ -6,7 +6,7 @@ internal sealed class ConstantNode : ExprNode
 
     public ConstantNode(double value) => Value = value;
 
-    internal override double Evaluate(ReadOnlySpan<double> x) => Value;
+    internal override double EvaluateCore(ReadOnlySpan<double> x) => Value;
     internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices) { }
     internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) { }
     internal override void CollectVariables(HashSet<Variable> variables) { }

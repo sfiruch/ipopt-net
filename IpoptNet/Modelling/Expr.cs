@@ -45,7 +45,19 @@ public sealed class Expr
             // divide by Scale to round-trip. Eliminated variables have unit Scale (a no-op here).
             scratch[v.Index] = value / v.Scale;
         }
-        return _node.Evaluate(scratch);
+
+        // This evaluates on a buffer other than the model's per-pass scratch; invalidate the
+        // per-pass value cache on both sides so neither this call nor a concurrent solve pass
+        // (e.g. when called from IntermediateCallback) reads values cached for the other buffer.
+        model.InvalidateValueCache();
+        try
+        {
+            return _node.Evaluate(scratch);
+        }
+        finally
+        {
+            model.InvalidateValueCache();
+        }
     }
 
     public void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad)
@@ -534,11 +546,12 @@ public sealed class Expr
 
     /// <summary>
     /// Caches variables for this expression and all children to optimize repeated Hessian evaluations.
-    /// Called once during model finalization before optimization.
+    /// Called once during model finalization before optimization. Passing the owning model enables
+    /// the per-pass value cache (see <see cref="ExprNode.Evaluate"/>).
     /// </summary>
-    internal void Prepare()
+    internal void Prepare(Model? model = null)
     {
-        _node.Prepare();
+        _node.Prepare(model);
     }
 
     /// <summary>
