@@ -588,4 +588,174 @@ public class PartitioningTests
         Assert.AreEqual(cleanResult.Solution[cb1], stoppedResult.Solution[sb1]);
         Assert.AreEqual(cleanResult.Solution[cb2], stoppedResult.Solution[sb2]);
     }
+
+    /// <summary>A block can pin a variable with no decision-variable inputs at all (v == 5). Two
+    /// things used to go wrong. The objective term referencing only v looked variable-free, because
+    /// redirect-mode collection resolves an eliminated variable to its block's inputs and there are
+    /// none — so it was stranded in an unrelated partition. And the resulting partition has no free
+    /// variables, which is a zero-variable NLP that IPOPT refuses to create. Correct objective:
+    /// (3-3)² + (5-9)² = 16.</summary>
+    [TestMethod]
+    public void BlockWithNoInputs_IsPartitionedAndResolvedCorrectly()
+    {
+        static (Model model, Variable x, Variable v) Build(bool partitioned)
+        {
+            var model = new Model { EnablePartitioning = partitioned };
+            model.Options.PrintLevel = 0;
+            var x = model.AddVariable(-10, 10); x.Start = 0;
+            var v = model.AddVariable(); v.Start = 0;
+            var c = model.AddConstraint(v - 5 == 0);
+            model.AddImplicitBlock([v], [c]);
+            model.SetObjective(Expr.Pow(x - 3, 2) + Expr.Pow(v - 9, 2));
+            return (model, x, v);
+        }
+
+        var (split, sx, sv) = Build(partitioned: true);
+
+        // Each partition owns exactly the objective term that belongs to it.
+        var partitions = split.AnalyzePartitions().Partitions;
+        Assert.AreEqual(2, partitions.Count);
+        foreach (var partition in partitions)
+            Assert.AreEqual(1, partition.ObjectiveTermCount,
+                "the term referencing only the eliminated variable must land in ITS partition");
+
+        var splitResult = split.Solve();
+        var (joint, jx, jv) = Build(partitioned: false);
+        var jointResult = joint.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, splitResult.Status);
+        Assert.AreEqual(16.0, splitResult.ObjectiveValue, 1e-6);
+        Assert.AreEqual(jointResult.ObjectiveValue, splitResult.ObjectiveValue, 1e-9);
+        Assert.AreEqual(3.0, splitResult.Solution![sx], 1e-6);
+        Assert.AreEqual(5.0, splitResult.Solution[sv], 1e-9);
+        Assert.AreEqual(jointResult.Solution![jx], splitResult.Solution[sx], 1e-7);
+
+        // Only the partition IPOPT actually solved reports a result.
+        Assert.AreEqual(1, splitResult.Partitions.Count);
+    }
+
+    /// <summary>A constraint over only eliminated variables whose block has no inputs is a constant
+    /// assertion — no decision can change it. IPOPT cannot be handed one: the row's Jacobian is empty,
+    /// which the C API rejects when it is the only row ("Failed to create IPOPT problem") and trips a
+    /// missing-key lookup in the Jacobian callback when it is not. Such constraints are now checked
+    /// once and left out, so a satisfiable one simply solves — and the model is free to decompose
+    /// around it, since it couples nothing.</summary>
+    [TestMethod]
+    public void ConstantConstraint_IsCheckedThenLeftOut()
+    {
+        static (Model model, Variable x, Variable v) Build(bool partitioned, double bound, bool alsoRealConstraint)
+        {
+            var model = new Model { EnablePartitioning = partitioned };
+            model.Options.PrintLevel = 0;
+            var x = model.AddVariable(-10, 10); x.Start = 0;
+            var v = model.AddVariable(); v.Start = 0;
+            var def = model.AddConstraint(v - 5 == 0);          // pins v, no decision inputs
+            model.AddImplicitBlock([v], [def]);
+            model.AddConstraint(v * 1 <= bound);                // references only v
+            if (alsoRealConstraint) model.AddConstraint(x * 1 <= 8);
+            model.SetObjective(Expr.Pow(x - 3, 2));
+            return (model, x, v);
+        }
+
+        // Satisfiable, on its own: used to be "Failed to create IPOPT problem".
+        foreach (bool partitioned in new[] { false, true })
+        {
+            var (model, x, v) = Build(partitioned, bound: 99, alsoRealConstraint: false);
+            var result = model.Solve();
+            Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status, $"partitioned={partitioned}");
+            Assert.AreEqual(3.0, result.Solution![x], 1e-6);
+            Assert.AreEqual(5.0, result.Solution[v], 1e-9);
+        }
+
+        // Satisfiable, beside a real constraint: used to throw a missing-key lookup.
+        var (mixed, mx, _) = Build(partitioned: true, bound: 99, alsoRealConstraint: true);
+        var mixedResult = mixed.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, mixedResult.Status);
+        Assert.AreEqual(3.0, mixedResult.Solution![mx], 1e-6);
+
+        // Coupling nothing, it no longer forces the model to stay in one piece.
+        Assert.AreEqual(2, Build(true, 99, false).model.AnalyzePartitions().Partitions.Count);
+    }
+
+    /// <summary>A constant constraint that cannot hold is decided before the search begins, so it is
+    /// reported as a modelling error naming the value and the bound it misses — rather than left for
+    /// the caller to diagnose from a bare infeasible status.</summary>
+    [TestMethod]
+    public void ConstantConstraint_ThatCannotHold_IsRejected()
+    {
+        var model = new Model();
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(-10, 10); x.Start = 0;
+        var v = model.AddVariable(); v.Start = 0;
+        var def = model.AddConstraint(v - 5 == 0);
+        model.AddImplicitBlock([v], [def]);
+        model.AddConstraint(v * 1 <= 4);          // v is pinned at 5; unsatisfiable
+        model.SetObjective(Expr.Pow(x - 3, 2));
+
+        var ex = Assert.ThrowsExactly<InvalidOperationException>(() => model.Solve());
+        StringAssert.Contains(ex.Message, "references no decision variable");
+        StringAssert.Contains(ex.Message, "5");
+    }
+
+    /// <summary>The neighbouring case must not regress: when the block DOES have decision inputs, the
+    /// constraint is not constant at all — redirect-mode collection resolves v to those inputs, the
+    /// Jacobian row is real, and IPOPT handles it normally. v = 2x + 3 with v &lt;= -99 forces x below
+    /// its own lower bound, which is a genuine infeasibility for IPOPT to find.</summary>
+    [TestMethod]
+    public void ConstraintOnEliminatedVariableWithInputs_IsNotTreatedAsConstant()
+    {
+        static (Model model, Variable x) Build(double bound)
+        {
+            var model = new Model();
+            model.Options.PrintLevel = 0;
+            var x = model.AddVariable(-10, 10); x.Start = 0;
+            var v = model.AddVariable(); v.Start = 0;
+            var def = model.AddConstraint(v - 2 * x - 3 == 0);
+            model.AddImplicitBlock([v], [def]);
+            model.AddConstraint(v * 1 <= bound);
+            model.SetObjective(Expr.Pow(x - 3, 2));
+            return (model, x);
+        }
+
+        var (feasible, fx) = Build(99);
+        var feasibleResult = feasible.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, feasibleResult.Status);
+        Assert.AreEqual(3.0, feasibleResult.Solution![fx], 1e-6);
+
+        var (infeasible, _) = Build(-99);
+        Assert.AreEqual(ApplicationReturnStatus.InfeasibleProblemDetected, infeasible.Solve().Status,
+            "a real Jacobian row means IPOPT reports infeasibility itself, not a modelling error");
+    }
+
+    /// <summary>Chained blocks in one partition alongside an independent component: the eliminated
+    /// values must still be reconstructed through the chain, in registration (topological) order.
+    /// v2 = v1 + 1 = 2p + 4, driven to 10, so p = 3.</summary>
+    [TestMethod]
+    public void ChainedBlocks_ResolveCorrectlyAlongsideAnotherPartition()
+    {
+        var model = new Model();
+        model.Options.PrintLevel = 0;
+        var p = model.AddVariable(-10, 10); p.Start = 0;
+        var v1 = model.AddVariable(); v1.Start = 0;
+        var v2 = model.AddVariable(); v2.Start = 0;
+        var c1 = model.AddConstraint(v1 - 2 * p - 3 == 0);
+        model.AddImplicitBlock([v1], [c1]);
+        var c2 = model.AddConstraint(v2 - v1 - 1 == 0);
+        model.AddImplicitBlock([v2], [c2]);
+        var w = model.AddVariable(-10, 10); w.Start = 0;
+        model.SetObjective(Expr.Pow(v2 - 10, 2) + Expr.Pow(w - 5, 2));
+
+        var partitions = model.AnalyzePartitions().Partitions;
+        Assert.AreEqual(2, partitions.Count);
+        Assert.AreEqual(2, partitions.Single(x => x.ImplicitBlockCount > 0).ImplicitBlockCount);
+
+        var result = model.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(3.0, result.Solution![p], 1e-6);
+        Assert.AreEqual(9.0, result.Solution[v1], 1e-6);
+        Assert.AreEqual(10.0, result.Solution[v2], 1e-6);
+        Assert.AreEqual(5.0, result.Solution[w], 1e-6);
+        Assert.IsNotNull(result.BestIterate);
+        Assert.AreEqual(10.0, result.BestIterate.Solution[v2], 1e-6);
+    }
 }

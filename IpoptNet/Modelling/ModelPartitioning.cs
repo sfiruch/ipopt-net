@@ -122,10 +122,12 @@ public sealed partial class Model
     /// Pure: does not mutate model state, does not require the expression graph to be prepared, and
     /// is unaffected by <see cref="EnablePartitioning"/> (it reports the decomposition either way).
     ///
-    /// Partitions are ordered smallest sub-problem first — by variables + constraints, the dimension
-    /// of the KKT system IPOPT factorises — with the inert group last and ties broken on the
-    /// smallest <see cref="Variable.Index"/>, so the result is deterministic and reproducible.
-    /// <see cref="Solve"/> works through them in exactly this order.
+    /// Partitions are ordered smallest sub-problem first — by free variables + constraints, the
+    /// dimension of the KKT system IPOPT factorises; eliminated variables are not counted, since the
+    /// solver does not decide them. The inert group sorts last and ties break on the smallest
+    /// <see cref="Variable.Index"/>, so the result is deterministic and reproducible.
+    /// <see cref="Solve"/> works through them in exactly this order. A partition with no free
+    /// variables is reported but never handed to IPOPT: there is nothing for it to decide.
     ///
     /// Note that variables the model never references ("inert" — in no constraint, no block and no
     /// objective term) are reported coalesced into a single <see cref="ModelPartition.IsInert"/>
@@ -282,7 +284,6 @@ public sealed partial class Model
         // Variables the model actually references. The rest are "inert" and get coalesced below.
         var referenced = new bool[totalVars];
         var vars = new HashSet<Variable>();
-        bool decomposable = true;
 
         // (1) Implicit blocks are atomic: a block's eliminated variables and everything its
         // residuals read must be solved together. Raw mode makes an eliminated VariableNode report
@@ -300,24 +301,30 @@ public sealed partial class Model
             UnionAll(parent, size, referenced, vars);
         }
 
-        // (2) Constraints, in redirect mode — matching what AnalyzeJacobianSparsity sees.
+        // (2) Constraints, in redirect mode — matching what AnalyzeJacobianSparsity sees. A
+        // constraint over no variables is a constant assertion: it couples nothing, and Solve
+        // validates it once and leaves it out of the problem entirely (see FindConstantConstraints),
+        // so it is skipped here too and the model is free to decompose around it.
         foreach (var c in _constraints)
         {
             vars.Clear();
             c.Expression.CollectVariables(vars);
-            // A constraint over no variables is a constant assertion. Rather than pick an arbitrary
-            // partition to report its (in)feasibility from, decline to decompose at all.
-            if (vars.Count == 0) decomposable = false;
             UnionAll(parent, size, referenced, vars);
         }
 
-        // (3) Objective terms.
+        // (3) Objective terms, collected in RAW mode. Redirect mode would resolve an eliminated
+        // variable to its block's transitive inputs, which is the wrong question here twice over: a
+        // block's eliminated variables are already unioned with its inputs by step (1), so naming
+        // the variable itself is sufficient; and a block with NO decision-variable inputs (v pinned
+        // to a constant) reports an empty set in redirect mode, which would make a term referencing
+        // only v look variable-free and strand it in an unrelated partition.
         var objectiveTerms = EnumerateObjectiveTerms();
         var termFirstVariable = new int[objectiveTerms.Count];
         for (int t = 0; t < objectiveTerms.Count; t++)
         {
             vars.Clear();
-            CollectObjectiveTermVariables(objectiveTerms[t], vars);
+            using (EnterRawMode())
+                CollectObjectiveTermVariables(objectiveTerms[t], vars);
             UnionAll(parent, size, referenced, vars);
             // A variable-free term is a constant contribution; park it on the first partition so it
             // is evaluated exactly once.
@@ -340,10 +347,6 @@ public sealed partial class Model
             if (firstInert < 0) firstInert = i;
             else Union(parent, size, firstInert, i);
         }
-
-        if (!decomposable)
-            for (int i = 1; i < totalVars; i++)
-                Union(parent, size, 0, i);
 
         // Group by root. This is a provisional numbering in first-seen-variable order; the final
         // ordering is decided below, once each group's size is known.
@@ -392,6 +395,8 @@ public sealed partial class Model
         {
             vars.Clear();
             c.Expression.CollectVariables(vars);
+            if (vars.Count == 0)
+                continue;   // constant assertion: owned by no partition, and never solved
             int p = partitionOfVariable[vars.Min(v => v.Index)];
             constraints[p].Add(c);
             inert[p] = false;
@@ -414,9 +419,9 @@ public sealed partial class Model
 
         // Order: smallest sub-problem first. Under a model-wide time budget that maximises how many
         // partitions finish before the deadline bites, and it fills ModelResult.BestIterate with the
-        // cheap wins early rather than leaving it empty behind one slow partition. Size is measured
-        // as variables + constraints, the dimension of the KKT system IPOPT factorises each
-        // iteration; eliminated variables are excluded since they never enter that system.
+        // cheap wins early rather than leaving it empty behind one slow partition. Size counts free
+        // variables + constraints — the dimension of the KKT system IPOPT factorises each iteration.
+        // Eliminated variables are not counted: they are not decided by the solver.
         //
         // The inert group sorts last and is never solved at all, which keeps a solved partition's
         // index the same in AnalyzePartitions, PartitionInfo.Index and ModelResult.Partitions.

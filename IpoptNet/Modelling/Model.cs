@@ -385,17 +385,23 @@ public sealed partial class Model : IDisposable
             CompactToOriginal = new int[totalVars],
         };
 
-        var plans = BuildSolvePlans(totalVars, out double objectiveConstant, out var inertVariables);
-
-        // Prepare residual expressions inside each block (raw mode), then each plan's objective and
-        // constraints (redirect mode — eliminated vars contribute their block's transitive inputs).
-        // The model-level _objective is deliberately NOT prepared when it was sliced: the slices
-        // cover every term between them, partitions are disjoint so no node is reachable from two
-        // slices, and preparing the original as well would freeze its children against a parent
-        // that is never evaluated.
+        // Prepare residual expressions inside each block (raw mode) before anything evaluates them:
+        // the constant-constraint check below needs eliminated values, and so does every plan.
         foreach (var block in _implicitBlocks)
             block.PrepareResiduals();
-        foreach (var plan in plans)
+
+        var constantConstraints = FindConstantConstraints();
+        if (constantConstraints.Count > 0)
+            ValidateConstantConstraints(constantConstraints, buffers);
+
+        var plans = BuildSolvePlans(totalVars, out double objectiveConstant, out var unsolvedPlans, constantConstraints);
+
+        // Each plan's objective and constraints in redirect mode — eliminated vars contribute their
+        // block's transitive inputs. The model-level _objective is deliberately NOT prepared when it
+        // was sliced: the slices cover every term between them, partitions are disjoint so no node is
+        // reachable from two slices, and preparing the original as well would freeze its children
+        // against a parent that is never evaluated.
+        foreach (var plan in plans.Concat(unsolvedPlans))
         {
             plan.Objective.Prepare(this);
             foreach (var constraint in plan.Constraints)
@@ -412,7 +418,7 @@ public sealed partial class Model : IDisposable
             // The whole-model plan with nothing carved off: the pre-partitioning code path,
             // unchanged, which is what makes flag-on equivalent to flag-off on a model that does
             // not decompose.
-            if (plans.Count == 1 && inertVariables.Length == 0)
+            if (plans.Count == 1 && unsolvedPlans.Count == 0)
                 return SolvePartition(plans[0], new PartitionContext(1, 0, 0, 0, 0, Normalize: false),
                     buffers, updateStartValues);
 
@@ -421,7 +427,21 @@ public sealed partial class Model : IDisposable
             // model from the very first iteration, rather than jumping each time a partition
             // completes), and the values reported for inert variables.
             SeedScratchFromStarts(buffers);
-            var inertSolution = inertVariables.ToDictionary(v => v, v => buffers.Scratch[v.Index] * v.Scale);
+
+            // Partitions IPOPT never sees. Their variables take the seeded start point (for the
+            // inert group) or whatever their blocks determined during the seeding pass (for the
+            // all-eliminated ones), and their objective slice — a constant, since no decision
+            // variable enters it — joins the model-level constant.
+            var fixedSolution = new Dictionary<Variable, double>();
+            foreach (var plan in unsolvedPlans)
+            {
+                foreach (var v in plan.ActiveVariables)
+                    fixedSolution[v] = buffers.Scratch[v.Index] * v.Scale;
+                foreach (var v in plan.EliminatedVariables)
+                    fixedSolution[v] = buffers.Scratch[v.Index];
+                objectiveConstant += plan.Objective.Evaluate(buffers.Scratch);
+            }
+
             var startObjective = plans.Select(p => p.Objective.Evaluate(buffers.Scratch)).ToArray();
 
             var results = new List<ModelResult>(plans.Count);
@@ -465,13 +485,13 @@ public sealed partial class Model : IDisposable
                     break;
             }
 
-            return CombineResults(results, plans, buffers, objectiveConstant, inertSolution);
+            return CombineResults(results, plans, buffers, objectiveConstant, fixedSolution);
         }
         finally
         {
             // Clear cached variables to free memory after optimization. _objective too: harmless
             // when it was never prepared, and necessary when it is itself a plan's objective.
-            foreach (var plan in plans)
+            foreach (var plan in plans.Concat(unsolvedPlans))
             {
                 plan.Objective.Clear();
                 foreach (var constraint in plan.Constraints)
@@ -480,6 +500,52 @@ public sealed partial class Model : IDisposable
             _objective.Clear();
             foreach (var block in _implicitBlocks)
                 block.ClearResiduals();
+        }
+    }
+
+    /// <summary>Constraints whose expression references no variable at all, so their value is fixed
+    /// before the solve begins. The usual source is a bound on a variable an implicit block pins to a
+    /// constant: in redirect mode an eliminated variable reports its block's inputs, and a block with
+    /// no inputs reports none. IPOPT cannot be given such a constraint — the row's Jacobian is empty,
+    /// which the C API rejects outright when it is the only row and trips a missing-key lookup in the
+    /// Jacobian callback otherwise — so they are checked once and then left out of the problem.</summary>
+    private List<Constraint> FindConstantConstraints()
+    {
+        var found = new List<Constraint>();
+        var vars = new HashSet<Variable>();
+        foreach (var c in _constraints)
+        {
+            vars.Clear();
+            c.Expression.CollectVariables(vars);
+            if (vars.Count == 0)
+                found.Add(c);
+        }
+        return found;
+    }
+
+    /// <summary>Evaluates the constant constraints once and rejects the model if any cannot hold.
+    /// No choice of decision variables can affect them, so this is decided before the search starts
+    /// rather than discovered by it — a thrown error naming the offender is more use than an
+    /// infeasible status the caller has to go and diagnose.</summary>
+    private void ValidateConstantConstraints(List<Constraint> constantConstraints, SolveBuffers buffers)
+    {
+        SeedScratchFromStarts(buffers);
+        double tolerance = Options.ConstraintViolationTolerance ?? DefaultConstraintViolationTolerance;
+
+        foreach (var c in constantConstraints)
+        {
+            double value = c.Expression.Evaluate(buffers.Scratch);
+            if (value >= c.LowerBound - tolerance && value <= c.UpperBound + tolerance)
+                continue;
+
+            string bounds = c.LowerBound == c.UpperBound ? $"== {c.LowerBound}"
+                : double.IsNegativeInfinity(c.LowerBound) ? $"<= {c.UpperBound}"
+                : double.IsPositiveInfinity(c.UpperBound) ? $">= {c.LowerBound}"
+                : $"in [{c.LowerBound}, {c.UpperBound}]";
+            throw new InvalidOperationException(
+                $"Constraint {_constraints.IndexOf(c)} ({c.Expression}) references no decision variable, so its "
+                + $"value is fixed at {value}, which does not satisfy {bounds}. No solve can change this — the "
+                + "constraint depends only on constants and on variables pinned by implicit blocks.");
         }
     }
 
@@ -513,14 +579,18 @@ public sealed partial class Model : IDisposable
     /// <param name="totalVars">Size of the model-wide variable index space.</param>
     /// <param name="objectiveConstant">The objective's additive constant, held out of every slice and
     /// added back once during aggregation. Zero on the whole-model path, where the objective keeps it.</param>
-    /// <param name="inertVariables">Variables the model never references. They get no plan: with
-    /// nothing to optimise and nothing to satisfy, an IPOPT run for them would burn a full problem
-    /// setup to return a number the barrier picked arbitrarily. The caller resolves them from their
-    /// start point instead.</param>
-    private List<SolvePlan> BuildSolvePlans(int totalVars, out double objectiveConstant, out Variable[] inertVariables)
+    /// <param name="unsolvedPlans">Partitions that are not handed to IPOPT, because there is nothing
+    /// for it to decide: the inert group (referenced by nothing at all), and any partition whose
+    /// variables are all eliminated by implicit blocks, which leaves a zero-variable NLP that IPOPT
+    /// refuses to create. The caller resolves their variables from the seeded start point and folds
+    /// their objective slice — a constant, by construction — into the model total.</param>
+    /// <param name="constantConstraints">Constraints that reference no decision variable, already
+    /// validated by the caller. They are left out of every plan: IPOPT cannot act on them.</param>
+    private List<SolvePlan> BuildSolvePlans(int totalVars, out double objectiveConstant,
+        out List<SolvePlan> unsolvedPlans, List<Constraint> constantConstraints)
     {
         objectiveConstant = 0;
-        inertVariables = [];
+        unsolvedPlans = [];
 
         if (EnablePartitioning)
         {
@@ -531,11 +601,32 @@ public sealed partial class Model : IDisposable
                 var plans = new List<SolvePlan>(layout.Count);
                 for (int p = 0; p < layout.Count; p++)
                 {
-                    // At most one partition is inert (they coalesce), so removing it always leaves
-                    // at least one real sub-problem behind.
-                    if (layout.IsInert[p])
+                    // Nothing for IPOPT to decide. Either the inert group — free variables the model
+                    // references nowhere — or a partition whose variables are all determined by its
+                    // implicit blocks, which would be a zero-variable NLP that IPOPT refuses to
+                    // create. Constraints, though, must still be judged by someone: refuse rather
+                    // than silently drop them.
+                    if (layout.IsInert[p] || layout.ActiveVariables[p].Length == 0)
                     {
-                        inertVariables = layout.ActiveVariables[p];
+                        // Such a partition never carries constraints, so nothing is dropped by not
+                        // solving it. A constraint's collected variables are always free ones
+                        // (AnalyzeJacobianSparsity rejects eliminated ones), so a constraint with any
+                        // variables puts a free variable in its partition; and a constraint with none
+                        // set decomposable = false, collapsing the model to a single partition that
+                        // never reaches this branch.
+                        Debug.Assert(layout.Constraints[p].Length == 0,
+                            "A partition with no free variables cannot carry constraints.");
+
+                        unsolvedPlans.Add(new SolvePlan
+                        {
+                            Index = unsolvedPlans.Count,
+                            ActiveVariables = layout.ActiveVariables[p],
+                            EliminatedVariables = layout.EliminatedVariables[p],
+                            Constraints = [],
+                            Blocks = layout.Blocks[p],
+                            Objective = BuildPartitionObjective(layout.ObjectiveTerms[p]),
+                            CompactIndex = [],
+                        });
                         continue;
                     }
 
@@ -584,7 +675,7 @@ public sealed partial class Model : IDisposable
                 Index = 0,
                 ActiveVariables = [.. activeVars],
                 EliminatedVariables = [.. eliminatedVars],
-                Constraints = [.. _constraints],
+                Constraints = [.. _constraints.Where(c => !constantConstraints.Contains(c))],
                 Blocks = [.. _implicitBlocks],
                 Objective = _objective!,
                 CompactIndex = wholeCompactIndex,
@@ -1156,7 +1247,7 @@ public sealed partial class Model : IDisposable
     /// <summary>Folds the per-partition results into one that reads as if the model had been solved
     /// in a single IPOPT run.</summary>
     private static ModelResult CombineResults(List<ModelResult> results, List<SolvePlan> plans,
-        SolveBuffers buffers, double objectiveConstant, Dictionary<Variable, double> inertSolution)
+        SolveBuffers buffers, double objectiveConstant, Dictionary<Variable, double> fixedSolution)
     {
         // Worst status wins, ties broken by lowest partition index — so the caller cannot mistake a
         // partially-failed solve for a successful one.
@@ -1170,7 +1261,7 @@ public sealed partial class Model : IDisposable
         Dictionary<Variable, double>? solution = null;
         if (results.All(r => r.Solution is not null))
         {
-            solution = new Dictionary<Variable, double>(inertSolution);
+            solution = new Dictionary<Variable, double>(fixedSolution);
             foreach (var r in results)
                 foreach (var (v, value) in r.Solution!)
                     solution[v] = value;
@@ -1206,7 +1297,7 @@ public sealed partial class Model : IDisposable
         IterateSnapshot? bestIterate = null;
         if (results.Count == plans.Count && results.All(r => r.BestIterate is not null))
         {
-            var merged = new Dictionary<Variable, double>(inertSolution);
+            var merged = new Dictionary<Variable, double>(fixedSolution);
             foreach (var r in results)
                 foreach (var (v, value) in r.BestIterate!.Solution)
                     merged[v] = value;

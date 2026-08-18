@@ -118,7 +118,23 @@ failing sub-problem never suppresses the others.
 Sub-problems are solved **smallest first** — by variables + constraints, the dimension of the KKT
 system IPOPT factorises. Under a model-wide time budget that maximises how many finish before the
 deadline, and it fills `BestIterate` with the cheap wins instead of leaving it empty behind one
-slow partition. Ties break on the smallest `Variable.Index`, so the order is deterministic.
+slow partition. Ties break on the smallest `Variable.Index`, so the order is deterministic. Eliminated variables are not
+counted — the solver does not decide them.
+
+A partition whose variables are *all* eliminated by implicit blocks is reported by
+`AnalyzePartitions` but never handed to IPOPT: there is nothing left to decide, and a
+zero-variable NLP cannot be created. Its variables come from its blocks, and its objective
+slice — constant by construction — joins the model total.
+
+### Constant constraints
+
+A constraint that references no decision variable — most often a bound on a variable an implicit
+block pins to a constant — cannot be given to IPOPT at all: its Jacobian row is empty, which the C
+API rejects. Such constraints are evaluated once before the solve and then left out of the problem.
+If one cannot hold, `Solve()` throws naming the fixed value and the bound it misses, rather than
+leaving you to diagnose a bare infeasible status. Note this applies only when the block has *no*
+decision inputs; if it has any, the constraint resolves to them, gets a real Jacobian row, and IPOPT
+judges its feasibility as usual.
 
 Inspect the decomposition without solving — this works regardless of the flag and needs no solve
 state:
