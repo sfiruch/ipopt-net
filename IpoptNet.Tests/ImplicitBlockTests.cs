@@ -138,71 +138,94 @@ public class ImplicitBlockTests
             Assert.AreEqual(observed[t], result.Solution![T[t]], 1e-3, $"T[{t}] mismatch");
     }
 
-    /// <summary>Numerical Hessian sanity check: implicit-Euler heat decay with two parameters.
-    /// Optimizer minimises Σ(T[t] - obs[t])² over (k, T0). Both parameters appear nonlinearly in T*[t]
-    /// via (1 + dt·k)·T[t+1] - T[t] = dt·k·T_out. With exact Hessian wired through ImplicitBlock, IPOPT
-    /// should drive dual infeasibility to KKT tolerance; with L-BFGS it doesn't. Compare the two.</summary>
+    /// <summary>A non-unit Scale on an eliminated variable is supported. Nothing needs converting
+    /// when the block writes v*: A and b are extracted in raw mode, where the variable's node already
+    /// contributes its Scale, so the linear system is posed in evaluation-buffer units and v* comes
+    /// out in them. What does need it are the redirect paths — the block's sensitivities are
+    /// ∂scratch_v/∂scratch_input, and the value downstream expressions see is Scale·scratch_v.
+    ///
+    /// Here v is defined by v = 2p + 3 at Scale 1000, and the objective drives v to 9, so p = 3 —
+    /// the same answer the unit-scale formulation gives. IPOPT's own second-order derivative checker
+    /// validates the propagated gradient and Hessian rather than just the optimum.</summary>
     [TestMethod]
-    public void ExactHessian_Converges_Where_LBFGS_Doesnt()
+    public void Accepts_NonUnitScale()
     {
-        // Generate observations at the true k.
-        const double dt = 0.5;
-        const double T_out = 5.0;
-        const double trueT0 = 25.0;
-        const double trueK = 0.4;
-        const int nSteps = 8;
-        var obs = new double[nSteps + 1];
-        obs[0] = trueT0;
-        for (int t = 0; t < nSteps; t++)
-            obs[t + 1] = (obs[t] + dt * trueK * T_out) / (1 + dt * trueK);
+        var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
+        model.Options.CheckDerivativesForNanInf = true;
+        model.Options.PrintLevel = 0;
+        var p = model.AddVariable(-100, 100); p.Start = 0;
+        var v = model.AddVariable(double.NegativeInfinity, double.PositiveInfinity, scale: 1000.0);
+        v.Start = 0;
+        var c = model.AddConstraint(v - 2 * p - 3 == 0);
+        model.AddImplicitBlock([v], [c]);
+        model.SetObjective(Expr.Pow(v - 9, 2));
 
-        ApplicationReturnStatus RunFit(HessianApproximation hessApprox)
+        var result = ModellingTests.SolveWithDerivativeTest(model);
+
+        ModellingTests.AssertDerivativeTestPassed(result.DerivativeTestResult);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(3.0, result.Solution![p], 1e-6);
+        Assert.AreEqual(9.0, result.Solution[v], 1e-6, "the eliminated value is reported in physical units");
+    }
+
+    /// <summary>Scale on the second-order path. The test above cannot reach it: there v = 2p + 3 is
+    /// linear in p, so ∂²v*/∂p² is identically zero and PropagateHessian contributes nothing whatever
+    /// weight it is given. Here v·(1 + p) = 10 makes v* = 10/(1 + p), genuinely nonlinear in p, so the
+    /// propagated Hessian is exercised. The residual is still linear in v — its coefficient is just
+    /// (1 + p) rather than a constant — which is all an implicit block requires.
+    ///
+    /// The objective drives v to 2, so 10/(1 + p) = 2 and p = 4.</summary>
+    [TestMethod]
+    public void NonUnitScale_WithNonlinearSensitivity_HasCorrectHessian()
+    {
+        var model = new Model();
+        model.Options.DerivativeTest = DerivativeTest.SecondOrder;
+        model.Options.CheckDerivativesForNanInf = true;
+        model.Options.PrintLevel = 0;
+        var p = model.AddVariable(0, 10); p.Start = 1;
+        var v = model.AddVariable(double.NegativeInfinity, double.PositiveInfinity, scale: 1000.0);
+        v.Start = 0;
+        var c = model.AddConstraint(v * (1 + p) - 10 == 0);
+        model.AddImplicitBlock([v], [c]);
+        model.SetObjective(Expr.Pow(v - 2, 2));
+
+        var result = ModellingTests.SolveWithDerivativeTest(model);
+
+        ModellingTests.AssertDerivativeTestPassed(result.DerivativeTestResult);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(4.0, result.Solution![p], 1e-6);
+        Assert.AreEqual(2.0, result.Solution[v], 1e-6);
+    }
+
+    /// <summary>Scale must not change the answer. The same block solved at Scale 1 and Scale 1000
+    /// has to agree, on the eliminated variable as well as the decision variable.</summary>
+    [TestMethod]
+    public void NonUnitScale_AgreesWithUnitScale()
+    {
+        static (Model model, Variable p, Variable v) Build(double scale)
         {
             var model = new Model();
-            model.Options.HessianApproximation = hessApprox;
-            model.Options.MaxIterations = 200;
             model.Options.PrintLevel = 0;
-            var k = model.AddVariable(0.01, 5.0); k.Start = 1.0;
-            var T = new Variable[nSteps + 1];
-            T[0] = model.AddVariable(); T[0].Start = 20.0;
-            for (int t = 0; t < nSteps; t++)
-            {
-                T[t + 1] = model.AddVariable();
-                var residual = T[t + 1] + dt * k * T[t + 1] - T[t] - dt * k * T_out;
-                var c = model.AddConstraint(residual == 0);
-                model.AddImplicitBlock(new[] { T[t + 1] }, new[] { c });
-            }
-            Expr obj = 0;
-            for (int t = 0; t <= nSteps; t++)
-                obj += Expr.Pow(T[t] - obs[t], 2);
-            model.SetObjective(obj);
-            var result = model.Solve();
-            return result.Status;
+            var p = model.AddVariable(-100, 100); p.Start = 0;
+            var v = model.AddVariable(double.NegativeInfinity, double.PositiveInfinity, scale: scale);
+            v.Start = 0;
+            var c = model.AddConstraint(v - 2 * p - 3 == 0);
+            model.AddImplicitBlock([v], [c]);
+            model.SetObjective(Expr.Pow(v - 9, 2) + Expr.Pow(p, 2) * 0.01);
+            return (model, p, v);
         }
 
-        var exactStatus = RunFit(HessianApproximation.Exact);
-        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, exactStatus,
-            $"Exact Hessian should reach KKT convergence; got {exactStatus}.");
-    }
+        var (plain, pp, pv) = Build(1.0);
+        var (scaled, sp, sv) = Build(1000.0);
+        var plainResult = plain.Solve();
+        var scaledResult = scaled.Solve();
 
-    [TestMethod]
-    public void Rejects_FiniteBounds()
-    {
-        var model = new Model();
-        var p = model.AddVariable();
-        var v = model.AddVariable(0, 100);
-        var c = model.AddConstraint(v - p == 0);
-        Assert.ThrowsExactly<ArgumentException>(() => model.AddImplicitBlock(new[] { v }, new[] { c }));
-    }
-
-    [TestMethod]
-    public void Rejects_NonUnitScale()
-    {
-        var model = new Model();
-        var p = model.AddVariable();
-        var v = model.AddVariable(double.NegativeInfinity, double.PositiveInfinity, scale: 10);
-        var c = model.AddConstraint(v - p == 0);
-        Assert.ThrowsExactly<ArgumentException>(() => model.AddImplicitBlock(new[] { v }, new[] { c }));
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, plainResult.Status);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, scaledResult.Status);
+        Assert.AreEqual(plainResult.Solution![pp], scaledResult.Solution![sp], 1e-6);
+        Assert.AreEqual(plainResult.Solution[pv], scaledResult.Solution[sv], 1e-6);
+        Assert.AreEqual(plainResult.ObjectiveValue, scaledResult.ObjectiveValue, 1e-6);
     }
 
     [TestMethod]

@@ -42,7 +42,7 @@ public sealed class Expr
             if (!solution.TryGetValue(v, out var value))
                 throw new ArgumentException($"Solution is missing a value for variable x[{v.Index}].", nameof(solution));
             // VariableNode.Evaluate reads scratch[Index]·Scale; solution holds physical values, so
-            // divide by Scale to round-trip. Eliminated variables have unit Scale (a no-op here).
+            // divide by Scale to round-trip. Applies to eliminated variables too.
             scratch[v.Index] = value / v.Scale;
         }
 

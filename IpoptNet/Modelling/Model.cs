@@ -189,7 +189,9 @@ public sealed partial class Model : IDisposable
     /// Constraints must be equalities (LowerBound == UpperBound = 0) and must be linear in the
     /// eliminated variables (they may be arbitrary in non-eliminated vars / parameters). The
     /// linearity check is verified numerically at the start of <see cref="Solve"/>.
-    /// Eliminated variables must have infinite bounds and unit Scale.
+    /// Eliminated variables must have infinite bounds — the block writes v* straight into the
+    /// evaluation buffer, so a bound could only be violated silently. A non-unit
+    /// <see cref="Variable.Scale"/> is fine.
     ///
     /// Blocks must be added in topological order: a block's residuals may only reference
     /// already-eliminated variables that belong to previously-added blocks. This is enforced
@@ -211,9 +213,6 @@ public sealed partial class Model : IDisposable
                 throw new ArgumentException(
                     $"Variable x[{v.Index}] has finite bounds (LB={v.LowerBound}, UB={v.UpperBound}). " +
                     "Bounds on eliminated variables are not supported.");
-            if (v.Scale != 1.0)
-                throw new ArgumentException(
-                    $"Variable x[{v.Index}] has Scale={v.Scale}. Eliminated variables must have unit Scale.");
         }
 
         foreach (var c in linearEqualities)
@@ -370,14 +369,30 @@ public sealed partial class Model : IDisposable
         if (_objective is null)
             throw new InvalidOperationException("No objective function set");
 
+        // Automatic elimination restructures the model — equalities move out of the constraint list
+        // and into blocks — so everything downstream must see it in that shape. It is undone before
+        // returning: EnableAutomaticElimination is an option for THIS solve, and a caller who turns
+        // it off, or inspects the model afterwards, must find exactly what they built.
+        var elimination = EnableAutomaticElimination ? ApplyAutomaticElimination() : null;
+        try
+        {
+            return SolveCore(updateStartValues);
+        }
+        finally
+        {
+            elimination?.Undo();
+        }
+    }
+
+    private ModelResult SolveCore(bool updateStartValues)
+    {
         int totalVars = _variables.Count;
         var buffers = new SolveBuffers
         {
             // Per-evaluation scratch buffer (size = total vars, indexed by Variable.Index).
             // VariableNode.Evaluate reads from this; the model populates it from the IPOPT compact
             // vector before each evaluation pass and then runs every implicit block's Solve in order.
-            // For non-eliminated vars, scratch[Index] holds the IPOPT-internal (Scale-divided) value.
-            // For eliminated vars (Scale==1 mandated), scratch[Index] holds physical-unit v*.
+            // Every variable, eliminated or not, is held here in Scale-divided units.
             Scratch = new double[totalVars],
             BlockGradBuffer = new double[totalVars],
             FullGrad = new double[totalVars],
@@ -438,7 +453,7 @@ public sealed partial class Model : IDisposable
                 foreach (var v in plan.ActiveVariables)
                     fixedSolution[v] = buffers.Scratch[v.Index] * v.Scale;
                 foreach (var v in plan.EliminatedVariables)
-                    fixedSolution[v] = buffers.Scratch[v.Index];
+                    fixedSolution[v] = buffers.Scratch[v.Index] * v.Scale;
                 objectiveConstant += plan.Objective.Evaluate(buffers.Scratch);
             }
 
@@ -497,7 +512,7 @@ public sealed partial class Model : IDisposable
                 foreach (var constraint in plan.Constraints)
                     constraint.Expression.Clear();
             }
-            _objective.Clear();
+            _objective!.Clear();   // Solve() guaranteed non-null before delegating here
             foreach (var block in _implicitBlocks)
                 block.ClearResiduals();
         }
@@ -965,7 +980,7 @@ public sealed partial class Model : IDisposable
                 for (int i = 0; i < n; i++)
                     bestSolution[activeVars[i]] = Math.Clamp(bestX[i], xL[i], xU[i]) * activeVars[i].Scale;
                 foreach (var v in plan.EliminatedVariables)
-                    bestSolution[v] = scratch[v.Index];
+                    bestSolution[v] = scratch[v.Index] * v.Scale;
                 bestIterate = new IterateSnapshot(bestSolution, bestObjective, bestViolation, bestIsFeasible, bestIteration);
             }
             catch (InvalidOperationException)
@@ -988,7 +1003,7 @@ public sealed partial class Model : IDisposable
             for (int i = 0; i < n; i++)
                 solution[activeVars[i]] = Math.Clamp(x[i], xL[i], xU[i]) * activeVars[i].Scale;
             foreach (var v in plan.EliminatedVariables)
-                solution[v] = scratch[v.Index];
+                solution[v] = scratch[v.Index] * v.Scale;
         }
         catch (InvalidOperationException)
         {
@@ -1272,7 +1287,7 @@ public sealed partial class Model : IDisposable
                 foreach (var v in plans[p].ActiveVariables)
                     solution[v] = buffers.Scratch[v.Index] * v.Scale;
                 foreach (var v in plans[p].EliminatedVariables)
-                    solution[v] = buffers.Scratch[v.Index];
+                    solution[v] = buffers.Scratch[v.Index] * v.Scale;
             }
         }
 

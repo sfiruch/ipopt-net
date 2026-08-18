@@ -225,6 +225,37 @@ is a hair under the true optimum.
 If you want the raw iterate yourself, `IpoptSolver.TryGetCurrentIterate` exposes it, callable only
 from inside an intermediate callback.
 
+## Automatic Elimination
+
+A variable defined by an equality it appears in linearly can be moved out of IPOPT's decision vector
+and computed from that equality instead — the `AddImplicitBlock` mechanism, found rather than
+declared. `Model.FindEliminableVariables()` reports what qualifies without changing anything:
+
+```csharp
+foreach (var c in model.FindEliminableVariables())
+    Console.WriteLine($"x[{c.Variable.Index}] could be defined by its constraint (coefficient {c.Coefficient})");
+
+model.EnableAutomaticElimination = true;   // off by default
+```
+
+A pair qualifies when the constraint is an equality of the form `expression == 0`, the variable's
+partial derivative of it is a non-zero constant, and the variable is **unbounded** — a block writes
+its value straight into the evaluation buffer, so a bound could only be violated silently. A
+non-unit `Scale` is fine. Each constraint defines at most one variable and vice versa; where a
+constraint could define several, the largest coefficient wins, that being the pivot the block
+inverts. Definitions that would form a cycle are dropped, since blocks must be registered in
+dependency order.
+
+**This is off by default and should stay a deliberate choice.** Unlike partitioning it is not a free
+win: the reduced problem has the same optimum in exact arithmetic but is a different problem for
+IPOPT to walk, with different conditioning, and each eliminated variable enters it nonlinearly
+through its block. Measure before adopting it.
+
+The flag is an option for the solve, not an edit to your model: the restructuring exists only for the
+duration of the `Solve()` call and is undone before it returns. Turn the flag off and the next solve
+sees exactly what you built; inspect the model afterwards and you find your own constraints, not
+blocks. Blocks you added by hand are left alone throughout.
+
 ## Performance Optimization
 
 The solver automatically detects problem structure and optimizes matrix computations:
