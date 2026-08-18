@@ -95,7 +95,7 @@ Many models decompose into independent sub-problems that share no variable throu
 implicit block, or objective term. Because IPOPT's linear-algebra cost grows superlinearly with
 problem size, solving each sub-problem separately is both exact and considerably cheaper.
 
-This is **on by default** — no configuration needed. `result.Partitions` exposes the individual
+This feature is **enabled by default**. `result.Partitions` exposes the individual
 sub-problems when a model does decompose:
 
 ```csharp
@@ -107,51 +107,14 @@ foreach (var partition in result.Partitions)
     Console.WriteLine($"{partition.Status}: {partition.ObjectiveValue}");
 ```
 
-Set `Model.EnablePartitioning = false` to force a single whole-model solve — the pre-partitioning
-behaviour, byte-identical, skipping the decomposition analysis entirely.
+Set `Model.EnablePartitioning = false` to force a single whole-model solve, skipping the decomposition analysis entirely.
 
 `Status`, `Solution`, `ObjectiveValue` and `Statistics` on the returned `ModelResult` are
 model-level aggregates, so a partitioned solve reads the same as an unpartitioned one; the
 individual sub-problem results are on `Partitions`. Every partition is always attempted, so one
 failing sub-problem never suppresses the others.
 
-Sub-problems are solved **smallest first** — by variables + constraints, the dimension of the KKT
-system IPOPT factorises. Under a model-wide time budget that maximises how many finish before the
-deadline, and it fills `BestIterate` with the cheap wins instead of leaving it empty behind one
-slow partition. Ties break on the smallest `Variable.Index`, so the order is deterministic. Eliminated variables are not
-counted — the solver does not decide them.
-
-A partition whose variables are *all* eliminated by implicit blocks is reported by
-`AnalyzePartitions` but never handed to IPOPT: there is nothing left to decide, and a
-zero-variable NLP cannot be created. Its variables come from its blocks, and its objective
-slice — constant by construction — joins the model total.
-
-### Constant constraints
-
-A constraint that references no decision variable — most often a bound on a variable an implicit
-block pins to a constant — cannot be given to IPOPT at all: its Jacobian row is empty, which the C
-API rejects. Such constraints are evaluated once before the solve and then left out of the problem.
-If one cannot hold, `Solve()` throws naming the fixed value and the bound it misses, rather than
-leaving you to diagnose a bare infeasible status. Note this applies only when the block has *no*
-decision inputs; if it has any, the constraint resolves to them, gets a real Jacobian row, and IPOPT
-judges its feasibility as usual.
-
-Inspect the decomposition without solving — this works regardless of the flag and needs no solve
-state:
-
-```csharp
-var partitioning = model.AnalyzePartitions();
-Console.WriteLine(partitioning);            // one line per partition
-if (partitioning.IsTrivial) { /* the model does not decompose */ }
-```
-
-When the model does not decompose, `Solve()` takes the ordinary single-solve path, so results are
-bit-identical to disabling partitioning.
-
-### Iteration callback (breaking change)
-
-`Model.IntermediateCallback` gained a second parameter so an iteration can be attributed to a
-sub-problem:
+### Iteration callback
 
 ```csharp
 // before: Func<SolveStatistics, bool>
@@ -172,24 +135,12 @@ Iteration and time limits are treated differently, on purpose:
 
 | Option | Scope | Why |
 |---|---|---|
-| `MaxIterations` | **per partition** | It guards against one sub-problem spinning forever. Dividing it would make a later partition fail merely for having followed a hard one. So total iterations can exceed the limit. |
+| `MaxIterations` | **per partition** | It guards against one sub-problem spinning forever. |
 | `MaxWallTime`, `MaxCpuTime` | **model-wide** | These are deadlines. Each partition is handed what remains of the budget, so N partitions cannot take N times as long as you allowed. |
 
 Elapsed wall time is measured exactly. Elapsed CPU time is taken from the process total, which
 over-counts when other threads in your application are busy — it therefore errs toward stopping
 sooner, never toward overrunning the budget.
-
-Two other things change when the model actually decomposes:
-
-- `OutputFile` receives the concatenation of N IPOPT runs (`file_append` is set automatically for
-  the second and later partitions unless you set it yourself).
-- *Inert* variables — those appearing in no constraint, no implicit block and no objective term —
-  never reach IPOPT. Nothing optimises or constrains such a variable, so a solve would only hand back
-  wherever the barrier drifted it; that value depends on the surrounding problem's iteration count
-  and so cannot match an unpartitioned solve either way. They are resolved directly from their start
-  point instead — an explicit `Start` clamped to bounds, otherwise the same bound-derived default
-  IPOPT would have used — which at least makes it deterministic. They contribute no entry to
-  `result.Partitions`, and variables the model actually references are unaffected.
 
 ## Best Iterate
 
@@ -210,26 +161,12 @@ partitioning it is the whole model's — no partition bookkeeping required.
 
 **"Best" is feasibility-first**, not lowest-objective: the lowest-objective iterate whose constraint
 violation is within `ConstraintViolationTolerance`, falling back to the least-infeasible point (with
-`IsFeasible` false) when nothing feasible was ever seen. That distinction is not academic. Minimising
-`x` on the unit circle, stopped after 7 iterations, IPOPT's final iterate reports an objective of
-**-1.977** — below the true optimum of -1, because it sits well outside the circle with a violation
-of 5.8. The snapshot instead holds a point at objective 0.900 with a violation of 0.004. A tracker
-that merely minimised the objective would have handed back the nonsense point.
-
-Two caveats. Restoration-phase iterates are skipped, their objective belonging to IPOPT's internal
-restoration problem rather than yours. And the snapshot can be *marginally less* feasible than
-`Solution`: once two points are both inside the tolerance they count as equally feasible and the
-lower objective wins, so a converged run may report a snapshot at the tolerance edge whose objective
-is a hair under the true optimum.
-
-If you want the raw iterate yourself, `IpoptSolver.TryGetCurrentIterate` exposes it, callable only
-from inside an intermediate callback.
+`IsFeasible` false) when nothing feasible was ever seen.
 
 ## Automatic Elimination
 
 A variable defined by an equality it appears in linearly can be moved out of IPOPT's decision vector
-and computed from that equality instead — the `AddImplicitBlock` mechanism, found rather than
-declared. `Model.FindEliminableVariables()` reports what qualifies without changing anything:
+and computed from that equality instead. `Model.FindEliminableVariables()` reports what qualifies without changing anything:
 
 ```csharp
 foreach (var c in model.FindEliminableVariables())
@@ -239,22 +176,9 @@ model.EnableAutomaticElimination = true;   // off by default
 ```
 
 A pair qualifies when the constraint is an equality of the form `expression == 0`, the variable's
-partial derivative of it is a non-zero constant, and the variable is **unbounded** — a block writes
-its value straight into the evaluation buffer, so a bound could only be violated silently. A
-non-unit `Scale` is fine. Each constraint defines at most one variable and vice versa; where a
-constraint could define several, the largest coefficient wins, that being the pivot the block
-inverts. Definitions that would form a cycle are dropped, since blocks must be registered in
-dependency order.
+partial derivative of it is a non-zero constant, and the variable is **unbounded**.
 
-**This is off by default and should stay a deliberate choice.** Unlike partitioning it is not a free
-win: the reduced problem has the same optimum in exact arithmetic but is a different problem for
-IPOPT to walk, with different conditioning, and each eliminated variable enters it nonlinearly
-through its block. Measure before adopting it.
-
-The flag is an option for the solve, not an edit to your model: the restructuring exists only for the
-duration of the `Solve()` call and is undone before it returns. Turn the flag off and the next solve
-sees exactly what you built; inspect the model afterwards and you find your own constraints, not
-blocks. Blocks you added by hand are left alone throughout.
+**This is off by default.** Unlike partitioning it is not a free win: the reduced problem has the same optimum in exact arithmetic but is a different problem for IPOPT to walk, with different conditioning, and each eliminated variable enters it nonlinearly through its block. Measure before adopting it.
 
 ## Performance Optimization
 
