@@ -115,6 +115,11 @@ model-level aggregates, so a partitioned solve reads the same as an unpartitione
 individual sub-problem results are on `Partitions`. Every partition is always attempted, so one
 failing sub-problem never suppresses the others.
 
+Sub-problems are solved **smallest first** — by variables + constraints, the dimension of the KKT
+system IPOPT factorises. Under a model-wide time budget that maximises how many finish before the
+deadline, and it fills `BestIterate` with the cheap wins instead of leaving it empty behind one
+slow partition. Ties break on the smallest `Variable.Index`, so the order is deterministic.
+
 Inspect the decomposition without solving — this works regardless of the flag and needs no solve
 state:
 
@@ -169,6 +174,40 @@ Two other things change when the model actually decomposes:
   point instead — an explicit `Start` clamped to bounds, otherwise the same bound-derived default
   IPOPT would have used — which at least makes it deterministic. They contribute no entry to
   `result.Partitions`, and variables the model actually references are unaffected.
+
+## Best Iterate
+
+IPOPT returns its **final** iterate, which is not always its best one. A run that ends on
+`MaximumIterationsExceeded`, `RestorationFailed`, or a caller-requested stop can finish somewhere
+worse than it passed through earlier. Every solve therefore records the best point it saw:
+
+```csharp
+var result = model.Solve();
+
+var best = result.BestIterate;
+if (best is not null && best.IsFeasible)
+    Console.WriteLine($"best objective {best.ObjectiveValue} at iteration {best.IterationCount}");
+```
+
+`BestIterate.Solution` covers every variable, implicit-block-eliminated ones included, and under
+partitioning it is the whole model's — no partition bookkeeping required.
+
+**"Best" is feasibility-first**, not lowest-objective: the lowest-objective iterate whose constraint
+violation is within `ConstraintViolationTolerance`, falling back to the least-infeasible point (with
+`IsFeasible` false) when nothing feasible was ever seen. That distinction is not academic. Minimising
+`x` on the unit circle, stopped after 7 iterations, IPOPT's final iterate reports an objective of
+**-1.977** — below the true optimum of -1, because it sits well outside the circle with a violation
+of 5.8. The snapshot instead holds a point at objective 0.900 with a violation of 0.004. A tracker
+that merely minimised the objective would have handed back the nonsense point.
+
+Two caveats. Restoration-phase iterates are skipped, their objective belonging to IPOPT's internal
+restoration problem rather than yours. And the snapshot can be *marginally less* feasible than
+`Solution`: once two points are both inside the tolerance they count as equally feasible and the
+lower objective wins, so a converged run may report a snapshot at the tolerance edge whose objective
+is a hair under the true optimum.
+
+If you want the raw iterate yourself, `IpoptSolver.TryGetCurrentIterate` exposes it, callable only
+from inside an intermediate callback.
 
 ## Performance Optimization
 

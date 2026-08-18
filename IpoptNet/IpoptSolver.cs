@@ -21,6 +21,12 @@ public sealed class IpoptSolver : IDisposable
     private nint _problem;
     private GCHandle _selfHandle;
     private bool _disposed;
+    private readonly int _n;
+    private readonly int _m;
+
+    /// <summary>True only while IPOPT is inside an intermediate callback, which is the one window
+    /// in which <see cref="TryGetCurrentIterate"/> may be called.</summary>
+    private bool _inIntermediateCallback;
 
     // Store callback delegates as fields to keep them alive
     private readonly EvalFCallback _evalF;
@@ -57,6 +63,9 @@ public sealed class IpoptSolver : IDisposable
             throw new ArgumentException($"Variable bounds must have length {n}");
         if (m > 0 && (gL.Length != m || gU.Length != m))
             throw new ArgumentException($"Constraint bounds must have length {m}");
+
+        _n = n;
+        _m = m;
 
         // For pure feasibility problems (no objective), provide dummy callbacks
         if (evalF == null && evalGradF == null)
@@ -168,7 +177,35 @@ public sealed class IpoptSolver : IDisposable
         var instance = (IpoptSolver)GCHandle.FromIntPtr(userData).Target!;
         var stats = new SolveStatistics(algMode, iterCount, objValue, infPr, infDu, mu, dNorm, regularizationSize, alphaDu, alphaPr, lsTrials);
         instance._lastStatistics = stats;
-        return instance.IntermediateCallback?.Invoke(stats) != false ? 1 : 0;
+        instance._inIntermediateCallback = true;
+        try
+        {
+            return instance.IntermediateCallback?.Invoke(stats) != false ? 1 : 0;
+        }
+        finally
+        {
+            instance._inIntermediateCallback = false;
+        }
+    }
+
+    /// <summary>Copies IPOPT's current primal iterate, in the problem's own (unscaled) units, into
+    /// <paramref name="x"/>. Returns false if IPOPT declines to supply it.
+    ///
+    /// Only callable from inside <see cref="IntermediateCallback"/>: IPOPT exposes the iterate for
+    /// the duration of that call and rejects the request at any other time.</summary>
+    /// <exception cref="InvalidOperationException">Called outside the intermediate callback.</exception>
+    /// <exception cref="ArgumentException">The span's length is not the problem's variable count.</exception>
+    public unsafe bool TryGetCurrentIterate(Span<double> x)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_inIntermediateCallback)
+            throw new InvalidOperationException(
+                "TryGetCurrentIterate is only valid inside IntermediateCallback; IPOPT does not expose the iterate outside it.");
+        if (x.Length != _n)
+            throw new ArgumentException($"Iterate buffer must have length {_n}.", nameof(x));
+
+        fixed (double* pX = x)
+            return Native.GetIpoptCurrentIterate(_problem, scaled: false, _n, pX, null, null, _m, null, null);
     }
 
     public bool SetOption(string name, string value)

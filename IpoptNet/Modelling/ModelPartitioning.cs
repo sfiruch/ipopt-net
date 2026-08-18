@@ -54,7 +54,8 @@ public sealed record ModelPartitioning(IReadOnlyList<ModelPartition> Partitions)
 /// alongside it.</summary>
 /// <param name="Index">0-based index of the partition currently iterating.</param>
 /// <param name="Count">Total number of partitions this solve was split into.</param>
-/// <param name="VariableCount">Size of this partition's IPOPT decision vector.</param>
+/// <param name="Variables">This partition's non-eliminated variables — the ones the current
+/// sub-problem is actually optimising, in ascending <see cref="Variable.Index"/>.</param>
 /// <param name="ConstraintCount">Number of constraints in this partition.</param>
 /// <param name="LocalStatistics">The raw, partition-local statistics as IPOPT reported them.
 /// The <see cref="SolveStatistics"/> passed as the callback's first argument is instead
@@ -62,7 +63,7 @@ public sealed record ModelPartitioning(IReadOnlyList<ModelPartition> Partitions)
 public sealed record PartitionInfo(
     int Index,
     int Count,
-    int VariableCount,
+    IReadOnlyList<Variable> Variables,
     int ConstraintCount,
     SolveStatistics LocalStatistics);
 
@@ -71,7 +72,7 @@ public sealed partial class Model
     /// <summary>
     /// On by default. <see cref="Solve"/> first decomposes the model into disconnected sub-problems
     /// (see <see cref="AnalyzePartitions"/>) and solves each one with its own IPOPT instance,
-    /// sequentially, in ascending partition order. This is mathematically exact — the sub-problems
+    /// sequentially, smallest sub-problem first. This is mathematically exact — the sub-problems
     /// share no variable through any constraint, implicit block, or objective term, so their optima
     /// are independent — and typically much cheaper, because IPOPT's linear-algebra cost grows
     /// superlinearly with problem size.
@@ -119,8 +120,12 @@ public sealed partial class Model
     /// appearing in the same flattened objective term.
     ///
     /// Pure: does not mutate model state, does not require the expression graph to be prepared, and
-    /// is unaffected by <see cref="EnablePartitioning"/> (it reports the decomposition either way). Partitions are ordered by their smallest
-    /// <see cref="Variable.Index"/>, so the result is deterministic and reproducible.
+    /// is unaffected by <see cref="EnablePartitioning"/> (it reports the decomposition either way).
+    ///
+    /// Partitions are ordered smallest sub-problem first — by variables + constraints, the dimension
+    /// of the KKT system IPOPT factorises — with the inert group last and ties broken on the
+    /// smallest <see cref="Variable.Index"/>, so the result is deterministic and reproducible.
+    /// <see cref="Solve"/> works through them in exactly this order.
     ///
     /// Note that variables the model never references ("inert" — in no constraint, no block and no
     /// objective term) are reported coalesced into a single <see cref="ModelPartition.IsInert"/>
@@ -340,8 +345,8 @@ public sealed partial class Model
             for (int i = 1; i < totalVars; i++)
                 Union(parent, size, 0, i);
 
-        // Group by root, ordered by ascending minimum Variable.Index — deterministic, and never
-        // dependent on hash-set iteration order.
+        // Group by root. This is a provisional numbering in first-seen-variable order; the final
+        // ordering is decided below, once each group's size is known.
         var partitionOfRoot = new Dictionary<int, int>();
         var partitionOfVariable = new int[totalVars];
         for (int i = 0; i < totalVars; i++)
@@ -369,8 +374,16 @@ public sealed partial class Model
             inert[p] = true;
         }
 
+        // _variables is walked in ascending Index, so each group's lists come out sorted and the
+        // smallest index in a group is simply the first one appended to it.
+        var minVariableIndex = new int[count];
+        Array.Fill(minVariableIndex, int.MaxValue);
         foreach (var v in _variables)
-            (v.IsEliminated ? eliminated : active)[partitionOfVariable[v.Index]].Add(v);
+        {
+            int p = partitionOfVariable[v.Index];
+            (v.IsEliminated ? eliminated : active)[p].Add(v);
+            minVariableIndex[p] = Math.Min(minVariableIndex[p], v.Index);
+        }
 
         // Constraints, blocks and objective terms keep their original relative order within a
         // partition. For blocks that is load-bearing: AddImplicitBlock enforces topological order
@@ -399,16 +412,38 @@ public sealed partial class Model
         Debug.Assert(terms.Sum(t => t.Count) == objectiveTerms.Count,
             "Every objective term must be assigned to exactly one partition.");
 
+        // Order: smallest sub-problem first. Under a model-wide time budget that maximises how many
+        // partitions finish before the deadline bites, and it fills ModelResult.BestIterate with the
+        // cheap wins early rather than leaving it empty behind one slow partition. Size is measured
+        // as variables + constraints, the dimension of the KKT system IPOPT factorises each
+        // iteration; eliminated variables are excluded since they never enter that system.
+        //
+        // The inert group sorts last and is never solved at all, which keeps a solved partition's
+        // index the same in AnalyzePartitions, PartitionInfo.Index and ModelResult.Partitions.
+        // Ties break on the smallest Variable.Index, so the result stays deterministic and is never
+        // exposed to hash-set iteration order.
+        var order = Enumerable.Range(0, count)
+            .OrderBy(p => inert[p] ? 1 : 0)
+            .ThenBy(p => active[p].Count + constraints[p].Count)
+            .ThenBy(p => minVariableIndex[p])
+            .ToArray();
+
+        var rank = new int[count];
+        for (int newIndex = 0; newIndex < count; newIndex++)
+            rank[order[newIndex]] = newIndex;
+        for (int i = 0; i < totalVars; i++)
+            partitionOfVariable[i] = rank[partitionOfVariable[i]];
+
         return new PartitionLayout
         {
             Count = count,
             PartitionOfVariable = partitionOfVariable,
-            ActiveVariables = [.. active.Select(l => l.ToArray())],
-            EliminatedVariables = [.. eliminated.Select(l => l.ToArray())],
-            Constraints = [.. constraints.Select(l => l.ToArray())],
-            Blocks = [.. blocks.Select(l => l.ToArray())],
-            ObjectiveTerms = terms,
-            IsInert = inert,
+            ActiveVariables = [.. order.Select(p => active[p].ToArray())],
+            EliminatedVariables = [.. order.Select(p => eliminated[p].ToArray())],
+            Constraints = [.. order.Select(p => constraints[p].ToArray())],
+            Blocks = [.. order.Select(p => blocks[p].ToArray())],
+            ObjectiveTerms = [.. order.Select(p => terms[p])],
+            IsInert = [.. order.Select(p => inert[p])],
         };
     }
 

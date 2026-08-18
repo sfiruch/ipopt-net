@@ -266,9 +266,10 @@ public class PartitioningTests
         Assert.AreEqual(4.0, result.Solution[z], 1e-6);
     }
 
-    /// <summary>Partition order is by ascending minimum Variable.Index and never depends on
-    /// hash-set iteration order, so repeated analysis is reproducible. Analysis is also pure —
-    /// it must not disturb a subsequent Solve.</summary>
+    /// <summary>Repeated analysis is reproducible: order never depends on hash-set iteration order.
+    /// Both components here are the same size, so the tie-break on smallest Variable.Index decides,
+    /// which is what the index assertion below pins. Analysis is also pure — it must not disturb a
+    /// subsequent Solve.</summary>
     [TestMethod]
     public void AnalyzePartitions_IsDeterministicAndOrdered()
     {
@@ -292,9 +293,16 @@ public class PartitioningTests
             CollectionAssert.AreEqual(first.Partitions[p].Variables.ToArray(),
                                       second.Partitions[p].Variables.ToArray());
 
+        // Equal size (2 variables + 1 constraint each), so the Variable.Index tie-break orders them.
         for (int p = 1; p < first.Partitions.Count; p++)
+        {
+            Assert.AreEqual(
+                first.Partitions[p - 1].Variables.Count + first.Partitions[p - 1].Constraints.Count,
+                first.Partitions[p].Variables.Count + first.Partitions[p].Constraints.Count,
+                "fixture assumption: the components are the same size");
             Assert.IsTrue(first.Partitions[p - 1].Variables[0].Index < first.Partitions[p].Variables[0].Index,
-                "Partitions must be ordered by ascending minimum Variable.Index.");
+                "Equal-sized partitions must be ordered by ascending minimum Variable.Index.");
+        }
 
         // a1 = a2 = 1, b1 = b2 = 3  =>  objective 2·1 + 2·9 = 20
         var result = model.Solve();
@@ -472,5 +480,112 @@ public class PartitioningTests
         Assert.IsTrue(effective.All(t => t <= budget), $"No partition may exceed the deadline: [{string.Join(", ", effective)}]");
         Assert.IsTrue(effective[1] < effective[0],
             $"The second partition must get the remainder, not the full budget: [{string.Join(", ", effective)}]");
+    }
+
+    /// <summary>Partitions are solved smallest first, so that under a model-wide time budget as many
+    /// sub-problems as possible finish before the deadline, and BestIterate fills with the cheap wins
+    /// rather than waiting behind a slow partition. The big component is declared FIRST here, so
+    /// ordering by declaration (or by Variable.Index) would put it first — it must come second.</summary>
+    [TestMethod]
+    public void Partitions_AreOrderedSmallestFirst()
+    {
+        var model = new Model();
+        model.Options.PrintLevel = 0;
+
+        // Big component, declared first: 4 variables + 3 constraints. The third constraint is what
+        // makes it ONE component -- without it b1/b2 and b3/b4 would decompose further.
+        var b1 = model.AddVariable(-10, 10); b1.Start = 0;
+        var b2 = model.AddVariable(-10, 10); b2.Start = 0;
+        var b3 = model.AddVariable(-10, 10); b3.Start = 0;
+        var b4 = model.AddVariable(-10, 10); b4.Start = 0;
+        model.AddConstraint(b1 + b2 == 2);
+        model.AddConstraint(b3 + b4 == 6);
+        model.AddConstraint(b1 + b3 == 1);
+        // Medium component: 2 variables + 1 constraint.
+        var m1 = model.AddVariable(-10, 10); m1.Start = 0;
+        var m2 = model.AddVariable(-10, 10); m2.Start = 0;
+        model.AddConstraint(m1 + m2 == 4);
+        // Small component: 1 variable, no constraints.
+        var s1 = model.AddVariable(-10, 10); s1.Start = 0;
+        // Inert: referenced by nothing at all.
+        var inert = model.AddVariable(0, 10); inert.Start = 5;
+
+        model.SetObjective(
+            Expr.Pow(b1, 2) + Expr.Pow(b2, 2) + Expr.Pow(b3, 2) + Expr.Pow(b4, 2)
+            + Expr.Pow(m1, 2) + Expr.Pow(m2, 2)
+            + Expr.Pow(s1 - 3, 2));
+
+        var partitions = model.AnalyzePartitions().Partitions;
+
+        Assert.AreEqual(4, partitions.Count);
+        CollectionAssert.AreEqual(new[] { s1 }, partitions[0].Variables.ToArray(), "smallest first");
+        CollectionAssert.AreEqual(new[] { m1, m2 }, partitions[1].Variables.ToArray());
+        CollectionAssert.AreEqual(new[] { b1, b2, b3, b4 }, partitions[2].Variables.ToArray());
+        Assert.IsTrue(partitions[3].IsInert, "the inert group sorts last");
+
+        // Size is variables + constraints, and it must be non-decreasing across the solved ones.
+        for (int i = 1; i < 3; i++)
+            Assert.IsTrue(
+                partitions[i - 1].Variables.Count + partitions[i - 1].Constraints.Count
+                <= partitions[i].Variables.Count + partitions[i].Constraints.Count,
+                $"partition {i} is smaller than partition {i - 1}");
+
+        // Solved-partition indices agree across all three views, because the unsolved inert group
+        // is last rather than somewhere in the middle.
+        var seen = new Dictionary<int, IReadOnlyList<Variable>>();
+        model.IntermediateCallback = (_, info) => { seen[info.Index] = info.Variables; return true; };
+        var result = model.Solve();
+
+        Assert.AreEqual(3, result.Partitions.Count, "the inert group is not solved");
+        for (int i = 0; i < 3; i++)
+            CollectionAssert.AreEqual(partitions[i].Variables.ToArray(), seen[i].ToArray(),
+                $"PartitionInfo.Index {i} must mean the same partition AnalyzePartitions calls {i}");
+
+        Assert.AreEqual(3.0, result.Solution![s1], 1e-6);
+        Assert.AreEqual(5.0, result.Solution[inert], 0.0);
+    }
+
+    /// <summary>The core correctness property of the decomposition: what happens in one partition
+    /// cannot reach another. A partition's expressions reference only its own variables — that is
+    /// what the union-find guarantees — so the values other partitions left in the shared scratch
+    /// buffer are never read, whether those are good values, degraded ones, or start values not yet
+    /// touched. Partition A is solved first (it is smaller); its outcome is varied from clean
+    /// convergence to a truncated, degraded stop, and B must be bit-identical every time.</summary>
+    [TestMethod]
+    public void OnePartitionsOutcomeCannotAffectAnother()
+    {
+        static (Model model, Variable a, Variable b1, Variable b2) Build(double aStart, int? cap)
+        {
+            var model = new Model();
+            model.Options.PrintLevel = 0;
+            if (cap is { } c) model.Options.MaxIterations = c;
+            var a = model.AddVariable(-50, 50); a.Start = aStart;      // partition {a}, size 1
+            var b1 = model.AddVariable(-10, 10); b1.Start = 0;         // partition {b1,b2}, size 3
+            var b2 = model.AddVariable(-10, 10); b2.Start = 0;
+            model.AddConstraint(b1 + b2 == 4);
+            model.SetObjective(Expr.Pow(a - 7, 2) + Expr.Pow(b1, 2) + Expr.Pow(b2, 2));
+            return (model, a, b1, b2);
+        }
+
+        var (clean, ca, cb1, cb2) = Build(aStart: 6.9, cap: null);
+        var cleanResult = clean.Solve();
+
+        var (far, _, fb1, fb2) = Build(aStart: -49, cap: null);
+        var farResult = far.Solve();
+
+        var (stopped, sa, sb1, sb2) = Build(aStart: -49, cap: 2);
+        var stoppedResult = stopped.Solve();
+
+        // Partition A really did end up somewhere different in the truncated run.
+        Assert.AreEqual(ApplicationReturnStatus.MaximumIterationsExceeded, stoppedResult.Status);
+        Assert.AreEqual(7.0, cleanResult.Solution![ca], 1e-6);
+        Assert.IsTrue(Math.Abs(stoppedResult.Solution![sa] - 7.0) > 1e-3,
+            "fixture assumption: the truncated run must leave A short of its optimum");
+
+        // Partition B is unmoved by any of it — bit-identical, no tolerance.
+        Assert.AreEqual(cleanResult.Solution[cb1], farResult.Solution![fb1]);
+        Assert.AreEqual(cleanResult.Solution[cb2], farResult.Solution[fb2]);
+        Assert.AreEqual(cleanResult.Solution[cb1], stoppedResult.Solution[sb1]);
+        Assert.AreEqual(cleanResult.Solution[cb2], stoppedResult.Solution[sb2]);
     }
 }

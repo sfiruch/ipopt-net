@@ -63,6 +63,10 @@ public sealed partial class Model : IDisposable
     /// <summary>IPOPT's convention for "no bound". Bounds are clamped to this magnitude.</summary>
     private const double Infinity = 1e19;
 
+    /// <summary>IPOPT's own default for constr_viol_tol, used to decide whether an iterate counts as
+    /// feasible when <see cref="IpoptOptions.ConstraintViolationTolerance"/> is left unset.</summary>
+    private const double DefaultConstraintViolationTolerance = 1e-4;
+
     internal readonly struct RawModeScope : IDisposable
     {
         private readonly Model _model;
@@ -695,18 +699,57 @@ public sealed partial class Model : IDisposable
             jacRows.Length, hessRows.Length,
             evalF, evalGradF, evalG, evalJacG, evalH);
 
-        // The statistics the caller sees always describe the whole model, so best-so-far tracking
-        // keeps working under partitioning; PartitionInfo carries the raw per-partition values.
-        if (IntermediateCallback is { } userCallback)
-            solver.IntermediateCallback = local =>
+        // Best-so-far tracking. IPOPT returns its FINAL iterate, which is not always its best one: a
+        // run ending on MaximumIterationsExceeded, RestorationFailed or a caller stop can leave a
+        // worse point than it passed through earlier. Feasibility comes first — a low objective at a
+        // point that violates the constraints is not a better answer.
+        var bestX = new double[n];
+        var candidateX = new double[n];
+        double bestObjective = 0, bestViolation = 0;
+        bool bestIsFeasible = false, haveBest = false;
+        int bestIteration = -1;
+        double violationTolerance = Options.ConstraintViolationTolerance ?? DefaultConstraintViolationTolerance;
+
+        // The statistics the caller sees always describe the whole model, so best-so-far tracking in
+        // caller code keeps working under partitioning; PartitionInfo carries the raw per-partition
+        // values. Installed unconditionally — the iterate tracking above needs it even when the
+        // caller has no callback of their own.
+        solver.IntermediateCallback = local =>
+        {
+            // Restoration-phase iterates describe IPOPT's internal feasibility-restoration NLP, not
+            // ours: its objective is a different quantity on a different scale, so comparing it to
+            // our incumbent would be meaningless. Skip them; the regular-mode iterates either side
+            // of a restoration episode are still considered.
+            if (local.AlgorithmMode == AlgorithmMode.RegularMode && solver.TryGetCurrentIterate(candidateX))
             {
-                var reported = !ctx.Normalize ? local : local with
+                bool feasible = local.PrimalInfeasibility <= violationTolerance;
+                bool better =
+                    !haveBest ? true :
+                    feasible && !bestIsFeasible ? true :                                  // any feasible beats any infeasible
+                    feasible && bestIsFeasible ? local.ObjectiveValue < bestObjective :    // both feasible: lower objective
+                    !bestIsFeasible ? local.PrimalInfeasibility < bestViolation :          // neither: closer to feasible
+                    false;                                                                 // infeasible cannot beat feasible
+                if (better)
                 {
-                    ObjectiveValue = ctx.CompletedObjective + local.ObjectiveValue + ctx.PendingObjective + ctx.ObjectiveConstant,
-                    IterationCount = ctx.CompletedIterations + local.IterationCount,
-                };
-                return userCallback(reported, new PartitionInfo(plan.Index, ctx.Count, n, m, local));
+                    candidateX.CopyTo(bestX, 0);
+                    bestObjective = local.ObjectiveValue;
+                    bestViolation = local.PrimalInfeasibility;
+                    bestIsFeasible = feasible;
+                    bestIteration = local.IterationCount;
+                    haveBest = true;
+                }
+            }
+
+            if (IntermediateCallback is not { } userCallback)
+                return true;
+
+            var reported = !ctx.Normalize ? local : local with
+            {
+                ObjectiveValue = ctx.CompletedObjective + local.ObjectiveValue + ctx.PendingObjective + ctx.ObjectiveConstant,
+                IterationCount = ctx.CompletedIterations + local.IterationCount,
             };
+            return userCallback(reported, new PartitionInfo(plan.Index, ctx.Count, plan.ActiveVariables, m, local));
+        };
 
         // Apply user-specified options
         foreach (var (name, value) in Options.Options)
@@ -817,6 +860,28 @@ public sealed partial class Model : IDisposable
             ValueCachingActive = false;
         }
 
+        // Reconstruct the best iterate's full variable values. Done before the final readback so
+        // that readback's own SyncScratch leaves scratch describing the returned solution, which is
+        // what CombineResults expects. Eliminated variables are recomputed by running this
+        // partition's blocks at the best x — the same path the final readback uses, and guarded the
+        // same way, since a pathological iterate can make a block's LU singular.
+        IterateSnapshot? bestIterate = null;
+        if (haveBest)
+            try
+            {
+                SyncScratch(bestX.AsSpan());
+                var bestSolution = new Dictionary<Variable, double>();
+                for (int i = 0; i < n; i++)
+                    bestSolution[activeVars[i]] = Math.Clamp(bestX[i], xL[i], xU[i]) * activeVars[i].Scale;
+                foreach (var v in plan.EliminatedVariables)
+                    bestSolution[v] = scratch[v.Index];
+                bestIterate = new IterateSnapshot(bestSolution, bestObjective, bestViolation, bestIsFeasible, bestIteration);
+            }
+            catch (InvalidOperationException)
+            {
+                bestIterate = null;
+            }
+
         // Build solution. We expose all variables (including eliminated ones) in the dictionary
         // so callers see consistent values; eliminated vars are read from scratch after a final
         // sync at the returned x. Wrapped in try/catch: on pathological exit statuses (e.g.
@@ -866,7 +931,7 @@ public sealed partial class Model : IDisposable
                 plan.Constraints[i].DualStart = constraintMultipliers[i];
         }
 
-        return new ModelResult(status, solution, objValue, statistics);
+        return new ModelResult(status, solution, objValue, statistics) { BestIterate = bestIterate };
     }
 
     private static (int[] rows, int[] cols) AnalyzeJacobianSparsity(Constraint[] constraints, int[] compactIndex)
@@ -1135,13 +1200,32 @@ public sealed partial class Model : IDisposable
             PrimalStepSize: results.Min(r => r.Statistics.PrimalStepSize),
             LineSearchTrials: results.Max(r => r.Statistics.LineSearchTrials));
 
+        // Partitions are independent, so the model's best iterate is simply each partition's best
+        // taken together. Only meaningful when every partition contributed one — a missing snapshot
+        // (or a partition an early stop never reached) leaves no defensible value for its variables.
+        IterateSnapshot? bestIterate = null;
+        if (results.Count == plans.Count && results.All(r => r.BestIterate is not null))
+        {
+            var merged = new Dictionary<Variable, double>(inertSolution);
+            foreach (var r in results)
+                foreach (var (v, value) in r.BestIterate!.Solution)
+                    merged[v] = value;
+            bestIterate = new IterateSnapshot(
+                merged,
+                results.Sum(r => r.BestIterate!.ObjectiveValue) + objectiveConstant,
+                results.Max(r => r.BestIterate!.PrimalInfeasibility),
+                results.All(r => r.BestIterate!.IsFeasible),
+                results.Sum(r => r.BestIterate!.IterationCount));
+        }
+
         return new ModelResult(
             worst.Status,
             solution,
             results.Sum(r => r.ObjectiveValue) + objectiveConstant,
             statistics)
         {
-            Partitions = results
+            Partitions = results,
+            BestIterate = bestIterate,
         };
     }
 
@@ -1157,16 +1241,54 @@ public sealed partial class Model : IDisposable
     }
 }
 
+/// <summary>One iterate IPOPT passed through, captured because it was the best seen at the time.
+/// See <see cref="ModelResult.BestIterate"/>.</summary>
+/// <param name="Solution">Every variable's value at this iterate, eliminated ones included.</param>
+/// <param name="ObjectiveValue">The objective there. Under partitioning this is the model-level
+/// value, summed across partitions with the objective constant added once.</param>
+/// <param name="PrimalInfeasibility">Largest constraint violation there; 0 when unconstrained.</param>
+/// <param name="IsFeasible">Whether <paramref name="PrimalInfeasibility"/> was within
+/// <see cref="IpoptOptions.ConstraintViolationTolerance"/>. When false, no feasible iterate was ever
+/// seen and this is merely the least-infeasible one — treat the objective with suspicion.</param>
+/// <param name="IterationCount">The iteration it was found at. Under partitioning, the sum across
+/// partitions, matching how <see cref="SolveStatistics.IterationCount"/> aggregates.</param>
+public sealed record IterateSnapshot(
+    IReadOnlyDictionary<Variable, double> Solution,
+    double ObjectiveValue,
+    double PrimalInfeasibility,
+    bool IsFeasible,
+    int IterationCount);
+
 public sealed record ModelResult(
     ApplicationReturnStatus Status,
     IReadOnlyDictionary<Variable, double>? Solution,
     double ObjectiveValue,
     SolveStatistics Statistics)
 {
-    /// <summary>The individual sub-problem results, in ascending partition order, when
+    /// <summary>The individual sub-problem results, smallest sub-problem first, when
     /// <see cref="Model.EnablePartitioning"/> was set and the model decomposed into more than one
     /// partition; empty otherwise. The members above are the model-level aggregate over these.
     /// Covers the partitions that were actually solved, so it excludes the inert partition (which
     /// never reaches IPOPT) and is cut short when a callback requested an early stop.</summary>
     public IReadOnlyList<ModelResult> Partitions { get; init; } = [];
+
+    /// <summary>The best iterate IPOPT passed through, which is not necessarily the one in
+    /// <see cref="Solution"/>: a run ending on MaximumIterationsExceeded, RestorationFailed or a
+    /// caller stop can finish at a worse point than it visited earlier. "Best" is feasibility-first
+    /// — the lowest-objective iterate within
+    /// <see cref="IpoptOptions.ConstraintViolationTolerance"/>, falling back to the least-infeasible
+    /// one (flagged by <see cref="IterateSnapshot.IsFeasible"/>) when nothing feasible was seen.
+    /// Restoration-phase iterates are excluded, their objective belonging to a different NLP.
+    ///
+    /// Note what this does not promise: the snapshot can be marginally LESS feasible than
+    /// <see cref="Solution"/>. Once two points are both inside the violation tolerance they count as
+    /// equally feasible and the lower objective wins, so a converged run can report a snapshot
+    /// sitting at the edge of the tolerance with an objective a hair under the true optimum. Tighten
+    /// <see cref="IpoptOptions.ConstraintViolationTolerance"/> if that matters to you.
+    ///
+    /// Null when no iterate could be captured — a solve that never reached an iteration, or one
+    /// whose iterates were all in restoration. On the model-level aggregate it is also null when any
+    /// partition lacks one, including partitions skipped by an early stop; each partition's own
+    /// snapshot remains on <see cref="Partitions"/> regardless.</summary>
+    public IterateSnapshot? BestIterate { get; init; }
 }
