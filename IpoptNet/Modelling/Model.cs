@@ -462,6 +462,7 @@ public sealed partial class Model : IDisposable
             var results = new List<ModelResult>(plans.Count);
             double completedObjective = 0;
             int completedIterations = 0;
+            SolveStatistics? completedStatistics = null;
 
             // Time limits are model-wide deadlines, so each partition gets what is left rather than
             // the full budget: N partitions must not be able to take N times as long as the caller
@@ -489,11 +490,12 @@ public sealed partial class Model : IDisposable
                 // callers rely on their per-iteration callback seeing all of them.
                 var result = SolvePartition(plans[p],
                     new PartitionContext(plans.Count, completedObjective, pending, objectiveConstant,
-                        completedIterations, Normalize: true, remainingWall, remainingCpu),
+                        completedIterations, Normalize: true, remainingWall, remainingCpu, completedStatistics),
                     buffers, updateStartValues);
                 results.Add(result);
                 completedObjective += result.ObjectiveValue;
                 completedIterations += result.Statistics.IterationCount;
+                completedStatistics = MergeStatistics(completedStatistics, result.Statistics);
 
                 // An explicit stop request means stop, exactly as it would without partitioning.
                 if (result.Status == ApplicationReturnStatus.UserRequestedStop)
@@ -709,7 +711,8 @@ public sealed partial class Model : IDisposable
         int CompletedIterations,
         bool Normalize,
         double? RemainingWallTime = null,
-        double? RemainingCpuTime = null);
+        double? RemainingCpuTime = null,
+        SolveStatistics? Completed = null);
 
     /// <summary>Floor for a per-partition time budget. IPOPT rejects a non-positive limit, so an
     /// exhausted budget is handed over as this instead — small enough that the partition stops
@@ -849,10 +852,13 @@ public sealed partial class Model : IDisposable
             if (IntermediateCallback is not { } userCallback)
                 return true;
 
-            var reported = !ctx.Normalize ? local : local with
+            // Everything the caller sees describes the whole model. Folding in the partitions already
+            // finished matters for more than tidiness: a consumer that latches the last callback's
+            // PrimalInfeasibility to judge the solve would otherwise read only the LAST partition's
+            // value and miss an infeasible one solved earlier.
+            var reported = !ctx.Normalize ? local : MergeStatistics(ctx.Completed, local) with
             {
                 ObjectiveValue = ctx.CompletedObjective + local.ObjectiveValue + ctx.PendingObjective + ctx.ObjectiveConstant,
-                IterationCount = ctx.CompletedIterations + local.IterationCount,
             };
             return userCallback(reported, new PartitionInfo(plan.Index, ctx.Count, plan.ActiveVariables, m, local));
         };
@@ -1250,6 +1256,29 @@ public sealed partial class Model : IDisposable
         };
     }
 
+    /// <summary>Folds one partition's statistics into the running aggregate. Norms and violations
+    /// take the worst value — the model is only as feasible as its worst sub-problem — step sizes the
+    /// smallest, and counts sum. Used both for what the callback reports mid-solve and for the final
+    /// <see cref="ModelResult.Statistics"/>, so the two cannot come to mean different things.</summary>
+    private static SolveStatistics MergeStatistics(SolveStatistics? completed, SolveStatistics next)
+    {
+        if (completed is null) return next;   // the min-fields have no neutral element; start from one
+        return new SolveStatistics(
+            AlgorithmMode: completed.AlgorithmMode == AlgorithmMode.RestorationPhaseMode
+                        || next.AlgorithmMode == AlgorithmMode.RestorationPhaseMode
+                ? AlgorithmMode.RestorationPhaseMode : AlgorithmMode.RegularMode,
+            IterationCount: completed.IterationCount + next.IterationCount,
+            ObjectiveValue: completed.ObjectiveValue + next.ObjectiveValue,
+            PrimalInfeasibility: Math.Max(completed.PrimalInfeasibility, next.PrimalInfeasibility),
+            DualInfeasibility: Math.Max(completed.DualInfeasibility, next.DualInfeasibility),
+            ComplementarityMeasure: Math.Max(completed.ComplementarityMeasure, next.ComplementarityMeasure),
+            DNorm: Math.Max(completed.DNorm, next.DNorm),
+            RegularizationSize: Math.Max(completed.RegularizationSize, next.RegularizationSize),
+            DualStepSize: Math.Min(completed.DualStepSize, next.DualStepSize),
+            PrimalStepSize: Math.Min(completed.PrimalStepSize, next.PrimalStepSize),
+            LineSearchTrials: Math.Max(completed.LineSearchTrials, next.LineSearchTrials));
+    }
+
     /// <summary>How bad a status is, for picking the aggregate. Lower is better.</summary>
     private static int StatusRank(ApplicationReturnStatus status) => status switch
     {
@@ -1291,20 +1320,10 @@ public sealed partial class Model : IDisposable
             }
         }
 
-        var statistics = new SolveStatistics(
-            AlgorithmMode: results.Any(r => r.Statistics.AlgorithmMode == AlgorithmMode.RestorationPhaseMode)
-                ? AlgorithmMode.RestorationPhaseMode : AlgorithmMode.RegularMode,
-            IterationCount: results.Sum(r => r.Statistics.IterationCount),
-            ObjectiveValue: results.Sum(r => r.Statistics.ObjectiveValue) + objectiveConstant,
-            // Norms and violations: the model is only as feasible as its worst sub-problem.
-            PrimalInfeasibility: results.Max(r => r.Statistics.PrimalInfeasibility),
-            DualInfeasibility: results.Max(r => r.Statistics.DualInfeasibility),
-            ComplementarityMeasure: results.Max(r => r.Statistics.ComplementarityMeasure),
-            DNorm: results.Max(r => r.Statistics.DNorm),
-            RegularizationSize: results.Max(r => r.Statistics.RegularizationSize),
-            DualStepSize: results.Min(r => r.Statistics.DualStepSize),
-            PrimalStepSize: results.Min(r => r.Statistics.PrimalStepSize),
-            LineSearchTrials: results.Max(r => r.Statistics.LineSearchTrials));
+        SolveStatistics? folded = null;
+        foreach (var r in results)
+            folded = MergeStatistics(folded, r.Statistics);
+        var statistics = folded! with { ObjectiveValue = folded.ObjectiveValue + objectiveConstant };
 
         // Partitions are independent, so the model's best iterate is simply each partition's best
         // taken together. Only meaningful when every partition contributed one — a missing snapshot

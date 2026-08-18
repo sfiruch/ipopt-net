@@ -758,4 +758,60 @@ public class PartitioningTests
         Assert.IsNotNull(result.BestIterate);
         Assert.AreEqual(10.0, result.BestIterate.Solution[v2], 1e-6);
     }
+
+    /// <summary>Regression, found by integrating this into a real consumer. The statistics handed to
+    /// the callback must describe the WHOLE model, infeasibility included — not just the partition
+    /// currently iterating. A consumer that latches the last callback's PrimalInfeasibility to decide
+    /// whether the solve is trustworthy would otherwise read the last partition's value and miss an
+    /// infeasible one solved earlier; smallest-first ordering makes that the likely case, since a
+    /// small infeasible sub-problem goes first and a benign one finishes last.
+    ///
+    /// Here {u} is infeasible (u >= 5 and u &lt;= 1) and {x} is well-posed.</summary>
+    [TestMethod]
+    public void CallbackStatistics_ReportModelWideInfeasibility()
+    {
+        // Sizes are deliberate: {u} is 1 variable + 2 constraints = 3, the benign component is
+        // 3 variables + 2 constraints = 5. Smallest-first therefore solves the INFEASIBLE partition
+        // first and a clean one last, which is precisely the arrangement that hid the problem.
+        var model = new Model();
+        model.Options.PrintLevel = 0;
+        var u = model.AddVariable(-10, 10); u.Start = 0;
+        model.AddConstraint(u * 1 >= 5);
+        model.AddConstraint(u * 1 <= 1);
+
+        var x = model.AddVariable(-10, 10); x.Start = 0;
+        var y = model.AddVariable(-10, 10); y.Start = 0;
+        var z = model.AddVariable(-10, 10); z.Start = 0;
+        model.AddConstraint(x + y == 3);
+        model.AddConstraint(y + z == 5);
+        model.SetObjective(Expr.Pow(u, 2) + Expr.Pow(x, 2) + Expr.Pow(y, 2) + Expr.Pow(z, 2));
+
+        SolveStatistics? lastReported = null;
+        var localsByPartition = new Dictionary<int, double>();
+        model.IntermediateCallback = (stats, info) =>
+        {
+            lastReported = stats;
+            localsByPartition[info.Index] = info.LocalStatistics.PrimalInfeasibility;
+            return true;
+        };
+
+        var result = model.Solve();
+
+        Assert.AreEqual(2, result.Partitions.Count);
+        Assert.IsNotNull(lastReported);
+
+        // The fixture must actually exhibit the trap: the LAST partition solved must be a clean one,
+        // so that reporting only its local value would hide the infeasible partition entirely.
+        int lastPartition = localsByPartition.Keys.Max();
+        Assert.IsTrue(localsByPartition[lastPartition] < 1e-6,
+            $"fixture assumption: the last partition solved must be essentially feasible on its own "
+            + $"(was {localsByPartition[lastPartition]:E3})");
+
+        // What the caller was told last must still reflect the infeasible sub-problem.
+        Assert.IsTrue(lastReported.PrimalInfeasibility > 1e-4,
+            $"the last reported infeasibility was {lastReported.PrimalInfeasibility:E3}, which hides the "
+            + "infeasible partition");
+        Assert.AreEqual(result.Statistics.PrimalInfeasibility, lastReported.PrimalInfeasibility, 1e-12,
+            "callback statistics and the final aggregate must use the same rule");
+    }
 }
