@@ -1,0 +1,476 @@
+using IpoptNet.Modelling;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace IpoptNet.Tests;
+
+[TestClass]
+public class PartitioningTests
+{
+    /// <summary>Two components that share nothing: {x, y} joined by a constraint, and {a} on its
+    /// own. Analytic optimum: x = 3, y = -1 (x + y = 2 satisfies x + y &lt;= 4 strictly, so the
+    /// constraint is inactive and each square is minimised independently), and a = 7.</summary>
+    private static (Model model, Variable x, Variable y, Variable a) BuildSeparable(bool partitioned)
+    {
+        var model = new Model { EnablePartitioning = partitioned };
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(-10, 10); x.Start = 0;
+        var y = model.AddVariable(-10, 10); y.Start = 0;
+        var a = model.AddVariable(0, 10); a.Start = 1;
+        model.AddConstraint(x + y <= 4);
+        model.SetObjective(Expr.Pow(x - 3, 2) + Expr.Pow(y + 1, 2) + Expr.Pow(a - 7, 2));
+        return (model, x, y, a);
+    }
+
+    /// <summary>The headline guarantee: on a genuinely separable model, enabling partitioning
+    /// changes nothing a caller can observe except that per-partition detail becomes available.</summary>
+    [TestMethod]
+    public void SeparableModel_FlagOnMatchesFlagOff()
+    {
+        var (joint, jx, jy, ja) = BuildSeparable(partitioned: false);
+        var (split, sx, sy, sa) = BuildSeparable(partitioned: true);
+
+        var jointResult = joint.Solve();
+        var splitResult = split.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, jointResult.Status);
+        Assert.AreEqual(jointResult.Status, splitResult.Status);
+        Assert.AreEqual(jointResult.ObjectiveValue, splitResult.ObjectiveValue, 1e-7);
+        Assert.AreEqual(jointResult.Solution![jx], splitResult.Solution![sx], 1e-7);
+        Assert.AreEqual(jointResult.Solution[jy], splitResult.Solution[sy], 1e-7);
+        Assert.AreEqual(jointResult.Solution[ja], splitResult.Solution[sa], 1e-7);
+
+        // Sanity-check against the hand-derived optimum, so a shared bug can't make both agree.
+        Assert.AreEqual(3.0, splitResult.Solution[sx], 1e-6);
+        Assert.AreEqual(-1.0, splitResult.Solution[sy], 1e-6);
+        Assert.AreEqual(7.0, splitResult.Solution[sa], 1e-6);
+
+        Assert.AreEqual(2, splitResult.Partitions.Count);
+        Assert.AreEqual(0, jointResult.Partitions.Count);
+    }
+
+    /// <summary>The objective's additive constant belongs to the model, not to any one partition.
+    /// min (x-1)² + (y-2)² + 100 has optimum 100 — not 200, which is what counting the constant
+    /// once per partition would give. Note the flattener expands the squares, so the completed-square
+    /// constants join the 100 in the node's ConstantTerm: the objective is really
+    /// 105 - 2x - 4y + x² + y², and at the optimum the two slices are worth -1 and -4.</summary>
+    [TestMethod]
+    public void SeparableModel_ObjectiveConstantCountedOnce()
+    {
+        var model = new Model { EnablePartitioning = true };
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(-10, 10); x.Start = 0;
+        var y = model.AddVariable(-10, 10); y.Start = 0;
+        model.SetObjective(Expr.Pow(x - 1, 2) + Expr.Pow(y - 2, 2) + 100);
+
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(2, result.Partitions.Count);
+        Assert.AreEqual(100.0, result.ObjectiveValue, 1e-7);
+
+        // Each slice carries only its own variable-bearing terms and no share of the constant.
+        Assert.AreEqual(-1.0, result.Partitions[0].ObjectiveValue, 1e-7);
+        Assert.AreEqual(-4.0, result.Partitions[1].ObjectiveValue, 1e-7);
+        Assert.AreEqual(result.ObjectiveValue, result.Partitions.Sum(p => p.ObjectiveValue) + 105.0, 1e-7);
+    }
+
+    /// <summary>A model coupled both by a constraint and by a bilinear objective term must not
+    /// decompose. It then takes the ordinary single-solve path, so the results are bit-identical
+    /// to a flag-off run — no tolerance.</summary>
+    [TestMethod]
+    public void CoupledModel_YieldsSinglePartition()
+    {
+        static (Model model, Variable x, Variable y) Build(bool partitioned)
+        {
+            var model = new Model { EnablePartitioning = partitioned };
+            model.Options.PrintLevel = 0;
+            var x = model.AddVariable(-5, 5); x.Start = 0.3;
+            var y = model.AddVariable(-5, 5); y.Start = 0.7;
+            model.AddConstraint(x + y == 1);
+            model.SetObjective(Expr.Pow(x, 2) + Expr.Pow(y, 2) + x * y);
+            return (model, x, y);
+        }
+
+        var (split, sx, sy) = Build(partitioned: true);
+        Assert.IsTrue(split.AnalyzePartitions().IsTrivial);
+        Assert.AreEqual(1, split.AnalyzePartitions().Partitions.Count);
+
+        var (joint, jx, jy) = Build(partitioned: false);
+        var jointResult = joint.Solve();
+        var splitResult = split.Solve();
+
+        Assert.AreEqual(jointResult.Status, splitResult.Status);
+        Assert.AreEqual(jointResult.ObjectiveValue, splitResult.ObjectiveValue);
+        Assert.AreEqual(jointResult.Solution![jx], splitResult.Solution![sx]);
+        Assert.AreEqual(jointResult.Solution[jy], splitResult.Solution[sy]);
+        Assert.AreEqual(0, splitResult.Partitions.Count);
+    }
+
+    /// <summary>a·x + b·y is separable: a purely linear objective term contributes no coupling.
+    /// Minimising 2x + 3y over x in [1,5], y in [2,6] drives both to their lower bounds.</summary>
+    [TestMethod]
+    public void LinearOnlyObjectiveCoupling_IsSeparable()
+    {
+        var model = new Model { EnablePartitioning = true };
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(1, 5); x.Start = 3;
+        var y = model.AddVariable(2, 6); y.Start = 4;
+        model.SetObjective(2 * x + 3 * y);
+
+        Assert.AreEqual(2, model.AnalyzePartitions().Partitions.Count);
+
+        var result = model.Solve();
+        Assert.AreEqual(1.0, result.Solution![x], 1e-6);
+        Assert.AreEqual(2.0, result.Solution[y], 1e-6);
+        Assert.AreEqual(8.0, result.ObjectiveValue, 1e-6);
+    }
+
+    /// <summary>An implicit block is atomic: its eliminated variable and the parameters its
+    /// residual reads must be solved together, even though the residual is not in _constraints.
+    /// Here v is defined by v = 2p + 3 and the objective drives v to 9, so p = 3; w is a wholly
+    /// independent component.</summary>
+    [TestMethod]
+    public void ImplicitBlock_IsAtomic()
+    {
+        var model = new Model { EnablePartitioning = true };
+        model.Options.PrintLevel = 0;
+        var p = model.AddVariable(-10, 10); p.Start = 0;
+        var v = model.AddVariable(); v.Start = 0;
+        var w = model.AddVariable(-10, 10); w.Start = 0;
+        var c = model.AddConstraint(v - 2 * p - 3 == 0);
+        model.AddImplicitBlock([v], [c]);
+        model.SetObjective(Expr.Pow(v - 9, 2) + Expr.Pow(w - 5, 2));
+
+        var partitioning = model.AnalyzePartitions();
+        Assert.AreEqual(2, partitioning.Partitions.Count);
+
+        var blockPartition = partitioning.Partitions.Single(x => x.ImplicitBlockCount == 1);
+        CollectionAssert.Contains(blockPartition.Variables.ToArray(), p);
+        CollectionAssert.Contains(blockPartition.EliminatedVariables.ToArray(), v);
+        CollectionAssert.DoesNotContain(blockPartition.Variables.ToArray(), w);
+
+        var result = model.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(3.0, result.Solution![p], 1e-6);
+        Assert.AreEqual(9.0, result.Solution[v], 1e-6);
+        Assert.AreEqual(5.0, result.Solution[w], 1e-6);
+    }
+
+    /// <summary>Chained blocks — the second reads the first's eliminated variable — form one
+    /// component. Raw-mode collection is what makes that transitive: v2's residual reports v1
+    /// itself rather than v1's inputs.</summary>
+    [TestMethod]
+    public void ChainedImplicitBlocks_StayInOnePartition()
+    {
+        var model = new Model { EnablePartitioning = true };
+        model.Options.PrintLevel = 0;
+        var p = model.AddVariable(-10, 10); p.Start = 0;
+        var v1 = model.AddVariable(); v1.Start = 0;
+        var v2 = model.AddVariable(); v2.Start = 0;
+        var c1 = model.AddConstraint(v1 - 2 * p - 3 == 0);
+        model.AddImplicitBlock([v1], [c1]);
+        var c2 = model.AddConstraint(v2 - v1 - 1 == 0);
+        model.AddImplicitBlock([v2], [c2]);
+        model.SetObjective(Expr.Pow(v2 - 10, 2));
+
+        var partitioning = model.AnalyzePartitions();
+        Assert.AreEqual(1, partitioning.Partitions.Count);
+        Assert.AreEqual(2, partitioning.Partitions[0].ImplicitBlockCount);
+
+        // v2 = v1 + 1 = 2p + 4 = 10  =>  p = 3
+        var result = model.Solve();
+        Assert.AreEqual(3.0, result.Solution![p], 1e-6);
+    }
+
+    /// <summary>Variables the model never references — in no constraint, no implicit block and no
+    /// objective term — never reach IPOPT at all. There is nothing to optimise and nothing to
+    /// satisfy, so a solve would burn a full problem setup to hand back whatever the barrier drifted
+    /// to. They are resolved from their start point instead: an explicit Start (clamped to bounds),
+    /// otherwise the same bound-derived default IPOPT would have been seeded with. That makes the
+    /// value deterministic and explainable, which the IPOPT round-trip never was.</summary>
+    [TestMethod]
+    public void InertVariables_ResolveToTheirStartPoint()
+    {
+        var model = new Model { EnablePartitioning = true };
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(-10, 10); x.Start = 0;
+        var withStart = model.AddVariable(0, 10); withStart.Start = 3.5;
+        var outOfBounds = model.AddVariable(0, 10); outOfBounds.Start = 42;   // clamped to the UB
+        var noStart = model.AddVariable(-4, 8);                               // midpoint of the bounds
+        var noStartNoUpper = model.AddVariable(2, double.PositiveInfinity);   // max(0, LB)
+        model.SetObjective(Expr.Pow(x - 2, 2));
+
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(2.0, result.Solution![x], 1e-6);
+
+        Assert.AreEqual(3.5, result.Solution[withStart], 0.0);
+        Assert.AreEqual(10.0, result.Solution[outOfBounds], 0.0);
+        Assert.AreEqual(2.0, result.Solution[noStart], 0.0);
+        Assert.AreEqual(2.0, result.Solution[noStartNoUpper], 0.0);
+
+        // The inert group is one partition in the analysis, but gets no IPOPT run of its own.
+        var partitioning = model.AnalyzePartitions();
+        Assert.AreEqual(2, partitioning.Partitions.Count);
+        Assert.AreEqual(4, partitioning.Partitions.Single(p => p.IsInert).Variables.Count);
+        Assert.AreEqual(1, result.Partitions.Count, "Only real sub-problems get solved.");
+    }
+
+    /// <summary>Not solving inert variables must not disturb the ones that matter: the referenced
+    /// variables come back exactly as an unpartitioned solve leaves them.</summary>
+    [TestMethod]
+    public void InertVariables_DoNotAffectReferencedOnes()
+    {
+        static (Model model, Variable x, Variable inert) Build(bool partitioned)
+        {
+            var model = new Model { EnablePartitioning = partitioned };
+            model.Options.PrintLevel = 0;
+            var x = model.AddVariable(-10, 10); x.Start = 0;
+            var inert = model.AddVariable(0, 10); inert.Start = 1;
+            model.SetObjective(Expr.Pow(x - 2, 2));
+            return (model, x, inert);
+        }
+
+        var (joint, jx, _) = Build(partitioned: false);
+        var (split, sx, sInert) = Build(partitioned: true);
+
+        var jointResult = joint.Solve();
+        var splitResult = split.Solve();
+
+        Assert.AreEqual(jointResult.Solution![jx], splitResult.Solution![sx], 1e-7);
+        Assert.AreEqual(1.0, splitResult.Solution[sInert], 0.0);
+    }
+
+    /// <summary>A partition can own constraints but no objective terms — a pure feasibility
+    /// sub-problem whose objective is the constant 0. With linear constraints that also means an
+    /// empty Hessian structure (nele_hess == 0), which IPOPT must accept.</summary>
+    [TestMethod]
+    public void ConstraintOnlyPartition_ZeroObjective()
+    {
+        var model = new Model { EnablePartitioning = true };
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(-10, 10); x.Start = 0;
+        var z = model.AddVariable(-10, 10); z.Start = 0;
+        model.AddConstraint(z * 2 == 8);
+        model.SetObjective(Expr.Pow(x - 1, 2));
+
+        var partitioning = model.AnalyzePartitions();
+        Assert.AreEqual(2, partitioning.Partitions.Count);
+        var feasibilityPartition = partitioning.Partitions.Single(p => p.ObjectiveTermCount == 0);
+        Assert.AreEqual(1, feasibilityPartition.Constraints.Count);
+
+        var result = model.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(1.0, result.Solution![x], 1e-6);
+        Assert.AreEqual(4.0, result.Solution[z], 1e-6);
+    }
+
+    /// <summary>Partition order is by ascending minimum Variable.Index and never depends on
+    /// hash-set iteration order, so repeated analysis is reproducible. Analysis is also pure —
+    /// it must not disturb a subsequent Solve.</summary>
+    [TestMethod]
+    public void AnalyzePartitions_IsDeterministicAndOrdered()
+    {
+        var model = new Model { EnablePartitioning = false };   // analysis is independent of the flag
+        model.Options.PrintLevel = 0;
+        // Declared interleaved so index order and component order are not trivially the same.
+        var a1 = model.AddVariable(-5, 5); a1.Start = 0;
+        var b1 = model.AddVariable(-5, 5); b1.Start = 0;
+        var a2 = model.AddVariable(-5, 5); a2.Start = 0;
+        var b2 = model.AddVariable(-5, 5); b2.Start = 0;
+        model.AddConstraint(a1 + a2 == 2);
+        model.AddConstraint(b1 + b2 == 6);
+        model.SetObjective(Expr.Pow(a1, 2) + Expr.Pow(a2, 2) + Expr.Pow(b1, 2) + Expr.Pow(b2, 2));
+
+        var first = model.AnalyzePartitions();
+        var second = model.AnalyzePartitions();
+
+        Assert.AreEqual(2, first.Partitions.Count);
+        Assert.AreEqual(first.Partitions.Count, second.Partitions.Count);
+        for (int p = 0; p < first.Partitions.Count; p++)
+            CollectionAssert.AreEqual(first.Partitions[p].Variables.ToArray(),
+                                      second.Partitions[p].Variables.ToArray());
+
+        for (int p = 1; p < first.Partitions.Count; p++)
+            Assert.IsTrue(first.Partitions[p - 1].Variables[0].Index < first.Partitions[p].Variables[0].Index,
+                "Partitions must be ordered by ascending minimum Variable.Index.");
+
+        // a1 = a2 = 1, b1 = b2 = 3  =>  objective 2·1 + 2·9 = 20
+        var result = model.Solve();
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(20.0, result.ObjectiveValue, 1e-6);
+    }
+
+    [TestMethod]
+    public void AnalyzePartitions_NoObjective_Throws()
+    {
+        var model = new Model();
+        model.AddVariable(0, 1);
+        Assert.ThrowsExactly<InvalidOperationException>(() => model.AnalyzePartitions());
+    }
+
+    /// <summary>A failing partition must not suppress the others: partitions are independent, so
+    /// one failure says nothing about the rest, and callers rely on their per-iteration callback
+    /// seeing every sub-problem. The aggregate status still reports the failure.</summary>
+    [TestMethod]
+    public void FailingPartition_DoesNotSuppressOthers()
+    {
+        var model = new Model { EnablePartitioning = true };
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(-10, 10); x.Start = 0;
+        var u = model.AddVariable(-10, 10); u.Start = 0;
+        model.AddConstraint(u * 1 >= 1);
+        model.AddConstraint(u * 1 <= 0);   // together with the above: infeasible
+        model.SetObjective(Expr.Pow(x - 2, 2));
+
+        Assert.AreEqual(2, model.AnalyzePartitions().Partitions.Count);
+
+        var result = model.Solve();
+
+        Assert.AreEqual(2, result.Partitions.Count, "Every partition must be attempted.");
+        Assert.AreNotEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded,
+            result.Partitions.Single(p => p.Solution!.ContainsKey(x)).Status);
+        // The converged partition still wrote its Start back, for warm-starting the next solve.
+        Assert.AreEqual(2.0, x.Start!.Value, 1e-6);
+    }
+
+    /// <summary>The callback sees every partition, and the statistics it receives describe the
+    /// whole model — cumulative iterations, and an objective that already accounts for the
+    /// partitions that are done and the ones that have not started.</summary>
+    [TestMethod]
+    public void Callback_SeesEveryPartition_AndNormalisedObjective()
+    {
+        var (model, _, _, _) = BuildSeparable(partitioned: true);
+
+        var seen = new List<(SolveStatistics stats, PartitionInfo info)>();
+        model.IntermediateCallback = (stats, info) =>
+        {
+            seen.Add((stats, info));
+            return true;
+        };
+
+        var result = model.Solve();
+
+        Assert.IsTrue(seen.Count > 0);
+        Assert.IsTrue(seen.All(s => s.info.Count == 2));
+        CollectionAssert.AreEquivalent(new[] { 0, 1 }, seen.Select(s => s.info.Index).Distinct().ToArray());
+
+        // Cumulative across partitions, so a progress bar built on it never runs backwards.
+        for (int i = 1; i < seen.Count; i++)
+            Assert.IsTrue(seen[i].stats.IterationCount >= seen[i - 1].stats.IterationCount,
+                "Reported IterationCount must be cumulative across partitions.");
+
+        // The very last callback is the last partition's final iterate, with every other partition
+        // already at its optimum — so the reported objective is the model objective.
+        Assert.AreEqual(result.ObjectiveValue, seen[^1].stats.ObjectiveValue, 1e-6);
+
+        // The raw per-partition value is still available, and restarts per partition.
+        Assert.AreEqual(0, seen.First(s => s.info.Index == 1).info.LocalStatistics.IterationCount);
+    }
+
+    /// <summary>Solving a partitioned model twice. This is the case the warm-start guard protects:
+    /// the first solve writes back non-zero bound duals, which would auto-enable
+    /// warm_start_init_point on the second — and IPOPT answers that with UnrecoverableException on
+    /// a sub-problem with no constraints, which partitioning produces routinely.</summary>
+    [TestMethod]
+    public void RepeatedPartitionedSolve_WithConstraintFreePartition()
+    {
+        var model = new Model { EnablePartitioning = true };
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(-10, 10); x.Start = 0;
+        var y = model.AddVariable(-10, 10); y.Start = 0;
+        model.AddConstraint(x * 1 <= 8);          // partition {x} has a constraint
+        model.SetObjective(Expr.Pow(x - 2, 2) + Expr.Pow(y - 5, 2));   // partition {y} has none
+
+        Assert.AreEqual(2, model.AnalyzePartitions().Partitions.Count);
+
+        var first = model.Solve();
+        var second = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, first.Status, "first solve");
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, second.Status, "second solve");
+        Assert.AreEqual(2.0, second.Solution![x], 1e-6);
+        Assert.AreEqual(5.0, second.Solution[y], 1e-6);
+    }
+
+    /// <summary>Not partitioning-specific. ImplicitBlock._generation is never reset, so the
+    /// evaluation-pass counter must be monotonic across Solve calls too — otherwise the second
+    /// solve's first pass short-circuits every block and evaluates against stale eliminated
+    /// values.</summary>
+    [TestMethod]
+    public void RepeatedSolve_ImplicitBlockGenerationRegression()
+    {
+        var model = new Model();
+        model.Options.PrintLevel = 0;
+        var p = model.AddVariable(-10, 10); p.Start = 0;
+        var v = model.AddVariable(); v.Start = 0;
+        var c = model.AddConstraint(v - 2 * p - 3 == 0);
+        model.AddImplicitBlock([v], [c]);
+        model.SetObjective(Expr.Pow(v - 9, 2));
+
+        var first = model.Solve();
+        var second = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, first.Status);
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, second.Status);
+        Assert.AreEqual(3.0, first.Solution![p], 1e-6);
+        Assert.AreEqual(3.0, second.Solution![p], 1e-6);
+        Assert.AreEqual(9.0, second.Solution[v], 1e-6);
+    }
+
+    /// <summary>MaxIterations is a per-partition guard, deliberately not divided across partitions:
+    /// it exists to stop one sub-problem spinning forever, and sharing it would make a later
+    /// partition fail merely for having followed a hard one. So a 2-partition model can legitimately
+    /// report more total iterations than the limit.</summary>
+    [TestMethod]
+    public void MaxIterations_AppliesPerPartition()
+    {
+        const int limit = 2;
+        var (model, _, _, _) = BuildSeparable(partitioned: true);
+        model.Options.MaxIterations = limit;
+
+        var result = model.Solve();
+
+        Assert.AreEqual(2, result.Partitions.Count);
+        foreach (var partition in result.Partitions)
+        {
+            Assert.AreEqual(ApplicationReturnStatus.MaximumIterationsExceeded, partition.Status);
+            Assert.AreEqual(limit, partition.Statistics.IterationCount);
+        }
+        Assert.AreEqual(2 * limit, result.Statistics.IterationCount,
+            "Each partition gets its own iteration budget, so the total may exceed MaxIterations.");
+    }
+
+    /// <summary>MaxWallTime is a model-wide deadline, not a per-partition one: each partition is
+    /// handed what remains of the budget, so N partitions cannot take N times as long as the caller
+    /// allowed. Verified against IPOPT's own echo of the options in effect (print_user_options), so
+    /// the assertion is on the budget actually handed to the solver rather than on elapsed
+    /// wall-clock time, which would be flaky.</summary>
+    [TestMethod]
+    public void MaxWallTime_IsAModelWideDeadline()
+    {
+        const double budget = 100.0;
+        var (model, _, _, _) = BuildSeparable(partitioned: true);
+        model.Options.MaxWallTime = budget;
+        model.Options.PrintUserOptions = true;
+        model.Options.FilePrintLevel = 5;
+        var logPath = Path.Combine(Path.GetTempPath(), $"ipopt-walltime-{Guid.NewGuid():N}.txt");
+        model.Options.OutputFile = logPath;
+
+        var result = model.Solve();
+        var effective = File.ReadAllLines(logPath)
+            .Where(l => l.Contains("max_wall_time"))
+            .Select(l => double.Parse(l.Split('=')[1].Trim().Split(' ')[0],
+                        System.Globalization.CultureInfo.InvariantCulture))
+            .ToList();
+        File.Delete(logPath);
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(2, effective.Count, "One budget echoed per partition.");
+        Assert.IsTrue(effective.All(t => t <= budget), $"No partition may exceed the deadline: [{string.Join(", ", effective)}]");
+        Assert.IsTrue(effective[1] < effective[0],
+            $"The second partition must get the remainder, not the full budget: [{string.Join(", ", effective)}]");
+    }
+}

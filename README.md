@@ -22,6 +22,7 @@ The package includes native binaries for:
 - **Modeling API**: Define nonlinear optimization problems using C# expressions with natural syntax
 - **Automatic Differentiation**: Gradients and Hessians computed automatically via reverse-mode AD
 - **Intelligent Matrix Caching**: Automatically detects and pre-computes constant matrices for LP/QP/QCP problems
+- **Automatic Partitioning**: Detects models that split into independent sub-problems and solves each separately
 - **High-level Wrapper**: Clean, disposable `IpoptSolver` class for direct API access
 - **Native Performance**: Uses .NET 10 `LibraryImport` for efficient C API calls
 - **Expression Support**: Arithmetic, trigonometric, exponential, logarithmic, and power operations
@@ -87,6 +88,87 @@ The expression system supports:
 - **Trigonometric**: `Expr.Sin(x)`, `Expr.Cos(x)`, `Expr.Tan(x)`
 - **Exponential/Log**: `Expr.Exp(x)`, `Expr.Log(x)`
 - **Constraints**: `>=`, `<=`, `==`
+
+## Partitioning
+
+Many models decompose into independent sub-problems that share no variable through any constraint,
+implicit block, or objective term. Because IPOPT's linear-algebra cost grows superlinearly with
+problem size, solving each sub-problem separately is both exact and considerably cheaper.
+
+This is **on by default** — no configuration needed. `result.Partitions` exposes the individual
+sub-problems when a model does decompose:
+
+```csharp
+var model = new Model();
+// ... build the model ...
+var result = model.Solve();
+
+foreach (var partition in result.Partitions)
+    Console.WriteLine($"{partition.Status}: {partition.ObjectiveValue}");
+```
+
+Set `Model.EnablePartitioning = false` to force a single whole-model solve — the pre-partitioning
+behaviour, byte-identical, skipping the decomposition analysis entirely.
+
+`Status`, `Solution`, `ObjectiveValue` and `Statistics` on the returned `ModelResult` are
+model-level aggregates, so a partitioned solve reads the same as an unpartitioned one; the
+individual sub-problem results are on `Partitions`. Every partition is always attempted, so one
+failing sub-problem never suppresses the others.
+
+Inspect the decomposition without solving — this works regardless of the flag and needs no solve
+state:
+
+```csharp
+var partitioning = model.AnalyzePartitions();
+Console.WriteLine(partitioning);            // one line per partition
+if (partitioning.IsTrivial) { /* the model does not decompose */ }
+```
+
+When the model does not decompose, `Solve()` takes the ordinary single-solve path, so results are
+bit-identical to disabling partitioning.
+
+### Iteration callback (breaking change)
+
+`Model.IntermediateCallback` gained a second parameter so an iteration can be attributed to a
+sub-problem:
+
+```csharp
+// before: Func<SolveStatistics, bool>
+model.IntermediateCallback = (stats, partition) =>
+{
+    // stats always describes the whole model: ObjectiveValue accounts for partitions already
+    // solved, the one currently iterating, and the ones not yet started; IterationCount is
+    // cumulative. So best-so-far tracking needs no changes.
+    // partition.Index / .Count identify the sub-problem; partition.LocalStatistics has the raw
+    // per-partition numbers. With partitioning off these are 0 and 1.
+    return !cancelled;
+};
+```
+
+### Limits and budgets
+
+Iteration and time limits are treated differently, on purpose:
+
+| Option | Scope | Why |
+|---|---|---|
+| `MaxIterations` | **per partition** | It guards against one sub-problem spinning forever. Dividing it would make a later partition fail merely for having followed a hard one. So total iterations can exceed the limit. |
+| `MaxWallTime`, `MaxCpuTime` | **model-wide** | These are deadlines. Each partition is handed what remains of the budget, so N partitions cannot take N times as long as you allowed. |
+
+Elapsed wall time is measured exactly. Elapsed CPU time is taken from the process total, which
+over-counts when other threads in your application are busy — it therefore errs toward stopping
+sooner, never toward overrunning the budget.
+
+Two other things change when the model actually decomposes:
+
+- `OutputFile` receives the concatenation of N IPOPT runs (`file_append` is set automatically for
+  the second and later partitions unless you set it yourself).
+- *Inert* variables — those appearing in no constraint, no implicit block and no objective term —
+  never reach IPOPT. Nothing optimises or constrains such a variable, so a solve would only hand back
+  wherever the barrier drifted it; that value depends on the surrounding problem's iteration count
+  and so cannot match an unpartitioned solve either way. They are resolved directly from their start
+  point instead — an explicit `Start` clamped to bounds, otherwise the same bound-derived default
+  IPOPT would have used — which at least makes it deterministic. They contribute no entry to
+  `result.Partitions`, and variables the model actually references are unaffected.
 
 ## Performance Optimization
 
