@@ -22,6 +22,7 @@ The package includes native binaries for:
 - **Modeling API**: Define nonlinear optimization problems using C# expressions with natural syntax
 - **Automatic Differentiation**: Gradients and Hessians computed automatically via reverse-mode AD
 - **Intelligent Matrix Caching**: Automatically detects and pre-computes constant matrices for LP/QP/QCP problems
+- **Automatic Partitioning**: Detects models that split into independent sub-problems and solves each separately
 - **High-level Wrapper**: Clean, disposable `IpoptSolver` class for direct API access
 - **Native Performance**: Uses .NET 10 `LibraryImport` for efficient C API calls
 - **Expression Support**: Arithmetic, trigonometric, exponential, logarithmic, and power operations
@@ -87,6 +88,97 @@ The expression system supports:
 - **Trigonometric**: `Expr.Sin(x)`, `Expr.Cos(x)`, `Expr.Tan(x)`
 - **Exponential/Log**: `Expr.Exp(x)`, `Expr.Log(x)`
 - **Constraints**: `>=`, `<=`, `==`
+
+## Partitioning
+
+Many models decompose into independent sub-problems that share no variable through any constraint,
+implicit block, or objective term. Because IPOPT's linear-algebra cost grows superlinearly with
+problem size, solving each sub-problem separately is both exact and considerably cheaper.
+
+This feature is **enabled by default**. `result.Partitions` exposes the individual
+sub-problems when a model does decompose:
+
+```csharp
+var model = new Model();
+// ... build the model ...
+var result = model.Solve();
+
+foreach (var partition in result.Partitions)
+    Console.WriteLine($"{partition.Status}: {partition.ObjectiveValue}");
+```
+
+Set `Model.EnablePartitioning = false` to force a single whole-model solve, skipping the decomposition analysis entirely.
+
+`Status`, `Solution`, `ObjectiveValue` and `Statistics` on the returned `ModelResult` are
+model-level aggregates, so a partitioned solve reads the same as an unpartitioned one; the
+individual sub-problem results are on `Partitions`. Every partition is always attempted, so one
+failing sub-problem never suppresses the others.
+
+### Iteration callback
+
+```csharp
+// before: Func<SolveStatistics, bool>
+model.IntermediateCallback = (stats, partition) =>
+{
+    // stats always describes the whole model: ObjectiveValue accounts for partitions already
+    // solved, the one currently iterating, and the ones not yet started; IterationCount is
+    // cumulative. So best-so-far tracking needs no changes.
+    // partition.Index / .Count identify the sub-problem; partition.LocalStatistics has the raw
+    // per-partition numbers. With partitioning off these are 0 and 1.
+    return !cancelled;
+};
+```
+
+### Limits and budgets
+
+Iteration and time limits are treated differently, on purpose:
+
+| Option | Scope | Why |
+|---|---|---|
+| `MaxIterations` | **per partition** | It guards against one sub-problem spinning forever. |
+| `MaxWallTime`, `MaxCpuTime` | **model-wide** | These are deadlines. Each partition is handed what remains of the budget, so N partitions cannot take N times as long as you allowed. |
+
+Elapsed wall time is measured exactly. Elapsed CPU time is taken from the process total, which
+over-counts when other threads in your application are busy — it therefore errs toward stopping
+sooner, never toward overrunning the budget.
+
+## Best Iterate
+
+IPOPT returns its **final** iterate, which is not always its best one. A run that ends on
+`MaximumIterationsExceeded`, `RestorationFailed`, or a caller-requested stop can finish somewhere
+worse than it passed through earlier. Every solve therefore records the best point it saw:
+
+```csharp
+var result = model.Solve();
+
+var best = result.BestIterate;
+if (best is not null && best.IsFeasible)
+    Console.WriteLine($"best objective {best.ObjectiveValue} at iteration {best.IterationCount}");
+```
+
+`BestIterate.Solution` covers every variable, implicit-block-eliminated ones included, and under
+partitioning it is the whole model's — no partition bookkeeping required.
+
+**"Best" is feasibility-first**, not lowest-objective: the lowest-objective iterate whose constraint
+violation is within `ConstraintViolationTolerance`, falling back to the least-infeasible point (with
+`IsFeasible` false) when nothing feasible was ever seen.
+
+## Automatic Elimination
+
+A variable defined by an equality it appears in linearly can be moved out of IPOPT's decision vector
+and computed from that equality instead. `Model.FindEliminableVariables()` reports what qualifies without changing anything:
+
+```csharp
+foreach (var c in model.FindEliminableVariables())
+    Console.WriteLine($"x[{c.Variable.Index}] could be defined by its constraint (coefficient {c.Coefficient})");
+
+model.EnableAutomaticElimination = true;   // off by default
+```
+
+A pair qualifies when the constraint is an equality of the form `expression == 0`, the variable's
+partial derivative of it is a non-zero constant, and the variable is **unbounded**.
+
+**This is off by default.** Unlike partitioning it is not a free win: the reduced problem has the same optimum in exact arithmetic but is a different problem for IPOPT to walk, with different conditioning, and each eliminated variable enters it nonlinearly through its block. Measure before adopting it.
 
 ## Performance Optimization
 

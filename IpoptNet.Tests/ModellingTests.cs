@@ -995,6 +995,48 @@ public class ModellingTests
         Assert.AreEqual(2.0, result.Solution![y], 0.001);
     }
 
+    /// <summary>IPOPT answers warm_start_init_point=yes with UnrecoverableException when the model
+    /// has no constraints at all (m == 0). The auto-enable heuristic must therefore stand down for
+    /// such a model, or a bounds-only problem carrying dual data becomes unsolvable. This is the
+    /// minimal reproduction: without the guard, this single solve fails outright.</summary>
+    [TestMethod]
+    public void WarmStart_NotAutoEnabled_WhenModelHasNoConstraints()
+    {
+        var model = new Model();
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(-10, 10);
+        x.Start = 0;
+        x.LowerBoundDualStart = 0.5;   // non-zero dual would otherwise trigger warm start
+        model.SetObjective(Expr.Pow(x - 3, 2));
+
+        var result = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, result.Status);
+        Assert.AreEqual(3.0, result.Solution![x], 1e-6);
+    }
+
+    /// <summary>How the above gets reached in practice: nothing exotic is needed, just solving a
+    /// bounds-only model twice. The first solve writes back non-zero bound duals, which is exactly
+    /// the condition that auto-enables warm start on the second.</summary>
+    [TestMethod]
+    public void RepeatedSolve_WithoutConstraints_Succeeds()
+    {
+        var model = new Model();
+        model.Options.PrintLevel = 0;
+        var x = model.AddVariable(-10, 10);
+        x.Start = 0;
+        model.SetObjective(Expr.Pow(x - 3, 2));
+
+        var first = model.Solve();
+        var second = model.Solve();
+
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, first.Status, "first solve");
+        Assert.AreEqual(ApplicationReturnStatus.SolveSucceeded, second.Status, "second solve");
+        Assert.AreEqual(3.0, second.Solution![x], 1e-6);
+        Assert.AreNotEqual(0.0, x.LowerBoundDualStart + x.UpperBoundDualStart,
+            "The first solve must have written back the bound duals that trigger the auto-enable.");
+    }
+
     [TestMethod]
     public void Statistics_ExposesIterationCount()
     {

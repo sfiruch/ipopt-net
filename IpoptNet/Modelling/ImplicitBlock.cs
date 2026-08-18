@@ -268,10 +268,10 @@ internal sealed class ImplicitBlock
         LuDecompose(_luFactor, _perm, _n);
         LuSolve(_luFactor, _perm, _vstar, _n);
 
-        // Phase 4: write v* into scratch. Eliminated vars must have Scale==1 (enforced at
-        // AddImplicitBlock); VariableNode.Evaluate (= scratch[Index] * Scale) returns physical units.
-        // Lifting the Scale==1 mandate would require dividing v* by Scale here so the existing
-        // VariableNode.Evaluate path stays correct.
+        // Phase 4: write v* into scratch. No scale conversion is needed: A and b were extracted in
+        // raw mode, where VariableNode contributes its own Scale, so the linear system is posed in
+        // scratch units and v* comes out in them too. VariableNode.Evaluate (= scratch[Index]·Scale)
+        // then recovers physical units, exactly as for a non-eliminated variable.
         for (int j = 0; j < _n; j++)
             scratch[Variables[j].Index] = _vstar[j];
         Model.InvalidateValueCache();
