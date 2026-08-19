@@ -63,8 +63,8 @@ public sealed class Expr
     public void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad)
     {
         // Allocate compact buffer and compute compact gradient
-        var compactGrad = ArrayPool<double>.Shared.Rent(_node._cachedVariables!.Count);
-        Array.Clear(compactGrad, 0, _node._cachedVariables!.Count);
+        var compactGrad = ArrayPool<double>.Shared.Rent(_node._sortedVarIndices!.Length);
+        Array.Clear(compactGrad, 0, _node._sortedVarIndices!.Length);
         _node.AccumulateGradientCompact(x, compactGrad, 1.0, _node._sortedVarIndices!);
 
         // Expand compact gradient to full-sized array
@@ -76,8 +76,8 @@ public sealed class Expr
 
     public void AccumulateGradient(ReadOnlySpan<double> x, Span<double> grad, double multiplier)
     {
-        var compactGrad = ArrayPool<double>.Shared.Rent(_node._cachedVariables!.Count);
-        Array.Clear(compactGrad, 0, _node._cachedVariables!.Count);
+        var compactGrad = ArrayPool<double>.Shared.Rent(_node._sortedVarIndices!.Length);
+        Array.Clear(compactGrad, 0, _node._sortedVarIndices!.Length);
         _node.AccumulateGradientCompact(x, compactGrad, multiplier, _node._sortedVarIndices!);
 
         for (int i = 0; i < _node._sortedVarIndices!.Length; i++)
