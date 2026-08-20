@@ -91,15 +91,33 @@ public sealed class DenseLocalHessianAccumulator : HessianAccumulator
 {
     private readonly Dictionary<int, int> _origToLocal;
     private readonly int _n;
-    private readonly double[] _matrix;  // n × n, row-major; only lower triangle is meaningful
+    private double[] _matrix;  // n × n, row-major; only lower triangle is meaningful
 
-    public DenseLocalHessianAccumulator(IReadOnlyList<int> originalIndices)
+    /// <param name="originalIndices">Original variable indices this accumulator covers, in the
+    /// order that defines their local positions.</param>
+    /// <param name="matrix">Optional externally-owned buffer of at least n × n, so callers holding
+    /// one accumulator per sub-problem can share a single matrix between them instead of each
+    /// carrying its own. Anything past the leading n × n is ignored. Allocated internally when
+    /// omitted.</param>
+    public DenseLocalHessianAccumulator(IReadOnlyList<int> originalIndices, double[]? matrix = null)
     {
         _n = originalIndices.Count;
         _origToLocal = new Dictionary<int, int>(_n);
         for (int i = 0; i < _n; i++)
             _origToLocal[originalIndices[i]] = i;
-        _matrix = new double[_n * _n];
+        if (matrix is not null && matrix.Length < _n * _n)
+            throw new ArgumentException($"Matrix must hold at least {_n * _n} entries, got {matrix.Length}.", nameof(matrix));
+        _matrix = matrix ?? new double[_n * _n];
+    }
+
+    /// <summary>Point this accumulator at a different externally-owned buffer. Callers sharing one
+    /// matrix across several accumulators must call this whenever their shared buffer is replaced
+    /// — a grown buffer leaves every accumulator still holding the old, smaller array.</summary>
+    public void UseMatrix(double[] matrix)
+    {
+        if (matrix.Length < _n * _n)
+            throw new ArgumentException($"Matrix must hold at least {_n * _n} entries, got {matrix.Length}.", nameof(matrix));
+        _matrix = matrix;
     }
 
     public override void Add(int i, int j, double value)
@@ -136,9 +154,11 @@ public sealed class DenseLocalHessianAccumulator : HessianAccumulator
 
     public override void AddAtSlot(int slot, double value) => _matrix[slot] += value;
 
-    public override void Clear() => Array.Clear(_matrix);
+    // Bounded to the leading n × n: a shared matrix is sized for the largest accumulator using it,
+    // and neither clearing nor reading may stray past this one's own region.
+    public override void Clear() => Array.Clear(_matrix, 0, _n * _n);
 
-    public override ReadOnlySpan<double> Values => _matrix;
+    public override ReadOnlySpan<double> Values => _matrix.AsSpan(0, _n * _n);
 
     public IReadOnlyDictionary<int, int> OriginalToLocal => _origToLocal;
     public int Size => _n;

@@ -47,7 +47,9 @@ internal sealed class ImplicitBlock
     // _residualHessians[l]: dense K × K (where K = _residualVarsRaw.Length) raw-mode Hessian of residual l, at v=v*.
     // _sLocal[j][a]: ∂v*_j/∂y_a (a indexes into _yVars).
     // _tLocal[j][a*M + b]: ∂²v*_j/∂y_a∂y_b (M = _yVars.Length, symmetric).
-    // _hess2Cache[j][k*N + p]: ∂²v*_j/∂x_dec_k∂x_dec_p (N = inputs.Length, symmetric, decision-var space).
+    // _hess2Cache[j]: lower triangle of ∂²v*_j/∂x_dec_k∂x_dec_p (N = inputs.Length, decision-var
+    //   space), packed row-major as [k(k+1)/2 + p] for p ≤ k. Symmetric, so half is redundant, and
+    //   this is the only per-block storage left that lives for a whole generation.
     //
     // Storage is allocated once on first need (when shapes K, M become known) and reused across
     // every subsequent evaluation pass — only the *values* are refreshed per pass. Avoids the
@@ -64,10 +66,8 @@ internal sealed class ImplicitBlock
     private double[][]? _sLocal;             // [j][a]
     private double[][]? _tLocal;             // [j][a*M + b], symmetric
     private long _localHessGen = -1;
-    private double[][]? _hess2Cache;         // [j][k*N + p], symmetric — preallocated, gated by _hess2Computed
+    private double[][]? _hess2Cache;         // [j][k(k+1)/2 + p], lower triangle; gated by _hess2Computed
     private bool[]? _hess2Computed;          // [j]; reset on generation change
-    private double[]? _muFlat;               // [a*N + k] — reused across passes
-    private double[]? _qFlat;                // [a*N + k] per j; reused across passes
     private int _N;                          // = InputIndicesSorted.Length, captured at first GetSecondOrderSensitivity
     private int[][]? _otherKMapPerY;         // [a][kPos] — fixed once known; -1 if inputs[kPos] not in y_a's block's inputs
     private int[]? _otherNPerY;              // [a] = other block's input count
@@ -403,12 +403,24 @@ internal sealed class ImplicitBlock
     /// (residual_vars_raw with own elim vars excluded for the y indexing).</summary>
     private void EnsureLocalHessians(ReadOnlySpan<double> scratch)
     {
-        if (_localHessGen == _generation) return;
+        // Not a memoisation guard any more, but the invariant that lets the buffers below be shared
+        // between blocks: they are borrowed on entry and only stay valid until another block borrows
+        // them. Re-entering for the same generation would take the old early return and then read
+        // buffers some other block has since overwritten — silently wrong Hessians, not a crash. The
+        // sole caller (GetSecondOrderSensitivity) computes every j in one pass and marks them all
+        // cached, so it cannot get here twice in a generation; if that ever changes, this must be
+        // heard about rather than quietly producing bad derivatives.
+        if (_localHessGen == _generation)
+            throw new InvalidOperationException(
+                "ImplicitBlock: EnsureLocalHessians re-entered within one evaluation generation. Its " +
+                "working buffers are shared across blocks and are no longer valid at this point.");
         _localHessGen = _generation;
+        var scratchBuffers = Model.BlockScratch;
 
-        // One-time-per-block storage init: shapes (K, M) and all the dense buffers below are
-        // constant after PrepareResiduals, so allocate on first call and reuse forever.
-        if (_residualHessians is null)
+        // One-time-per-block init of this block's own shapes and index maps (K, M, and the maps
+        // between raw, y and own positions). Constant after PrepareResiduals. The dense buffers are
+        // not here: they are shared across blocks and re-borrowed below on every call.
+        if (_localAcc is null)
         {
             int K = _residualVarsRaw!.Length;
             _K = K;
@@ -433,21 +445,19 @@ internal sealed class ImplicitBlock
 
             _rawIndicesArr = new int[K];
             for (int i = 0; i < K; i++) _rawIndicesArr[i] = _residualVarsRaw[i].Index;
-            _localAcc = new DenseLocalHessianAccumulator(_rawIndicesArr);
-
-            _residualHessians = new double[_n][];
-            _rawGradArr = new double[_n][];
-            _sLocal = new double[_n][];
-            _tLocal = new double[_n][];
-            for (int j = 0; j < _n; j++)
-            {
-                _residualHessians[j] = new double[K * K];
-                _rawGradArr[j] = new double[M];
-                _sLocal[j] = new double[M];
-                _tLocal[j] = new double[M * M];
-            }
-            _rhs = new double[_n];
+            // The index map is this block's own; the matrix it accumulates into is shared, and is
+            // re-pointed below along with the rest.
+            _localAcc = new DenseLocalHessianAccumulator(_rawIndicesArr, scratchBuffers.AccumulatorMatrix(K * K));
         }
+
+        // Borrowed fresh on every call rather than held across them: a larger block may have grown
+        // any of these since last time, leaving the array this block last saw no longer the live one.
+        _residualHessians = scratchBuffers.ResidualHessians(_n, _K * _K);
+        _rawGradArr = scratchBuffers.RawGradients(_n, _M);
+        _sLocal = scratchBuffers.LocalFirstOrder(_n, _M);
+        _tLocal = scratchBuffers.LocalSecondOrder(_n, _M * _M);
+        _rhs = scratchBuffers.Rhs(_n);
+        _localAcc!.UseMatrix(scratchBuffers.AccumulatorMatrix(_K * _K));
 
         var rawIndices = _rawIndicesArr!;
         var localAcc = _localAcc!;
@@ -547,7 +557,9 @@ internal sealed class ImplicitBlock
             _hess2Gen = _generation;
         }
         if (_hess2Cache is not null && _hess2Computed![indexInBlock])
+        {
             return _hess2Cache[indexInBlock];
+        }
 
         if (_computingHess2)
             throw new InvalidOperationException("ImplicitBlock: cycle detected in GetSecondOrderSensitivity. Blocks must be added in topological order.");
@@ -562,15 +574,15 @@ internal sealed class ImplicitBlock
             int N = inputs.Length;
             int M = _M;
 
-            // One-time alloc of per-block buffers and the (a → otherK[]) lookup maps.
+            // One-time alloc of this block's memoised result and the (a → otherK[]) lookup maps.
+            // _hess2Cache stays per-block: unlike everything borrowed below it is the value this
+            // method returns, and chained blocks read it after the call that filled it.
             if (_hess2Cache is null)
             {
                 _N = N;
                 _hess2Cache = new double[_n][];
                 _hess2Computed = new bool[_n];
-                for (int j = 0; j < _n; j++) _hess2Cache[j] = new double[N * N];
-                _muFlat = new double[M * N];
-                _qFlat = new double[M * N];
+                for (int j = 0; j < _n; j++) _hess2Cache[j] = new double[TriangleLength(N)];
 
                 // Precompute, for each y_a, the otherK[kPos] mapping into the chained block's
                 // input space — these are *fixed* once both blocks are prepared, so cache once.
@@ -611,7 +623,8 @@ internal sealed class ImplicitBlock
             // Refresh μ for this pass. Per a:
             //   - direct-decision y_a: μ[a][directKPos] = 1, others = 0.
             //   - other-elim y_a:      μ[a][kPos] = otherS[otherKMap[a][kPos]] (or 0 if unmapped).
-            var muFlat = _muFlat!;
+            // Borrowed, not held — same reasoning as the buffers in EnsureLocalHessians.
+            var muFlat = Model.BlockScratch.MuFlat(M * N);
             Array.Clear(muFlat, 0, M * N);
             for (int a = 0; a < M; a++)
             {
@@ -640,10 +653,32 @@ internal sealed class ImplicitBlock
             // Both inner loops touch only contiguous spans of qFlat/μ/Q/Tj — the JIT auto-vectorises
             // them. Wins over the natural sum-then-store ordering for our small M (~25), where
             // TensorPrimitives.Dot's dispatch overhead doesn't amortise.
-            var qFlat = _qFlat!;
+            var qFlat = Model.BlockScratch.QFlat(M * N);
+            // Accumulated as a full square so both inner loops keep writing contiguous rows, then
+            // folded down to its lower triangle for storage — see the comment on _hess2Cache.
+            var square = Model.BlockScratch.HessianSquare(N * N);
+
+            // Chained blocks' sensitivities expanded back to full squares, once for the whole call.
+            // Which block and index each y_a chains to does not depend on j, so doing this inside
+            // the j loop would redo identical work _n times over — and the expansion is the same
+            // order of work as the loop that consumes it, so that showed up as ~10% of runtime.
+            int otherStride = 0;
+            for (int a = 0; a < M; a++)
+                if (_yVars![a].Block is not null)
+                    otherStride = Math.Max(otherStride, _otherNPerY![a] * _otherNPerY[a]);
+            var expandedOther = Model.BlockScratch.ExpandedOther(M * otherStride);
+            for (int a = 0; a < M; a++)
+            {
+                var Ya = _yVars![a];
+                if (Ya.Block is null) continue;
+                int otherN = _otherNPerY![a];
+                ExpandToSquare(Ya.Block.GetSecondOrderSensitivity(Ya.IndexInBlock, scratch), otherN,
+                    expandedOther.AsSpan(a * otherStride, otherN * otherN));
+            }
+
             for (int j = 0; j < _n; j++)
             {
-                var Tj = _hess2Cache[j];
+                var Tj = square;
                 var TLoc_j = _tLocal![j];
                 var sLoc_j = _sLocal![j];
 
@@ -671,8 +706,9 @@ internal sealed class ImplicitBlock
                     var sLa = sLoc_j[a];
                     bool hasNu = otherBlock is not null && sLa != 0.0;
                     int[]? map = hasNu ? _otherKMapPerY![a] : null;
-                    double[]? otherT = hasNu ? otherBlock!.GetSecondOrderSensitivity(Ya.IndexInBlock, scratch) : null;
                     int otherN = hasNu ? _otherNPerY![a] : 0;
+                    // Already expanded above; the inner loop reads whole contiguous rows of it.
+                    var otherT = hasNu ? expandedOther.AsSpan(a * otherStride, otherN * otherN) : default;
                     bool mapIsIdentity = hasNu && _otherMapIsIdentityPerY![a];
 
                     for (int kPos = 0; kPos < N; kPos++)
@@ -686,7 +722,7 @@ internal sealed class ImplicitBlock
                         {
                             int otherK = map![kPos];
                             if (otherK < 0) continue;
-                            var otherTRowK = otherT.AsSpan(otherK * otherN, otherN);
+                            var otherTRowK = otherT.Slice(otherK * otherN, otherN);
                             if (mapIsIdentity)
                             {
                                 // Map is the identity (otherInputs == inputs as sorted lists, otherN == N).
@@ -708,8 +744,19 @@ internal sealed class ImplicitBlock
                     }
                 }
 
+                // T is symmetric, so only the lower triangle is kept. This is the one thing here
+                // that is per-block and lives for the whole generation — every block's cache is
+                // still being read at the end of the pass, so none of it can be recycled — which
+                // makes halving it worth the fold.
+                // Row k's lower part is contiguous at both ends, so this is a span copy per row
+                // rather than an element loop — the scalar version cost several percent of runtime.
+                var compact = _hess2Cache[j];
+                for (int k = 0, at = 0; k < N; at += ++k)
+                    Tj.AsSpan(k * N, k + 1).CopyTo(compact.AsSpan(at, k + 1));
+
                 _hess2Computed![j] = true;
             }
+
 
             return _hess2Cache[indexInBlock];
         }
@@ -729,18 +776,37 @@ internal sealed class ImplicitBlock
                 ExprNode.AddSparsityEntry(entries, idx[i], idx[j]);
     }
 
+    /// <summary>Entries in the lower triangle (diagonal included) of an n × n symmetric matrix.</summary>
+    private static int TriangleLength(int n) => n * (n + 1) / 2;
+
+    /// <summary>Mirrors a lower-triangular matrix back into a full row-major square, so callers that
+    /// need whole rows keep getting contiguous ones.</summary>
+    private static void ExpandToSquare(double[] triangle, int n, Span<double> destination)
+    {
+        for (int k = 0, at = 0; k < n; at += ++k)
+        {
+            // Lower half of the row lands contiguously; the mirrored upper half is a strided
+            // scatter up the column and cannot be, so only the copy is vectorised.
+            var row = triangle.AsSpan(at, k + 1);
+            row.CopyTo(destination.Slice(k * n, k + 1));
+            for (int p = 0; p < k; p++)
+                destination[p * n + k] = row[p];
+        }
+    }
+
     /// <summary>Reverse-mode Hessian propagation through this block. Adds w · ∂²v_j/∂x_dec_k∂x_dec_p
     /// to hess for each (k, p) pair in the block's decision-input set.</summary>
     public void PropagateHessian(int indexInBlock, ReadOnlySpan<double> scratch, HessianAccumulator hess, double weight)
     {
+        // Reads the compact lower triangle straight through: this loop already only wanted p ≤ k.
         var T = GetSecondOrderSensitivity(indexInBlock, scratch);
         var inputs = InputIndicesSorted;
         int N = inputs.Length;
-        for (int k = 0; k < N; k++)
+        for (int k = 0, at = 0; k < N; k++)
         {
-            for (int p = 0; p <= k; p++)
+            for (int p = 0; p <= k; p++, at++)
             {
-                var t = T[k * N + p];
+                var t = T[at];
                 if (t == 0.0) continue;
                 hess.Add(inputs[k], inputs[p], weight * t);
             }

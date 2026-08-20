@@ -2,7 +2,6 @@ namespace IpoptNet.Modelling;
 
 internal abstract class ExprNode
 {
-    internal HashSet<Variable>? _cachedVariables;
     internal int[]? _sortedVarIndices;
 
     /// <summary>Model this node was prepared for, set via <see cref="Prepare"/>. Enables the
@@ -48,20 +47,23 @@ internal abstract class ExprNode
 
     internal void Prepare(Model? model = null)
     {
-        if (_cachedVariables is not null)
+        if (_sortedVarIndices is not null)
             return;
 
         _model = model;
         _cachedValueGeneration = 0;
 
-        _cachedVariables = new HashSet<Variable>();
-        CollectVariables(_cachedVariables);
+        // The variable set exists only to produce the sorted index array, and is dropped as soon as
+        // it has. Nothing downstream needs the Variable objects — sparsity, gradient compaction and
+        // buffer sizing all work from the indices — and keeping one HashSet alive per node for the
+        // length of the solve cost 68 MB of the 656 MB peak on a 34,558-block fit.
+        var variables = new HashSet<Variable>();
+        CollectVariables(variables);
 
-        // Build sorted variable indices
-        _sortedVarIndices = new int[_cachedVariables.Count];
+        _sortedVarIndices = new int[variables.Count];
         {
             var i = 0;
-            foreach (var v in _cachedVariables)
+            foreach (var v in variables)
                 _sortedVarIndices[i++] = v.Index;
         }
         Array.Sort(_sortedVarIndices);
@@ -72,7 +74,6 @@ internal abstract class ExprNode
 
     internal void Clear()
     {
-        _cachedVariables = null;
         _sortedVarIndices = null;
         _model = null;
         _cachedValueGeneration = 0;
@@ -111,11 +112,10 @@ internal abstract class ExprNode
         entries.Add((i, j));
     }
 
-    internal static void AddClique(HashSet<(int row, int col)> entries, HashSet<Variable> variables)
+    internal static void AddClique(HashSet<(int row, int col)> entries, int[] varIndices)
     {
-        var vars = variables.ToArray();
-        for (int i = 0; i < vars.Length; i++)
+        for (int i = 0; i < varIndices.Length; i++)
             for (int j = 0; j <= i; j++)
-                AddSparsityEntry(entries, vars[i].Index, vars[j].Index);
+                AddSparsityEntry(entries, varIndices[i], varIndices[j]);
     }
 }

@@ -104,12 +104,7 @@ internal sealed class DivisionNode : ExprNode
         }
         else
         {
-            var vars = new HashSet<Variable>();
-            foreach (var v in Left._cachedVariables!)
-                vars.Add(v);
-            foreach (var v in Right._cachedVariables!)
-                vars.Add(v);
-            AddClique(entries, vars);
+            AddClique(entries, [.. Left._sortedVarIndices!.Union(Right._sortedVarIndices!)]);
         }
     }
 
@@ -131,8 +126,8 @@ internal sealed class DivisionNode : ExprNode
     {
         Left.Prepare(_model);
         Right.Prepare(_model);
-        _gradLBuffer = new double[Left._cachedVariables!.Count];
-        _gradRBuffer = new double[Right._cachedVariables!.Count];
+        _gradLBuffer = new double[Left._sortedVarIndices!.Length];
+        _gradRBuffer = new double[Right._sortedVarIndices!.Length];
 
         // Pre-compute merged variable list for cross-term computation
         var sortedL = Left._sortedVarIndices!;

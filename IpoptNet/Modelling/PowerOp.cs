@@ -57,7 +57,7 @@ internal sealed class PowerOpNode : ExprNode
     {
         if (!Base.IsConstantWrtX())
         {
-            AddClique(entries, Base._cachedVariables!);
+            AddClique(entries, Base._sortedVarIndices!);
         }
     }
 
@@ -78,7 +78,7 @@ internal sealed class PowerOpNode : ExprNode
     internal override void PrepareChildren()
     {
         Base.Prepare(_model);
-        _gradBuffer = new double[Base._cachedVariables!.Count];
+        _gradBuffer = new double[Base._sortedVarIndices!.Length];
         _baseIsLinear = Base.IsLinear();
     }
 

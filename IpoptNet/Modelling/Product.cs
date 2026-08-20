@@ -234,9 +234,9 @@ internal sealed class ProductNode : ExprNode
         {
             for (int j = i + 1; j < Factors.Count; j++)
             {
-                foreach (var v1 in Factors[i]._cachedVariables!)
-                    foreach (var v2 in Factors[j]._cachedVariables!)
-                        AddSparsityEntry(entries, v1.Index, v2.Index);
+                foreach (var i1 in Factors[i]._sortedVarIndices!)
+                    foreach (var i2 in Factors[j]._sortedVarIndices!)
+                        AddSparsityEntry(entries, i1, i2);
             }
         }
     }
@@ -275,7 +275,7 @@ internal sealed class ProductNode : ExprNode
         // Preallocate gradient buffers for each factor
         _factorGradBuffers = new double[Factors.Count][];
         for (int i = 0; i < Factors.Count; i++)
-            _factorGradBuffers[i] = new double[Factors[i]._cachedVariables!.Count];
+            _factorGradBuffers[i] = new double[Factors[i]._sortedVarIndices!.Length];
 
         // Preallocate factor evaluation and product arrays
         _factorValues = new double[Factors.Count];

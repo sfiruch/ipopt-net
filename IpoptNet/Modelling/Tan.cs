@@ -44,7 +44,7 @@ internal sealed class TanNode : ExprNode
     {
         if (!Argument.IsConstantWrtX())
         {
-            AddClique(entries, Argument._cachedVariables!);
+            AddClique(entries, Argument._sortedVarIndices!);
         }
     }
     internal override bool IsConstantWrtX() => Argument.IsConstantWrtX();
@@ -54,7 +54,7 @@ internal sealed class TanNode : ExprNode
     internal override void PrepareChildren()
     {
         Argument.Prepare(_model);
-        _gradBuffer = new double[Argument._cachedVariables!.Count];
+        _gradBuffer = new double[Argument._sortedVarIndices!.Length];
         _argIsLinear = Argument.IsLinear();
     }
 

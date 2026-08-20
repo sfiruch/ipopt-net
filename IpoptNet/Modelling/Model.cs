@@ -45,6 +45,11 @@ public sealed partial class Model : IDisposable
     /// equals this counter. Starts at 1 so nodes' initial generation 0 is always invalid.</summary>
     internal long EvalGeneration { get; private set; } = 1;
 
+    /// <summary>Dense working buffers every <see cref="ImplicitBlock"/> in this model borrows for
+    /// its second-order sensitivity computation, instead of each keeping its own for the lifetime
+    /// of the solve. See <see cref="BlockScratch"/> for why one set is enough for all of them.</summary>
+    internal BlockScratch BlockScratch { get; } = new();
+
     /// <summary>True only while IPOPT evaluation callbacks may run (inside <see cref="Solve"/>).
     /// Outside of that window nodes always re-evaluate, so public Evaluate calls with arbitrary
     /// x vectors can never be served a stale cached value.</summary>
