@@ -27,7 +27,7 @@ namespace IpoptNet.Modelling;
 internal sealed class BlockScratch
 {
     private double[][]? _residualHessians, _rawGrad, _sLocal, _tLocal;
-    private double[]? _rhs, _muFlat, _qFlat, _accumulatorMatrix;
+    private double[]? _rhs, _muFlat, _qFlat, _accumulatorMatrix, _hessSquare, _expandedOther;
 
     internal double[][] ResidualHessians(int rows, int length) => Rent(ref _residualHessians, rows, length);
     internal double[][] RawGradients(int rows, int length) => Rent(ref _rawGrad, rows, length);
@@ -37,6 +37,14 @@ internal sealed class BlockScratch
     internal double[] MuFlat(int length) => Rent(ref _muFlat, length);
     internal double[] QFlat(int length) => Rent(ref _qFlat, length);
     internal double[] AccumulatorMatrix(int length) => Rent(ref _accumulatorMatrix, length);
+
+    /// <summary>Full N × N square a block accumulates its second-order sensitivity into before the
+    /// symmetric half of it is copied to the block's own compact store.</summary>
+    internal double[] HessianSquare(int length) => Rent(ref _hessSquare, length);
+
+    /// <summary>Full N × N expansion of *another* block's compact second-order sensitivity, so the
+    /// nu-chain inner loop keeps reading whole contiguous rows.</summary>
+    internal double[] ExpandedOther(int length) => Rent(ref _expandedOther, length);
 
     private static double[] Rent(ref double[]? store, int length) =>
         store = store is { } s && s.Length >= length ? s : new double[length];
