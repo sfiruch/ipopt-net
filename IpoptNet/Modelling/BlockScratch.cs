@@ -13,8 +13,13 @@ namespace IpoptNet.Modelling;
 /// <list type="bullet">
 /// <item><see cref="ImplicitBlock.GetSecondOrderSensitivity"/> computes every j in a single pass and
 /// marks them all cached, so it runs its body at most once per block per evaluation generation.</item>
-/// <item>Its nested call into a chained block's second-order sensitivity always hits that block's
-/// own cache, so the recursion never re-enters the body — two blocks are never inside it at once.</item>
+/// <item>Its nested lookups into chained blocks' second-order sensitivities always hit those blocks'
+/// own caches, so the recursion never re-enters the body — two blocks are never inside it at once.
+/// That is by construction, not luck: the body warms every chained block it will read BEFORE it
+/// borrows anything here, and it must stay that way. Reaching a chained block for the first time
+/// part-way through a computation lets the nested call overwrite the caller's buffers, and since
+/// every buffer is written before it is read (below), the caller then carries on with the callee's
+/// numbers and returns silently wrong derivatives rather than failing.</item>
 /// <item>Every buffer is fully overwritten before it is read, which the previous per-block version
 /// already relied on to reuse them across passes without clearing.</item>
 /// </list>

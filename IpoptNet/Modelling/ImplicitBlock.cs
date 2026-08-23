@@ -92,6 +92,12 @@ internal sealed class ImplicitBlock
     private HashSet<Variable>? _inputs;
     private bool _collectingInputs;
 
+    /// <summary>Whether a variable pinned by equal bounds counts as a constant rather than an input
+    /// — see <see cref="IsConstantInput"/>. Latched once per solve in <see cref="PrepareResiduals"/>
+    /// so every block in a solve applies the same rule (the closures are cross-checked against each
+    /// other, and a per-call read of Options could not be relied on to stay put).</summary>
+    private bool _treatFixedAsConstant;
+
     public ImplicitBlock(Model model, Variable[] variables, Expr[] residuals)
     {
         if (variables.Length != residuals.Length)
@@ -112,6 +118,30 @@ internal sealed class ImplicitBlock
     /// gradient[v.Index] when extracting A_{i,j}).</summary>
     public void PrepareResiduals()
     {
+        // A variable's bounds are public mutable fields, so which of this block's inputs are pinned
+        // — and hence the shape of every cache sized by the input count — is only settled once the
+        // caller hands the model to Solve. Latch the rule and drop everything derived from the old
+        // one; a solve that reuses a model after freeing a pinned variable would otherwise assemble
+        // derivatives against a closure that no longer describes it. Silent, not a crash: the
+        // generation guards stay monotonic across solves and would not notice.
+        _treatFixedAsConstant =
+            (Model.Options.FixedVariableTreatment is null or FixedVariableTreatment.MakeParameter)
+            // IPOPT's derivative checker asks about a fixed variable's entries even though the solve
+            // proper never does — it runs before the variable is taken out of the problem, while the
+            // solve is bit-identical to one where the value was a literal constant. Reporting zeros
+            // to it would turn a diagnostic into a source of false alarms, so while it is switched
+            // on the optimization stands down and pinned inputs keep their columns.
+            && Model.Options.DerivativeTest is null or DerivativeTest.None;
+        _inputs = null;
+        _inputIndicesSorted = null;
+        // Nulling these two heads is what invalidates the families behind their lazy-init guards:
+        // _hess2Cache gates the N-sized maps (_otherKMapPerY, _otherNPerY, _directKPosPerY,
+        // _otherMapIsIdentityPerY, _N), _localAcc gates the M/K-sized ones (_yVars, _yPosInRaw,
+        // _ownPosInRaw, _M, _K, _rawIndicesArr). Clearing only one leaves the other stale.
+        _hess2Cache = null;
+        _hess2Computed = null;
+        _localAcc = null;
+
         using (Model.EnterRawMode())
             foreach (var r in Residuals)
                 r.Prepare(Model);
@@ -133,8 +163,25 @@ internal sealed class ImplicitBlock
             r.Clear();
     }
 
+    /// <summary>A variable pinned by equal bounds contributes no derivative: it holds one value for
+    /// the whole solve, so ∂v*/∂x and ∂²v*/∂x² with respect to it are never asked for. Treating it
+    /// as a constant keeps it out of this block's input closure, and the closure's size is what the
+    /// dense sensitivity vectors and the N² second-order cache are sized by — so a model that pins
+    /// its parameters or its initial conditions stops paying for columns that could never move.
+    ///
+    /// Only sound while IPOPT itself removes the variable from the problem, which is what
+    /// <see cref="FixedVariableTreatment.MakeParameter"/> (its default) does. Under MakeConstraint or
+    /// RelaxBounds the variable stays in the NLP as a genuine unknown — held in place by a constraint
+    /// or by all-but-equal bounds — and IPOPT needs its true derivatives, so the rule is off there.
+    ///
+    /// Infinite bounds are excluded explicitly: a variable free on both sides with LowerBound ==
+    /// UpperBound == ±∞ is degenerate, not pinned, and must not be mistaken for a constant.</summary>
+    private bool IsConstantInput(Variable v) =>
+        _treatFixedAsConstant && v.Block is null && v.LowerBound == v.UpperBound && double.IsFinite(v.LowerBound);
+
     /// <summary>Computes the transitive closure of decision-vector variables this block depends on,
-    /// for upstream sparsity analysis. Excludes this block's own eliminated variables.</summary>
+    /// for upstream sparsity analysis. Excludes this block's own eliminated variables, and any input
+    /// pinned to a constant by equal bounds (see <see cref="IsConstantInput"/>).</summary>
     public void CollectInputVariables(HashSet<Variable> result)
     {
         if (_inputs is null)
@@ -164,7 +211,7 @@ internal sealed class ImplicitBlock
                     if (v.Block == this) continue;
                     if (v.Block is { } other)
                         other.CollectInputVariables(_inputs);
-                    else
+                    else if (!IsConstantInput(v))
                         _inputs.Add(v);
                 }
             }
@@ -335,6 +382,7 @@ internal sealed class ImplicitBlock
 
             // Distribute:
             //   - own elim vars: skip
+            //   - pinned inputs: skip — they are constants, and are not in InputIndicesSorted
             //   - other-block elim vars: chain via cached sensitivity (other's inputs ⊆ ours)
             //   - decision vars: write directly via BinarySearch into our InputIndicesSorted
             foreach (var v in _residualVarsRaw!)
@@ -342,6 +390,9 @@ internal sealed class ImplicitBlock
                 var seed = gradBuf[v.Index];
                 if (seed == 0.0) continue;
                 if (v.Block == this) continue;
+                // Skipped by the same predicate that kept it out of the closure, so the throw below
+                // still means what it says: a variable that belongs in the closure and is missing.
+                if (IsConstantInput(v)) continue;
                 if (v.Block is { } other)
                 {
                     var otherS = other.GetSensitivity(v.IndexInBlock, scratch);
@@ -430,7 +481,14 @@ internal sealed class ImplicitBlock
             for (int i = 0; i < K; i++)
             {
                 rawPos[_residualVarsRaw[i].Index] = i;
-                if (!ownSet.Contains(_residualVarsRaw[i]))
+                // Pinned inputs are left out of y-space as well as out of the closure. Their
+                // contribution to T_decision was already exactly zero — μ_a is zero over the
+                // remaining inputs and ν_a is zero for a direct-decision y — so dropping them is
+                // exact rather than an approximation, and it shrinks M, which step 4 below pays
+                // M²/2 LU solves for. Nothing retained depends on a dropped y: step 3 solves each
+                // S_local[:, a] independently, and step 4's inner sum runs over this block's OWN
+                // eliminated vars, never over other y's.
+                if (!ownSet.Contains(_residualVarsRaw[i]) && !IsConstantInput(_residualVarsRaw[i]))
                     yList.Add(_residualVarsRaw[i]);
             }
             _yVars = yList.ToArray();
@@ -566,6 +624,21 @@ internal sealed class ImplicitBlock
         _computingHess2 = true;
         try
         {
+            // Chained blocks first, before this call borrows anything. Computing a block's
+            // second-order sensitivity borrows the model-wide scratch (see BlockScratch), so a
+            // nested computation part-way through this one would overwrite the local Hessians and
+            // the μ/Q/T buffers it is about to fill and then read — silently, because every buffer
+            // is written before it is read, which is why nothing downstream would notice. The ν
+            // chain below reaches into exactly these blocks, so warming their caches here turns
+            // every nested lookup into a cache hit, which is the invariant BlockScratch documents
+            // and (before this) merely hoped for: it held only while blocks happened to be
+            // evaluated in dependency order, and broke whenever a chained block was reached for
+            // the first time from a later one — an objective that reads only the last state in a
+            // chain does exactly that.
+            foreach (var v in _residualVarsRaw!)
+                if (v.Block is { } chained && !ReferenceEquals(chained, this))
+                    chained.GetSecondOrderSensitivity(v.IndexInBlock, scratch);
+
             EnsureLocalHessians(scratch);
             // Make sure all S[*] for this block are computed (used below for ν chain via other blocks).
             for (int j = 0; j < _n; j++) GetSensitivity(j, scratch);
