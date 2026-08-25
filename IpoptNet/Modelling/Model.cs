@@ -45,10 +45,6 @@ public sealed partial class Model : IDisposable
     /// equals this counter. Starts at 1 so nodes' initial generation 0 is always invalid.</summary>
     internal long EvalGeneration { get; private set; } = 1;
 
-    /// <summary>Dense working buffers every <see cref="ImplicitBlock"/> in this model borrows for
-    /// its second-order sensitivity computation, instead of each keeping its own for the lifetime
-    /// of the solve. See <see cref="BlockScratch"/> for why one set is enough for all of them.</summary>
-    internal BlockScratch BlockScratch { get; } = new();
 
     /// <summary>True only while IPOPT evaluation callbacks may run (inside <see cref="Solve"/>).
     /// Outside of that window nodes always re-evaluate, so public Evaluate calls with arbitrary
@@ -792,12 +788,33 @@ public sealed partial class Model : IDisposable
                     "non-eliminated variable indices, and partition analysis must keep coupled variables together.");
         }
 
+        // With eliminated states, what IPOPT asks for are *reduced* derivatives, and computing them
+        // needs the objective and constraints differentiated with respect to the states as well as
+        // the parameters — that is, walked in raw mode. The IPOPT-facing sparsity above had to come
+        // from the redirect-mode walk, since it is stated in parameter space, so the switch to raw
+        // mode happens here: once, after the structure is fixed and before anything evaluates.
+        ReducedDerivatives? reduced = null;
+        if (plan.Blocks.Length > 0)
+        {
+            plan.Objective.Clear();
+            foreach (var constraint in plan.Constraints)
+                constraint.Expression.Clear();
+            using (EnterRawMode())
+            {
+                plan.Objective.Prepare(this);
+                foreach (var constraint in plan.Constraints)
+                    constraint.Expression.Prepare(this);
+                reduced = new ReducedDerivatives(this, plan.Blocks, activeVars, plan.Objective,
+                    plan.Constraints, scratch);
+            }
+        }
+
         // Create callbacks
         var evalF = CreateEvalFCallback(plan.Objective, scratch, SyncScratch);
-        var evalGradF = CreateEvalGradFCallback(plan.Objective, scratch, SyncScratch, totalVars, compactIndex, buffers.FullGrad);
+        var evalGradF = CreateEvalGradFCallback(plan.Objective, scratch, SyncScratch, totalVars, compactIndex, buffers.FullGrad, reduced);
         var evalG = CreateEvalGCallback(plan.Constraints, scratch, SyncScratch);
-        var evalJacG = CreateEvalJacGCallback(jacRows, jacCols, plan.Constraints, scratch, SyncScratch, totalVars, compactIndex, buffers.CompactToOriginal, buffers.JacGrad);
-        var evalH = useLimitedMemory ? CreateDummyEvalHCallback() : CreateEvalHCallback(hessRowsOrig, hessColsOrig, hessRows, hessCols, plan.Objective, plan.Constraints, scratch, SyncScratch, totalVars);
+        var evalJacG = CreateEvalJacGCallback(jacRows, jacCols, plan.Constraints, scratch, SyncScratch, totalVars, compactIndex, buffers.CompactToOriginal, buffers.JacGrad, reduced);
+        var evalH = useLimitedMemory ? CreateDummyEvalHCallback() : CreateEvalHCallback(hessRowsOrig, hessColsOrig, hessRows, hessCols, plan.Objective, plan.Constraints, scratch, SyncScratch, totalVars, reduced);
 
         ApplicationReturnStatus status;
         double objValue;
@@ -1121,7 +1138,7 @@ public sealed partial class Model : IDisposable
         };
     }
 
-    private static unsafe EvalGradFCallback CreateEvalGradFCallback(Expr objective, double[] scratch, Action<ReadOnlySpan<double>> syncScratch, int totalVars, int[] compactIndex, double[] fullGrad)
+    private static unsafe EvalGradFCallback CreateEvalGradFCallback(Expr objective, double[] scratch, Action<ReadOnlySpan<double>> syncScratch, int totalVars, int[] compactIndex, double[] fullGrad, ReducedDerivatives? reduced)
     {
         return (int n, double* pX, bool newX, double* pGradF, nint userData) =>
         {
@@ -1129,6 +1146,13 @@ public sealed partial class Model : IDisposable
             if (newX) syncScratch(x);
             var gradF = new Span<double>(pGradF, n);
             gradF.Clear();
+            if (reduced is not null)
+            {
+                // F_p + Xᵀ F_v, written straight into compact column space.
+                reduced.Gradient(objective, gradF);
+            }
+            else
+            {
             // The objective's _cachedVariables only includes non-eliminated vars (CollectVariables
             // in redirect mode walks blocks). AccumulateGradient writes into fullGrad indexed by
             // Variable.Index. We re-pack into the IPOPT compact gradF using compactIndex.
@@ -1139,6 +1163,7 @@ public sealed partial class Model : IDisposable
                 int ci = compactIndex[i];
                 if (ci < 0) continue;
                 gradF[ci] = fullGrad[i];
+            }
             }
 
             for (int i = 0; i < n; i++)
@@ -1168,7 +1193,7 @@ public sealed partial class Model : IDisposable
         };
     }
 
-    private static unsafe EvalJacGCallback CreateEvalJacGCallback(int[] structRows, int[] structCols, Constraint[] constraints, double[] scratch, Action<ReadOnlySpan<double>> syncScratch, int totalVars, int[] compactIndex, int[] compactToOriginal, double[] grad)
+    private static unsafe EvalJacGCallback CreateEvalJacGCallback(int[] structRows, int[] structCols, Constraint[] constraints, double[] scratch, Action<ReadOnlySpan<double>> syncScratch, int totalVars, int[] compactIndex, int[] compactToOriginal, double[] grad, ReducedDerivatives? reduced)
     {
         // structCols are in COMPACT column space. To map a constraint's gradient (computed in
         // original-variable-index space) into the right value slots, we precompute an inverse
@@ -1185,6 +1210,18 @@ public sealed partial class Model : IDisposable
                 rowToEntries[structRows[i]] = new List<(int, int)>();
             rowToEntries[structRows[i]].Add((compactToOriginal[structCols[i]], i));
         }
+
+        // The reduced path produces a row already in compact column space, so it indexes by
+        // structCols directly rather than through the compact→original detour above.
+        var rowToCompactEntries = new Dictionary<int, List<(int compactCol, int idx)>>();
+        var reducedRow = reduced is null ? [] : new double[compactToOriginal.Length];
+        if (reduced is not null)
+            for (int i = 0; i < structRows.Length; i++)
+            {
+                if (!rowToCompactEntries.ContainsKey(structRows[i]))
+                    rowToCompactEntries[structRows[i]] = [];
+                rowToCompactEntries[structRows[i]].Add((structCols[i], i));
+            }
 
         return (int n, double* pX, bool newX, int m, int neleJac, int* iRow, int* jCol, double* pValues, nint userData) =>
         {
@@ -1207,6 +1244,20 @@ public sealed partial class Model : IDisposable
 
                 for (int row = 0; row < m; row++)
                 {
+                    if (reduced is not null)
+                    {
+                        var reducedSpan = reducedRow.AsSpan(0, n);
+                        reducedSpan.Clear();
+                        reduced.Gradient(constraints[row].Expression, reducedSpan);
+                        foreach (var (compactCol, idx) in rowToCompactEntries[row])
+                        {
+                            values[idx] = reducedSpan[compactCol];
+                            if (!IsValidNumber(values[idx]))
+                                return false;
+                        }
+                        continue;
+                    }
+
                     constraints[row].Expression.AccumulateGradient(scratch, gradSpan);
 
                     foreach (var (origCol, idx) in rowToEntries[row])
@@ -1222,7 +1273,7 @@ public sealed partial class Model : IDisposable
         };
     }
 
-    private static unsafe EvalHCallback CreateEvalHCallback(int[] structRowsOrig, int[] structColsOrig, int[] structRowsCompact, int[] structColsCompact, Expr objective, Constraint[] constraints, double[] scratch, Action<ReadOnlySpan<double>> syncScratch, int totalVars)
+    private static unsafe EvalHCallback CreateEvalHCallback(int[] structRowsOrig, int[] structColsOrig, int[] structRowsCompact, int[] structColsCompact, Expr objective, Constraint[] constraints, double[] scratch, Action<ReadOnlySpan<double>> syncScratch, int totalVars, ReducedDerivatives? reduced)
     {
         // HessianAccumulator's CSR is indexed in ORIGINAL Variable.Index space — that's what every
         // ExprNode.AccumulateHessian writes into via hess.Add(orig_i, orig_j, value). The compact
@@ -1247,9 +1298,18 @@ public sealed partial class Model : IDisposable
                 if (newX) syncScratch(x);
                 hess.Clear();
 
-                objective.AccumulateHessian(scratch, hess, objFactor);
-                for (int row = 0; row < m; row++)
-                    constraints[row].Expression.AccumulateHessian(scratch, hess, lambda[row]);
+                if (reduced is not null)
+                {
+                    // [I; X]ᵀ (∇²L + Σ μ_l ∇²E_l) [I; X], accumulated in original-index space like
+                    // the direct path — the values array is the same either way.
+                    reduced.LagrangianHessian(objFactor, new ReadOnlySpan<double>(lambda, m), hess);
+                }
+                else
+                {
+                    objective.AccumulateHessian(scratch, hess, objFactor);
+                    for (int row = 0; row < m; row++)
+                        constraints[row].Expression.AccumulateHessian(scratch, hess, lambda[row]);
+                }
 
                 var values = new Span<double>(pValues, neleHess);
                 hess.Values.CopyTo(values);

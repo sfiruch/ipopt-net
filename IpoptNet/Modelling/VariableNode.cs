@@ -13,31 +13,17 @@ internal sealed class VariableNode : ExprNode
 
     internal override void AccumulateGradientCompact(ReadOnlySpan<double> x, Span<double> compactGrad, double multiplier, int[] sortedVarIndices)
     {
-        // Eliminated variables in redirect mode propagate the seed through their block's
-        // implicit-function-theorem chain. In raw mode (during a block's own Solve / PropagateGradient),
-        // they behave as plain variables — write to compactGrad at the variable's index.
-        // Both paths carry the same Scale factor, because this node's value is scratch[Index]·Scale
-        // either way. The block's sensitivities are ∂scratch_v/∂scratch_input (its A and b are
-        // extracted in raw mode, where this node already contributes Scale), so scaling the seed by
-        // Scale converts them to ∂value/∂scratch_input.
-        if (Variable.Block is { } block && !block.Model.IsRawMode)
-        {
-            block.PropagateGradient(Variable.IndexInBlock, x, compactGrad, multiplier * Variable.Scale, sortedVarIndices);
-            return;
-        }
+        // Every variable differentiates as itself here, eliminated or not: a model with implicit
+        // blocks is walked in raw mode and reduced afterwards by ReducedDerivatives, which is where
+        // an eliminated variable's dependence on the decision vector is accounted for. The Scale
+        // factor applies either way, since this node's value is scratch[Index]·Scale.
         compactGrad[Array.BinarySearch(sortedVarIndices, Variable.Index)] += multiplier * Variable.Scale;
     }
 
     internal override void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier)
     {
-        if (Variable.Block is { } block && !block.Model.IsRawMode)
-        {
-            // ∂²v*_j/∂x_dec_k∂x_dec_p is non-zero in general; let the block propagate. Seed scaled
-            // for the same reason as the gradient above.
-            block.PropagateHessian(Variable.IndexInBlock, x, hess, multiplier * Variable.Scale);
-            return;
-        }
-        // Plain variable has no second derivative contribution.
+        // A variable has no second derivative of its own. For an eliminated one, ∂²v*/∂p∂p is not
+        // propagated here at all — ReducedDerivatives obtains it from the adjoint instead.
     }
 
     internal override void CollectVariables(HashSet<Variable> variables)

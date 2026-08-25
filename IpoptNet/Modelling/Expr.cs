@@ -88,6 +88,14 @@ public sealed class Expr
 
     public void AccumulateHessian(ReadOnlySpan<double> x, HessianAccumulator hess, double multiplier) =>
         _node.AccumulateHessian(x, hess, multiplier);
+
+    /// <summary>The variable indices this expression touches, ascending — the same set
+    /// <see cref="AccumulateGradient(ReadOnlySpan{double}, Span{double})"/> writes into, so a caller
+    /// accumulating into a shared full-length buffer knows exactly which entries to clear. Reflects
+    /// the mode the expression was prepared in: redirect-mode preparation reports a block's input
+    /// closure in place of an eliminated variable, raw-mode preparation reports the variable itself.</summary>
+    internal int[] SortedVariableIndices => _node._sortedVarIndices
+        ?? throw new InvalidOperationException("Expression has not been prepared.");
     public void CollectVariables(HashSet<Variable> variables) =>
         _node.CollectVariables(variables);
     public void CollectHessianSparsity(HashSet<(int row, int col)> entries) =>
