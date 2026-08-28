@@ -286,7 +286,21 @@ mkdir -p "$OUTPUT_DIR"
 # The csproj globs *.dll from this directory, so stale files from an earlier
 # build (e.g. the official release's companion DLLs) must not linger.
 rm -f "$OUTPUT_DIR"/*.dll
-cp "$BUILT" "$OUTPUT_DIR/ipopt-3.dll"
+# Retry the copy: when the output directory is on a Windows drive via /mnt/c,
+# OneDrive sync or antivirus can hold the destination open just long enough for
+# cp to fail with "Invalid argument". That is transient, and losing a 20-minute
+# build to it is not acceptable. The last attempt runs unguarded so a genuine
+# failure still surfaces its error and aborts under set -e.
+for attempt in 1 2 3 4; do
+    if cp "$BUILT" "$OUTPUT_DIR/ipopt-3.dll" 2>/dev/null; then
+        break
+    fi
+    echo "  copy attempt $attempt failed (destination busy?), retrying in 3s..."
+    sleep 3
+    if [[ $attempt -eq 4 ]]; then
+        cp "$BUILT" "$OUTPUT_DIR/ipopt-3.dll"
+    fi
+done
 
 SIZE_MB=$(stat -c%s "$OUTPUT_DIR/ipopt-3.dll" | awk '{printf "%.1f", $1/1024/1024}')
 echo ""

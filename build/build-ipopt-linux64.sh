@@ -250,7 +250,21 @@ ln -sf libipopt.so.3.14.20 "$INSTALL_DIR/lib/libipopt.so"
 # ── Phase 5: Copy to output ───────────────────────────────────────────────────
 mkdir -p "$OUTPUT_DIR"
 # -L follows the versioned symlink and writes the actual ELF file
-cp -L "$INSTALL_DIR/lib/libipopt.so" "$OUTPUT_DIR/libipopt-3.so"
+# Retry the copy: when the output directory is on a Windows drive via /mnt/c,
+# OneDrive sync or antivirus can hold the destination open just long enough for
+# cp to fail with "Invalid argument". That is transient, and losing a 20-minute
+# build to it is not acceptable. The last attempt runs unguarded so a genuine
+# failure still surfaces its error and aborts under set -e.
+for attempt in 1 2 3 4; do
+    if cp -L "$INSTALL_DIR/lib/libipopt.so" "$OUTPUT_DIR/libipopt-3.so" 2>/dev/null; then
+        break
+    fi
+    echo "  copy attempt $attempt failed (destination busy?), retrying in 3s..."
+    sleep 3
+    if [[ $attempt -eq 4 ]]; then
+        cp -L "$INSTALL_DIR/lib/libipopt.so" "$OUTPUT_DIR/libipopt-3.so"
+    fi
+done
 
 echo ""
 echo "Build complete."
