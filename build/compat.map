@@ -1,0 +1,34 @@
+/* Version script for libipopt-3.so.
+ *
+ * glibc_compat.c defines wrappers that shadow libc/libm/libdl names (log, exp,
+ * memcpy, dlopen, ...) so their calls bind to old, widely-available glibc
+ * symbol versions. Those wrappers are an implementation detail of this .so.
+ *
+ * glibc_compat.o is a plain object file, so -Wl,--exclude-libs,ALL does not
+ * cover it (that flag only applies to static archives) and the wrappers end up
+ * in the .so's dynamic symbol table. From there they can interpose on the
+ * host process's own libc calls, which is both surprising and fragile.
+ *
+ * Listing them under `local:` hides them from export. Symbols not matched here
+ * stay global, so IPOPT's public C and C++ API is unaffected.
+ */
+{
+  local:
+    /* math (glibc 2.29/2.38 -> 2.2.5) */
+    exp; log; pow; fmod; expf; logf; powf;
+
+    /* pthread + dl (moved into libc at glibc 2.34) */
+    pthread_create; pthread_join; pthread_setspecific; pthread_getspecific;
+    pthread_key_create; pthread_key_delete;
+    dlopen; dlsym; dlclose; dlerror; dladdr;
+
+    /* misc glibc/libstdc++ pins */
+    memcpy;
+    __isoc23_strtol;
+    _ZSt21ios_base_library_initv;
+
+    /* gfortran internals: the async-I/O stubs and the TLS replacement that
+       stand in for async.o / unix.o */
+    _gfortrani_*;
+    thread_unit;
+};

@@ -13,9 +13,18 @@ Install the package via NuGet:
 dotnet add package ipopt-net
 ```
 
-The package includes native binaries for:
-- **Windows** (x64)
-- **Linux** (x64)
+The package includes native binaries for IPOPT 3.14.20 (with MUMPS 5.9.0):
+
+- **Windows** (x64) — `ipopt-3.dll`
+- **Linux** (x64) — `libipopt-3.so`
+
+Both are a single self-contained library: MUMPS, MKL Pardiso, BLAS/LAPACK and the
+GCC/Fortran runtimes are statically linked, so no other DLLs or shared objects are
+needed — and on Windows, no Visual C++ redistributable either.
+
+Both are built from the same sources by the scripts in [`build/`](build), which
+document the process. The Windows DLL is cross-compiled from WSL with mingw-w64,
+so the two platforms stay on matching IPOPT and MUMPS versions.
 
 ## Features
 
@@ -385,4 +394,4 @@ This .NET wrapper is provided as-is. IPOPT itself is released under the Eclipse 
 
 IPOPT is developed and maintained by the COIN-OR project. This wrapper provides a convenient .NET interface with automatic differentiation capabilities.
 
-The native binaries bundled with this package include statically-linked Intel oneAPI Math Kernel Library (MKL) components (libmkl_intel_lp64, libmkl_sequential, libmkl_core) redistributed under the [Intel Simplified Software License](INTEL-MKL-LICENSE.txt).
+The native binaries bundled with this package include statically-linked Intel oneAPI Math Kernel Library (MKL) components (mkl_intel_lp64, mkl_sequential, mkl_core) redistributed under the [Intel Simplified Software License](INTEL-MKL-LICENSE.txt).

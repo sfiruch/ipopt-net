@@ -36,9 +36,11 @@
     <None Include="..\README.md" Pack="true" Link="README.md" PackagePath="\" />
     <None Include="..\INTEL-MKL-LICENSE.txt" Pack="true" PackagePath="\" />
     <!-- Native libraries: packed into standard NuGet runtime locations, and copied
-         to the output directory on the matching host OS. Both are self-contained
-         (MUMPS, MKL Pardiso, BLAS/LAPACK, and all GCC/Fortran runtimes statically
-         linked), so no additional libraries are required at runtime. -->
+         to the output directory on the matching host OS. Both are built from the
+         same sources by the scripts in build/ and are fully self-contained (MUMPS,
+         MKL Pardiso, BLAS/LAPACK, and all GCC/Fortran runtimes statically linked),
+         so no additional libraries are required at runtime — on Windows, not even
+         the Visual C++ redistributable. -->
     <None Include="runtimes\win-x64\native\ipopt-3.dll" Pack="true" PackagePath="runtimes\win-x64\native">
       <CopyToOutputDirectory Condition="$([MSBuild]::IsOSPlatform('Windows'))">PreserveNewest</CopyToOutputDirectory>
       <TargetPath>ipopt-3.dll</TargetPath>

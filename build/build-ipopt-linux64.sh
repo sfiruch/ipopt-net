@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build IPOPT 3.14.19 for Linux x64 — small, self-contained shared library
+# Build IPOPT 3.14.20 for Linux x64 — small, self-contained shared library
 #
 # Compilers:
 #   C/C++   - GCC/G++        system or Ubuntu toolchain
@@ -15,9 +15,20 @@
 #   The resulting libipopt-3.so has MKL baked in — no separate MKL .so needed.
 #       Same approach as the Windows build (statically links mkl_*.lib).
 #
-# Usage (from a native Linux shell or WSL):
+# Usage (from a native Linux shell, or from Windows via WSL):
 #   ./build-ipopt-linux64.sh [--output /path/to/output/dir]
+#   wsl [-d <distro>] bash build/build-ipopt-linux64.sh
 #   Default output: <repo>/IpoptNet/runtimes/linux-x64/native/
+#
+# Prerequisites:
+#   GCC/GFortran and Intel oneAPI MKL. Both are installed via apt if absent,
+#   which needs sudo — on a distro where sudo prompts for a password, install
+#   them beforehand, or the script blocks on a prompt you cannot see when it is
+#   started non-interactively from Windows.
+#
+#   The build distro sets the glibc floor of the result only indirectly:
+#   glibc_compat.c pins the symbol versions, so a 24.04 build still runs on
+#   considerably older systems (the shipped .so requires at most GLIBC_2.34).
 #
 # Result:
 #   libipopt-3.so (~80-120 MB) — MUMPS + MKL Pardiso + Fortran runtime statically linked
@@ -28,11 +39,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$HOME/ipopt-src"
 INSTALL_DIR="$HOME/ipopt-install"
-IPOPT_RELEASE="releases/3.14.19"
+IPOPT_RELEASE="releases/3.14.20"
 NPROC=$(nproc 2>/dev/null || echo 4)
 
-# Allow override via env var (set by build-ipopt-linux64.ps1 via WSLENV) or argument
-OUTPUT_DIR="${IPOPT_LINUX64_OUTPUT:-$SCRIPT_DIR/IpoptNet/runtimes/linux-x64/native}"
+# Allow override via env var or argument
+OUTPUT_DIR="${IPOPT_LINUX64_OUTPUT:-$SCRIPT_DIR/../IpoptNet/runtimes/linux-x64/native}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --output) OUTPUT_DIR="$2"; shift 2 ;;
@@ -103,9 +114,13 @@ fi
 #      add unix.o back as unix_patched.o (same content, renamed so the linker
 #      treats it as a new member).
 #   2. Compiling glibc_compat.c (repo root) which provides:
-#      - _gfortrani_flush_if_preconnected as a no-op, satisfying the symbol
-#        before unix_patched.o is pulled in. --gc-sections then dead-strips
-#        unix_patched.o's copy of the function (and its PC32 relocs).
+#      - _gfortrani_flush_if_preconnected as a no-op. glibc_compat.o is linked
+#        ahead of libgfortran_pic.a, so this definition wins and the copy in
+#        unix_patched.o (with its PC32 relocs) is discarded. Other libgfortran
+#        members do drag unix_patched.o in regardless, which is why the final
+#        link needs --allow-multiple-definition; dropping the no-op instead
+#        just brings back "R_X86_64_PC32 against stdin ... making a shared
+#        object".
 #      - thread_unit as __thread void* (PIC-compatible TLS, replaces async.o).
 #      - Stubs for all async I/O functions MUMPS never calls.
 #      - glibc version pins so the .so runs on systems older than Ubuntu 24.04.
@@ -222,12 +237,15 @@ g++ -shared -fPIC \
     "$LIBGFORTRAN_PIC" \
     -lpthread -ldl -lm \
     -Wl,-s -Wl,--gc-sections -Wl,--exclude-libs,ALL \
+    -Wl,--allow-multiple-definition \
+    -Wl,-Bsymbolic-functions \
+    -Wl,--version-script="$SCRIPT_DIR/compat.map" \
     -Wl,-soname,libipopt.so.3 \
     -march=x86-64 -O2 \
-    -o "$INSTALL_DIR/lib/libipopt.so.3.14.19"
+    -o "$INSTALL_DIR/lib/libipopt.so.3.14.20"
 # Update the symlinks to point at the fresh binary
-ln -sf libipopt.so.3.14.19 "$INSTALL_DIR/lib/libipopt.so.3"
-ln -sf libipopt.so.3.14.19 "$INSTALL_DIR/lib/libipopt.so"
+ln -sf libipopt.so.3.14.20 "$INSTALL_DIR/lib/libipopt.so.3"
+ln -sf libipopt.so.3.14.20 "$INSTALL_DIR/lib/libipopt.so"
 
 # ── Phase 5: Copy to output ───────────────────────────────────────────────────
 mkdir -p "$OUTPUT_DIR"
@@ -246,12 +264,17 @@ ldd "$OUTPUT_DIR/libipopt-3.so" \
     | grep -v -E 'linux-vdso|libdl|libm\.so|libgcc_s|libstdc\+\+|libc\.so|libpthread|ld-linux' \
     || echo "  (none)"
 
+# Dump the symbol table once. Piping nm straight into `grep -q` / `head` lets
+# the reader exit first, which kills nm with SIGPIPE — and under `pipefail`
+# that makes the whole pipeline report failure even though the grep matched.
+SYMBOLS=$(nm -D "$OUTPUT_DIR/libipopt-3.so" 2>/dev/null || true)
+
 echo ""
 echo "Pardiso symbols (should be non-empty):"
-nm -D "$OUTPUT_DIR/libipopt-3.so" 2>/dev/null | grep -i pardiso | head -5 \
-    || echo "  WARNING: no Pardiso symbols found — pardisomkl may not be linked"
+PARDISO_COUNT=$(grep -ci pardiso <<< "$SYMBOLS" || true)
+grep -i pardiso <<< "$SYMBOLS" | head -5 || true
 
-if ! nm -D "$OUTPUT_DIR/libipopt-3.so" 2>/dev/null | grep -qi pardiso; then
+if [[ "$PARDISO_COUNT" -eq 0 ]]; then
     echo ""
     echo "ERROR: Pardiso symbols not found in the built library."
     echo "Check configure output for 'pardisomkl' detection status."
@@ -260,8 +283,7 @@ fi
 
 echo ""
 echo "Undefined MKL symbols (should be empty — would indicate incomplete MKL link):"
-nm -D "$OUTPUT_DIR/libipopt-3.so" 2>/dev/null | grep ' U mkl_' | head -5 \
-    || echo "  (none — good)"
+grep ' U mkl_' <<< "$SYMBOLS" | head -5 || echo "  (none — good)"
 
 echo ""
 if (( $(echo "$SIZE_MB > 200" | bc -l) )); then
